@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.env
+google-ads*.yaml
+google-ads*.json
+data/
+logs/
+TODO.md
