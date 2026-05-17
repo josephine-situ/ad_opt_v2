@@ -11,7 +11,7 @@ import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -219,6 +219,18 @@ def extract_daily_budget(change_text: str) -> str:
     return amount.replace(",", "")
 
 
+def extract_previous_daily_budget(change_text: str) -> str:
+    """Extract the previous amount from a budget change like 'from X to Y'."""
+    if " from " not in f" {change_text.lower()} " or " to " not in f" {change_text.lower()} ":
+        return ""
+    matches = CURRENCY_RE.findall(change_text)
+    if len(matches) < 2:
+        return ""
+
+    amount = next(value for value in matches[0] if value)
+    return amount.replace(",", "")
+
+
 def extract_budget_campaign(change_text: str) -> str:
     match = BUDGET_DETAIL_CAMPAIGN_RE.search(change_text)
     if not match:
@@ -378,6 +390,10 @@ def is_aggregate_campaign(value: str) -> bool:
 
 def is_search_campaign(value: str) -> bool:
     return bool(value) and not is_aggregate_campaign(value) and "Search" in value and "Experiment" not in value
+
+
+def is_raw_search_campaign(value: str) -> bool:
+    return bool(value) and not is_aggregate_campaign(value)
 
 
 def clean_campaign_name(value: str) -> str:
@@ -993,6 +1009,237 @@ def read_search_keyword_index(path: Path) -> dict[str, list[tuple[str, str, str]
     return keywords_by_campaign
 
 
+def next_iso_date(value: str) -> str:
+    return (datetime.strptime(value, "%Y-%m-%d").date() + timedelta(days=1)).isoformat()
+
+
+def raw_keywords_for_window(
+    records: list[tuple[str, str, str]],
+    start_date: str,
+    end_date: str,
+) -> tuple[dict[str, set[str]], int]:
+    keywords_by_match_type = {"Broad": set(), "Phrase": set(), "Exact": set()}
+    row_count = 0
+    for day, keyword, match_type in records:
+        if start_date <= day < end_date:
+            row_count += 1
+            keywords_by_match_type.setdefault(match_type, set()).add(keyword)
+    return keywords_by_match_type, row_count
+
+
+def all_keywords(keywords_by_match_type: dict[str, set[str]]) -> set[str]:
+    keywords: set[str] = set()
+    for values in keywords_by_match_type.values():
+        keywords.update(values)
+    return keywords
+
+
+def match_types_for_keywords(keywords_by_match_type: dict[str, set[str]]) -> str:
+    return "; ".join(
+        match_type
+        for match_type in ["Broad", "Phrase", "Exact"]
+        if keywords_by_match_type[match_type]
+    )
+
+
+def snapshot_lookup_by_canonical_campaign(
+    snapshots: list[CampaignSnapshot],
+    renames: list[CampaignRename],
+) -> dict[str, list[CampaignSnapshot]]:
+    snapshots_by_campaign: dict[str, list[CampaignSnapshot]] = defaultdict(list)
+    for snapshot in snapshots:
+        snapshots_by_campaign[canonical_campaign_name(snapshot.campaign, renames)].append(snapshot)
+
+    return {
+        campaign: sorted(campaign_snapshots, key=lambda item: (item.date, item.order))
+        for campaign, campaign_snapshots in snapshots_by_campaign.items()
+    }
+
+
+def latest_snapshot_on_or_before(
+    snapshots: list[CampaignSnapshot],
+    date: str,
+) -> CampaignSnapshot | None:
+    latest_snapshot = None
+    for snapshot in snapshots:
+        if snapshot.date <= date:
+            latest_snapshot = snapshot
+        else:
+            break
+    return latest_snapshot
+
+
+def inferred_previous_budget_from_next_change(
+    snapshots: list[CampaignSnapshot],
+    start_date: str,
+    end_date: str,
+) -> str:
+    """Use the pre-change budget for raw intervals before the first budget snapshot."""
+    for snapshot in snapshots:
+        if snapshot.date < start_date:
+            continue
+        if end_date and snapshot.date > end_date:
+            break
+        if snapshot.change_type != "daily_budget":
+            continue
+        previous_budget = extract_previous_daily_budget(snapshot.change_summary)
+        if previous_budget:
+            return previous_budget
+    return ""
+
+
+def raw_campaign_summary_rows(
+    actions: list[ChangeAction],
+    search_keyword_report: Path,
+) -> list[dict[str, str]]:
+    """Build campaign intervals from raw keyword coverage, then attach change history."""
+    renames = extract_campaign_renames(actions)
+    snapshots = build_campaign_snapshots(actions)
+    snapshots_by_campaign = snapshot_lookup_by_canonical_campaign(snapshots, renames)
+    keywords_by_campaign = read_search_keyword_index(search_keyword_report)
+
+    rows: list[dict[str, str]] = []
+    version = 1
+    for campaign, records in sorted(keywords_by_campaign.items()):
+        if not is_raw_search_campaign(campaign):
+            continue
+        records = sorted(records, key=lambda item: item[0])
+        raw_start_date = records[0][0]
+        raw_end_date = next_iso_date(records[-1][0])
+        canonical_campaign = canonical_campaign_name(campaign, renames)
+        campaign_snapshots = snapshots_by_campaign.get(canonical_campaign, [])
+        change_dates = {
+            snapshot.date
+            for snapshot in campaign_snapshots
+            if raw_start_date < snapshot.date < raw_end_date
+        }
+        boundaries = [raw_start_date, *sorted(change_dates), raw_end_date]
+        previous_positive_keywords_by_match_type: dict[str, set[str]] | None = None
+
+        for start_date, end_date in zip(boundaries, boundaries[1:]):
+            raw_keywords_by_match_type, raw_report_row_count = raw_keywords_for_window(
+                records,
+                start_date,
+                end_date,
+            )
+            if raw_report_row_count == 0:
+                continue
+
+            raw_keywords = all_keywords(raw_keywords_by_match_type)
+            attached_snapshot = latest_snapshot_on_or_before(campaign_snapshots, start_date)
+            daily_budget = attached_snapshot.daily_budget if attached_snapshot else ""
+            if not daily_budget:
+                daily_budget = inferred_previous_budget_from_next_change(
+                    campaign_snapshots,
+                    start_date,
+                    end_date,
+                )
+            if not daily_budget:
+                continue
+            negative_keywords_by_match_type = (
+                attached_snapshot.negative_keywords_by_match_type
+                if attached_snapshot
+                else {"Broad": set(), "Phrase": set(), "Exact": set()}
+            )
+            negative_keywords = all_keywords(negative_keywords_by_match_type)
+            change_history_keywords = snapshot_keywords(attached_snapshot) if attached_snapshot else set()
+            exact_change_types = sorted(
+                {
+                    snapshot.change_type
+                    for snapshot in campaign_snapshots
+                    if snapshot.date == start_date
+                }
+            )
+            change_type = ";".join(exact_change_types) or "raw_keyword_coverage"
+            positive_keywords_by_match_type = copy_keywords_by_match_type(raw_keywords_by_match_type)
+            positive_keywords = all_keywords(positive_keywords_by_match_type)
+
+            rows.append(
+                {
+                    "campaign_version": str(version),
+                    "campaign": campaign,
+                    "start_date": start_date,
+                    "end_date": "" if end_date == raw_end_date else end_date,
+                    "status": attached_snapshot.status if attached_snapshot else "",
+                    "change_type": change_type,
+                    "change_summary": attached_snapshot.change_summary if attached_snapshot else "",
+                    "daily_budget": daily_budget,
+                    "match_types": match_types_for_keywords(positive_keywords_by_match_type),
+                    "num_unique_keywords": str(len(positive_keywords)),
+                    "broad_keyword_count": str(len(positive_keywords_by_match_type["Broad"])),
+                    "phrase_keyword_count": str(len(positive_keywords_by_match_type["Phrase"])),
+                    "exact_keyword_count": str(len(positive_keywords_by_match_type["Exact"])),
+                    "num_negative_keywords": str(len(negative_keywords)),
+                    "_raw_report_row_count": str(raw_report_row_count),
+                    "_raw_broad_keywords": join_keywords(raw_keywords_by_match_type["Broad"]),
+                    "_raw_phrase_keywords": join_keywords(raw_keywords_by_match_type["Phrase"]),
+                    "_raw_exact_keywords": join_keywords(raw_keywords_by_match_type["Exact"]),
+                    "_broad_keywords": join_keywords(positive_keywords_by_match_type["Broad"]),
+                    "_phrase_keywords": join_keywords(positive_keywords_by_match_type["Phrase"]),
+                    "_exact_keywords": join_keywords(positive_keywords_by_match_type["Exact"]),
+                    "_unique_keywords": join_keywords(positive_keywords),
+                    "_negative_broad_keywords": join_keywords(negative_keywords_by_match_type["Broad"]),
+                    "_negative_phrase_keywords": join_keywords(negative_keywords_by_match_type["Phrase"]),
+                    "_negative_exact_keywords": join_keywords(negative_keywords_by_match_type["Exact"]),
+                    "_negative_keywords": join_keywords(negative_keywords),
+                    "_raw_unique_keywords": join_keywords(raw_keywords),
+                    "_change_history_unique_keywords": join_keywords(change_history_keywords),
+                    "_raw_keywords_not_in_change_history": join_keywords(
+                        raw_keywords - change_history_keywords
+                    ),
+                    "_change_history_keywords_not_in_raw": join_keywords(
+                        change_history_keywords - raw_keywords
+                    ),
+                }
+            )
+            version += 1
+
+    return union_daily_budget_keyword_runs(rows)
+
+
+def union_daily_budget_keyword_runs(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Share a unioned positive keyword set across budget-only splits."""
+    grouped_rows: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        grouped_rows[row["campaign"]].append(row)
+
+    for campaign_rows in grouped_rows.values():
+        current_run: list[dict[str, str]] = []
+        for row in campaign_rows:
+            if current_run and row["change_type"] != "daily_budget":
+                apply_union_keyword_set(current_run)
+                current_run = []
+            current_run.append(row)
+        if current_run:
+            apply_union_keyword_set(current_run)
+
+    return rows
+
+
+def apply_union_keyword_set(rows: list[dict[str, str]]) -> None:
+    keywords_by_match_type = {
+        "Broad": set(),
+        "Phrase": set(),
+        "Exact": set(),
+    }
+    for row in rows:
+        keywords_by_match_type["Broad"].update(split_keyword_list(row.get("_raw_broad_keywords", "")))
+        keywords_by_match_type["Phrase"].update(split_keyword_list(row.get("_raw_phrase_keywords", "")))
+        keywords_by_match_type["Exact"].update(split_keyword_list(row.get("_raw_exact_keywords", "")))
+
+    keywords = all_keywords(keywords_by_match_type)
+    for row in rows:
+        row["match_types"] = match_types_for_keywords(keywords_by_match_type)
+        row["num_unique_keywords"] = str(len(keywords))
+        row["broad_keyword_count"] = str(len(keywords_by_match_type["Broad"]))
+        row["phrase_keyword_count"] = str(len(keywords_by_match_type["Phrase"]))
+        row["exact_keyword_count"] = str(len(keywords_by_match_type["Exact"]))
+        row["_broad_keywords"] = join_keywords(keywords_by_match_type["Broad"])
+        row["_phrase_keywords"] = join_keywords(keywords_by_match_type["Phrase"])
+        row["_exact_keywords"] = join_keywords(keywords_by_match_type["Exact"])
+        row["_unique_keywords"] = join_keywords(keywords)
+
+
 def enrich_campaign_summary_with_search_keywords(
     rows: list[dict[str, str]],
     search_keyword_report: Path,
@@ -1223,22 +1470,9 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--keyword-checks-output",
-        type=Path,
-        help=(
-            "Optional raw keyword cross-check CSV output. Defaults to "
-            "campaign-keyword-checks.csv next to --campaign-summary-output."
-        ),
-    )
-    parser.add_argument(
         "--search-keyword-report",
         type=Path,
         help="Optional raw Search keyword CSV used to cross-check campaign-summary keywords.",
-    )
-    parser.add_argument(
-        "--overlap-output",
-        type=Path,
-        help="Optional pairwise keyword-overlap CSV for campaign snapshots.",
     )
     args = parser.parse_args()
 
@@ -1248,24 +1482,15 @@ def main() -> None:
 
     summary_rows = []
     keyword_set_rows = []
-    keyword_check_rows = []
     if args.campaign_summary_output:
-        summary_rows = campaign_summary_rows(actions)
         if args.search_keyword_report:
-            summary_rows = enrich_campaign_summary_with_search_keywords(
-                summary_rows,
-                args.search_keyword_report,
-            )
-            summary_rows = keep_rows_with_raw_search_keyword_dates(summary_rows)
+            summary_rows = raw_campaign_summary_rows(actions, args.search_keyword_report)
+        else:
+            summary_rows = campaign_summary_rows(actions)
         summary_rows, keyword_set_rows = assign_keyword_set_ids(summary_rows)
-        keyword_check_rows = campaign_keyword_check_rows(summary_rows)
         keyword_sets_output = (
             args.keyword_sets_output
             or args.campaign_summary_output.with_name("campaign-keyword-sets.csv")
-        )
-        keyword_checks_output = (
-            args.keyword_checks_output
-            or args.campaign_summary_output.with_name("campaign-keyword-checks.csv")
         )
         write_csv(
             summary_rows,
@@ -1302,49 +1527,6 @@ def main() -> None:
                 "used_by_campaign_versions",
             ],
         )
-        write_csv(
-            keyword_check_rows,
-            keyword_checks_output,
-            [
-                "keyword_set_id",
-                "campaign_version",
-                "campaign",
-                "start_date",
-                "end_date",
-                "raw_unique_keywords",
-                "change_history_unique_keywords",
-                "raw_keywords_not_in_change_history",
-                "change_history_keywords_not_in_raw",
-            ],
-        )
-
-    overlap_rows = []
-    if args.overlap_output:
-        overlap_rows = keyword_overlap_rows(actions)
-        write_csv(
-            overlap_rows,
-            args.overlap_output,
-            [
-                "campaign_version_a",
-                "campaign_a",
-                "start_date_a",
-                "change_type_a",
-                "daily_budget_a",
-                "num_keywords_a",
-                "campaign_version_b",
-                "campaign_b",
-                "start_date_b",
-                "change_type_b",
-                "daily_budget_b",
-                "num_keywords_b",
-                "shared_keywords",
-                "num_shared_keywords",
-                "num_union_keywords",
-                "jaccard_similarity",
-                "overlap_pct_a",
-                "overlap_pct_b",
-            ],
-        )
 
     print(
         f"Parsed {len(budget_rows)} Search budget amount row(s).",
@@ -1353,9 +1535,6 @@ def main() -> None:
     if args.campaign_summary_output:
         print(f"Wrote {len(summary_rows)} campaign-summary row(s).", file=sys.stderr)
         print(f"Wrote {len(keyword_set_rows)} campaign keyword-set row(s).", file=sys.stderr)
-        print(f"Wrote {len(keyword_check_rows)} campaign keyword-check row(s).", file=sys.stderr)
-    if args.overlap_output:
-        print(f"Wrote {len(overlap_rows)} budget keyword-overlap row(s).", file=sys.stderr)
 
 
 if __name__ == "__main__":

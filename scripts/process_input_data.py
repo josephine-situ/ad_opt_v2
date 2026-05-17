@@ -24,18 +24,24 @@ def main() -> None:
         "--input-file",
         type=str,
         default="",
-        help="Raw kw-day-panel CSV. Defaults to data/<course>/reports/kw-day-panel.csv.",
+        help=(
+            "Raw Search keyword CSV. Defaults to "
+            "data/<course>/reports/Search keyword - raw input to models.csv."
+        ),
     )
     parser.add_argument(
         "--output-file",
         type=str,
         default="",
-        help="Cleaned kw-day-panel CSV. Defaults to data/<course>/processed/kw-day-panel-clean.csv.",
+        help="Cleaned kw-day-panel CSV. Defaults to data/<course>/processed/kw-day-panel.csv.",
     )
 
     args = parser.parse_args()
-    input_file = args.input_file or f"data/{args.output_course}/reports/kw-day-panel.csv"
-    output_file = args.output_file or f"data/{args.output_course}/processed/kw-day-panel-clean.csv"
+    input_file = (
+        args.input_file
+        or f"data/{args.output_course}/reports/Search keyword - raw input to models.csv"
+    )
+    output_file = args.output_file or f"data/{args.output_course}/processed/kw-day-panel.csv"
 
     print(f"Cleaning kw-day-panel: {input_file}")
     clean_kw_day_panel(input_file, output_file)

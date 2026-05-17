@@ -113,7 +113,6 @@ def generate_kw_day_panel_report(
         "keyword",
         "campaign",
         "match_type",
-        "impressions",
         "clicks",
         "cost",
         "conversions",

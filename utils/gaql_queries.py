@@ -24,7 +24,6 @@ KW_DAY_PANEL_REPORT_QUERY = """
         ad_group_criterion.keyword.text,
         campaign.name,
         ad_group_criterion.keyword.match_type,
-        metrics.impressions,
         metrics.clicks,
         metrics.cost_micros,
         metrics.conversions,

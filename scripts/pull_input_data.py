@@ -90,16 +90,6 @@ def pull_ads_reports(
     print(f"Date range: {start_date} to {end_date}")
     print(f"Customer ID: {customer_id}")
 
-    kw_day_panel_start_date = get_budget_history_start_date(output_course) or start_date
-    print(f"Pulling kw-day-panel from {kw_day_panel_start_date} to {end_date}...")
-    generate_kw_day_panel_report(
-        google_ads_client,
-        customer_id,
-        output_course,
-        kw_day_panel_start_date,
-        end_date,
-    )
-
     report_functions: list[ReportFunction] = [
         generate_search_keyword_report,
         generate_search_terms_report,

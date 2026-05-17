@@ -26,13 +26,13 @@ def main() -> None:
         "--kw-day-panel-file",
         type=str,
         default="",
-        help="Raw kw-day-panel CSV. Defaults to data/<course>/reports/kw-day-panel.csv.",
+        help="Processed kw-day-panel CSV. Defaults to data/<course>/processed/kw-day-panel.csv.",
     )
     parser.add_argument(
-        "--budget-history-file",
+        "--campaign-summary-file",
         type=str,
         default="",
-        help="Budget change history CSV. Defaults to data/<course>/change_history_budgets.csv.",
+        help="Campaign summary CSV. Defaults to data/<course>/processed/campaign-summary.csv.",
     )
     parser.add_argument(
         "--campaign-day-output-file",
@@ -44,30 +44,34 @@ def main() -> None:
         "--campaign-summary-output-file",
         type=str,
         default="",
-        help="Campaign summary CSV. Defaults to data/<course>/processed/campaign-summary.csv.",
+        help="Optional campaign summary output CSV. Defaults to not rewriting it.",
     )
 
     args = parser.parse_args()
     course = args.output_course
-    kw_day_panel_file = args.kw_day_panel_file or f"data/{course}/reports/kw-day-panel.csv"
-    budget_history_file = args.budget_history_file or f"data/{course}/change_history_budgets.csv"
+    kw_day_panel_file = args.kw_day_panel_file or f"data/{course}/processed/kw-day-panel.csv"
+    campaign_summary_file = (
+        args.campaign_summary_file or f"data/{course}/processed/campaign-summary.csv"
+    )
     campaign_day_output_file = (
         args.campaign_day_output_file or f"data/{course}/processed/campaign-day-panel.csv"
     )
-    campaign_summary_output_file = (
-        args.campaign_summary_output_file or f"data/{course}/processed/campaign-summary.csv"
-    )
+    campaign_summary_output_file = args.campaign_summary_output_file or None
 
     print(f"Generating campaign-day panel from: {kw_day_panel_file}")
-    print(f"Using budget history from: {budget_history_file}")
+    print(f"Using campaign summary from: {campaign_summary_file}")
     campaign_day, campaign_summary = generate_campaign_day_panel(
         kw_day_panel_file=kw_day_panel_file,
-        budget_history_file=budget_history_file,
+        campaign_summary_file=campaign_summary_file,
         campaign_day_output_file=campaign_day_output_file,
         campaign_summary_output_file=campaign_summary_output_file,
     )
     print(f"Generated {len(campaign_day):,} campaign-day row(s): {campaign_day_output_file}")
-    print(f"Generated {len(campaign_summary):,} campaign summary row(s): {campaign_summary_output_file}")
+    if campaign_summary_output_file:
+        print(
+            f"Generated {len(campaign_summary):,} campaign summary row(s): "
+            f"{campaign_summary_output_file}"
+        )
 
 
 if __name__ == "__main__":

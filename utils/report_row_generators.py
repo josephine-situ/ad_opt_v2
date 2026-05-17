@@ -42,7 +42,6 @@ def generate_kw_day_panel_rows(stream: Any) -> Iterator[dict[str, Any]]:
                 "match_type": row.ad_group_criterion.keyword.match_type.name.replace(
                     "_", " "
                 ).title(),
-                "impressions": row.metrics.impressions,
                 "clicks": row.metrics.clicks,
                 "cost": f"{Decimal(row.metrics.cost_micros) / 1_000_000:.2f}",
                 "conversions": f"{row.metrics.conversions:.2f}",

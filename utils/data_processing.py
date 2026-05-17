@@ -10,11 +10,11 @@ KW_DAY_PANEL_COLUMNS = [
     "keyword",
     "campaign",
     "match_type",
-    "impressions",
     "clicks",
     "cost",
-    "conversions",
-    "impression_share",
+    "conv_value",
+    "currency_code",
+    "first_page_cpc",
 ]
 
 
@@ -64,17 +64,51 @@ def clean_kw_day_panel(input_file: str | Path, output_file: str | Path | None = 
     """Clean the keyword-day panel and optionally write it to disk."""
     df = pd.read_csv(input_file)
 
-    required_columns = {
+    raw_search_keyword_columns = {
+        "Day",
+        "Search keyword",
+        "Search keyword match type",
+        "Campaign",
+        "Clicks",
+        "Conv. value",
+        "Currency code",
+        "Cost",
+        "First page CPC",
+    }
+    kw_day_panel_columns = {
         "date",
         "keyword",
         "campaign",
         "match_type",
-        "impressions",
         "clicks",
         "cost",
-        "conversions",
-        "impression_share",
     }
+    if raw_search_keyword_columns <= set(df.columns):
+        df = df.rename(
+            columns={
+                "Day": "date",
+                "Search keyword": "keyword",
+                "Search keyword match type": "match_type",
+                "Campaign": "campaign",
+                "Clicks": "clicks",
+                "Conv. value": "conv_value",
+                "Currency code": "currency_code",
+                "Cost": "cost",
+                "First page CPC": "first_page_cpc",
+            }
+        )
+    elif not kw_day_panel_columns <= set(df.columns):
+        missing_columns = (raw_search_keyword_columns - set(df.columns)) or (
+            kw_day_panel_columns - set(df.columns)
+        )
+        missing = ", ".join(sorted(missing_columns))
+        raise ValueError(f"kw-day-panel input is missing required column(s): {missing}")
+
+    for column in ["conv_value", "currency_code", "first_page_cpc"]:
+        if column not in df.columns:
+            df[column] = pd.NA
+
+    required_columns = set(KW_DAY_PANEL_COLUMNS) - {"region"}
     missing_columns = required_columns - set(df.columns)
     if missing_columns:
         missing = ", ".join(sorted(missing_columns))
@@ -87,10 +121,9 @@ def clean_kw_day_panel(input_file: str | Path, output_file: str | Path | None = 
     df["match_type"] = _clean_match_type(df["match_type"])
     df["date"] = pd.to_datetime(df["date"]).dt.date
 
-    for column in ["impressions", "clicks"]:
-        df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0).astype("Int64")
+    df["clicks"] = pd.to_numeric(df["clicks"], errors="coerce").fillna(0).astype("Int64")
 
-    for column in ["cost", "conversions", "impression_share"]:
+    for column in ["cost", "conv_value", "first_page_cpc"]:
         df[column] = pd.to_numeric(df[column], errors="coerce")
 
     df = df[KW_DAY_PANEL_COLUMNS].sort_values(
@@ -159,15 +192,66 @@ def _add_daily_budgets(campaign_day: pd.DataFrame, budgets: pd.DataFrame) -> pd.
     return pd.concat(budgeted_groups, ignore_index=True)
 
 
+def _read_campaign_summary(campaign_summary_file: str | Path) -> pd.DataFrame:
+    summary = pd.read_csv(campaign_summary_file)
+    required_columns = {
+        "campaign_version",
+        "campaign",
+        "start_date",
+        "end_date",
+        "daily_budget",
+    }
+    missing_columns = required_columns - set(summary.columns)
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise ValueError(f"campaign summary is missing required column(s): {missing}")
+
+    summary = summary.copy()
+    summary["campaign"] = _clean_campaign(summary["campaign"])
+    summary["start_date"] = pd.to_datetime(summary["start_date"]).dt.date
+    summary["end_date"] = pd.to_datetime(summary["end_date"], errors="coerce").dt.date
+    summary["daily_budget"] = pd.to_numeric(summary["daily_budget"], errors="coerce")
+    return summary
+
+
+def _attach_campaign_versions(campaign_day: pd.DataFrame, summary: pd.DataFrame) -> pd.DataFrame:
+    matched_groups = []
+    for campaign, group in campaign_day.groupby("campaign", sort=False):
+        campaign_summary = summary[summary["campaign"] == campaign]
+        if campaign_summary.empty:
+            continue
+
+        group = group.copy()
+        matched_group_parts = []
+        for _, summary_row in campaign_summary.iterrows():
+            mask = group["date"] >= summary_row["start_date"]
+            if pd.notna(summary_row["end_date"]):
+                mask &= group["date"] < summary_row["end_date"]
+            matched = group[mask].copy()
+            if matched.empty:
+                continue
+            matched["campaign_version"] = summary_row["campaign_version"]
+            matched["daily_budget"] = summary_row["daily_budget"]
+            matched_group_parts.append(matched)
+
+        if matched_group_parts:
+            matched_groups.append(pd.concat(matched_group_parts, ignore_index=True))
+
+    if not matched_groups:
+        return pd.DataFrame(columns=[*campaign_day.columns, "campaign_version", "daily_budget"])
+
+    return pd.concat(matched_groups, ignore_index=True)
+
+
 def generate_campaign_day_panel(
     kw_day_panel_file: str | Path,
-    budget_history_file: str | Path,
+    campaign_summary_file: str | Path,
     campaign_day_output_file: str | Path | None = None,
     campaign_summary_output_file: str | Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Generate active campaign-day aggregates and a campaign-level summary."""
+    """Generate active campaign-day aggregates keyed to campaign-summary versions."""
     kw_day = clean_kw_day_panel(kw_day_panel_file)
-    budgets = _read_clean_budget_history(budget_history_file)
+    campaign_summary = _read_campaign_summary(campaign_summary_file)
 
     kw_day["active_date_cost"] = kw_day.groupby(["date", "campaign"], dropna=False)[
         "cost"
@@ -177,81 +261,25 @@ def generate_campaign_day_panel(
     campaign_day = (
         active_kw_day.groupby(["date", "campaign", "region"], dropna=False)
         .agg(
-            impressions=("impressions", "sum"),
             clicks=("clicks", "sum"),
             cost=("cost", "sum"),
-            conversions=("conversions", "sum"),
             match_types=("match_type", _join_sorted_unique),
-            unique_keywords=("keyword", _join_sorted_unique),
-            num_unique_keywords=("keyword", "nunique"),
         )
         .reset_index()
     )
-
-    impression_share = (
-        active_kw_day.assign(weighted_impression_share=lambda df: df["impression_share"] * df["impressions"])
-        .groupby(["date", "campaign"], dropna=False)
-        .agg(
-            impression_share_weighted_sum=("weighted_impression_share", "sum"),
-            impression_share_impressions=("impressions", "sum"),
-            impression_share_mean=("impression_share", "mean"),
-        )
-        .reset_index()
-    )
-    impression_share["impression_share"] = impression_share[
-        "impression_share_weighted_sum"
-    ] / impression_share["impression_share_impressions"]
-    impression_share.loc[
-        impression_share["impression_share_impressions"] == 0, "impression_share"
-    ] = impression_share["impression_share_mean"]
-    campaign_day = campaign_day.merge(
-        impression_share[["date", "campaign", "impression_share"]],
-        on=["date", "campaign"],
-        how="left",
-    )
-
-    campaign_day = _add_daily_budgets(campaign_day, budgets)
-    campaign_day["date"] = pd.to_datetime(campaign_day["date"]).dt.date
+    campaign_day = _attach_campaign_versions(campaign_day, campaign_summary)
+    campaign_day["cost"] = campaign_day["cost"].round(2)
     campaign_day = campaign_day[
         [
             "date",
-            "campaign",
+            "campaign_version",
             "region",
             "daily_budget",
-            "impressions",
+            "match_types",
             "clicks",
             "cost",
-            "conversions",
-            "impression_share",
-            "match_types",
-            "unique_keywords",
-            "num_unique_keywords",
         ]
-    ].sort_values(["date", "region", "campaign"], na_position="last")
-
-    budgeted_active_kw_day = _add_daily_budgets(active_kw_day, budgets)
-    budgeted_active_kw_day["date"] = pd.to_datetime(budgeted_active_kw_day["date"]).dt.date
-    campaign_summary = (
-        budgeted_active_kw_day.groupby(["campaign", "daily_budget", "region"], dropna=False)
-        .agg(
-            start_date=("date", "min"),
-            match_types=("match_type", _join_sorted_unique),
-            unique_keywords=("keyword", _join_sorted_unique),
-            num_unique_keywords=("keyword", "nunique"),
-        )
-        .reset_index()
-    )
-    campaign_summary = campaign_summary[
-        [
-            "campaign",
-            "start_date",
-            "daily_budget",
-            "region",
-            "match_types",
-            "unique_keywords",
-            "num_unique_keywords",
-        ]
-    ].sort_values(["start_date", "region", "campaign"], na_position="last")
+    ].sort_values(["date", "region", "campaign_version"], na_position="last")
 
     for df, output_file in [
         (campaign_day, campaign_day_output_file),

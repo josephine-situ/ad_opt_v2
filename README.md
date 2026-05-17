@@ -30,36 +30,67 @@ python scripts/pull_input_data.py `
 
 Outputs are written under `data/<course>/reports`.
 
-This also writes `data/<course>/reports/kw-day-panel.csv`, a keyword-day panel with
-date, keyword, campaign, match type, impressions, clicks, cost, conversions, and
-search impression share.
+The raw Search keyword export is written to
+`data/<course>/reports/Search keyword - raw input to models.csv`. The processed
+keyword-day panel is derived from that full export, not from a separate keyword-day
+report.
 
-To pull only the keyword-day panel:
+## Parsing Procedure
+
+The processed analysis files are generated in three steps.
+
+First, parse the saved Google Ads change-history HTML. This writes compact budget
+history, campaign-version rows, and deduplicated keyword sets:
 
 ```powershell
-python scripts/pull_input_data.py `
-  --datasets kw_day_panel `
-  --output-course sys_think `
-  --google-ads-yaml ..\google-ads-prod.yaml `
-  --customer-id 1234567890
+uv run python scripts/parse_change_history_html.py `
+  "data/sys_think/Change history - MIT xPRO - System Thinking - Google Ads.html" `
+  -o data/sys_think/change_history_budgets.csv `
+  --campaign-summary-output data/sys_think/processed/campaign-summary.csv `
+  --keyword-sets-output data/sys_think/processed/campaign-keyword-sets.csv `
+  --search-keyword-report "data/sys_think/reports/Search keyword - raw input to models.csv"
 ```
 
-When `data/<course>/change_history_budgets.csv` exists, the keyword-day panel
-starts at the earliest date in that file.
+`campaign-summary.csv` is raw-report driven: intervals come from Search keyword
+coverage, positive keywords and match-type counts come from the raw Search keyword
+export, and budget/negative-keyword metadata comes from change history. If a
+campaign was renamed from an earlier run, the parser can fill missing budgets from
+the earlier campaign's budget changes. Rows that still have no daily budget are
+filtered out.
+
+`campaign-keyword-sets.csv` stores the full positive and negative keyword lists.
+`campaign-summary.csv` references those rows by `keyword_set_id`. Budget-only
+splits share the union of observed keywords across the whole budget-only run, so
+a pure budget change does not create a different keyword set.
+
+Next, clean the full raw Search keyword export into the processed keyword-day
+panel:
+
+```powershell
+uv run python scripts/process_input_data.py --output-course sys_think
+```
+
+This writes `data/sys_think/processed/kw-day-panel.csv` with date, region,
+keyword, campaign, match type, clicks, cost, conversion value, currency, and first
+page CPC. It does not include impressions.
+
+Finally, build the campaign-day panel from the processed keyword-day panel and
+campaign summary:
+
+```powershell
+uv run python scripts/generate_campaign_day_panel.py --output-course sys_think
+```
+
+This writes `data/sys_think/processed/campaign-day-panel.csv` with date,
+campaign version, region, daily budget, match types, clicks, and cost.
 
 ## Change History Signals
 
-`data/sys_think/processed/campaign-summary.csv` currently uses the saved Google
-Ads change history HTML to summarize campaign budget changes, negative keywords,
-campaign status, and campaign rename lineage. Positive keyword inventory and
-match-type counts come from the raw Search keyword report matched by exact
-campaign name and date window (`start_date <= Day < end_date`), because that is
-more reliable for observed active keywords than inferring positives from change
-history. Deduplicated positive/negative keyword configurations are written to
-`data/sys_think/processed/campaign-keyword-sets.csv` and referenced from
-`campaign-summary.csv` by `keyword_set_id`. Per-campaign raw-vs-change-history
-keyword comparisons are written to
-`data/sys_think/processed/campaign-keyword-checks.csv`.
+`data/sys_think/processed/campaign-summary.csv` uses the saved Google Ads change
+history HTML for campaign budget changes, negative keywords, campaign status, and
+campaign rename lineage. Positive keyword inventory and match-type counts come
+from the raw Search keyword report because that is more reliable for observed
+active keywords than inferring positives from change history.
 
 The same HTML contains other campaign changes that are useful for interpretation
 but are not yet represented as structured columns in the summary:
@@ -93,8 +124,9 @@ python scripts/process_input_data.py `
   --output-course sys_think
 ```
 
-By default, this cleans `data/<course>/reports/kw-day-panel.csv`, infers `region`
-from the campaign name, and writes `data/<course>/processed/kw-day-panel-clean.csv`.
+By default, this cleans
+`data/<course>/reports/Search keyword - raw input to models.csv`, infers `region`
+from the campaign name, and writes `data/<course>/processed/kw-day-panel.csv`.
 
 ## Pull Keyword Planner Metrics
 
