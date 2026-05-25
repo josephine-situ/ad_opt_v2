@@ -176,7 +176,7 @@ COURSE_CONFIG: dict[str, CourseConfig] = {
         "purchase_actions": ["Purchase"],
     },
     "sys_think": {
-        "min_date": "2022-07-01",
+        "min_date": "2024-06-01",
         "start_dates": [
             "2021-01-25",
             "2021-04-05",

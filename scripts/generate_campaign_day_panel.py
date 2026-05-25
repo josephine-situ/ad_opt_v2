@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate campaign-day panel and campaign summary files."""
+"""Generate campaign-day panel from kw-day-panel and campaign summary."""
 
 import argparse
 import sys

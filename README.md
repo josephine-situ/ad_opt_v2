@@ -10,10 +10,16 @@ This repo was split from `ad_opt` and intentionally keeps only the Google Ads AP
 
 ## Setup
 
+Requires [uv](https://docs.astral.sh/uv/). From the repo root:
+
 ```powershell
-python -m venv .venv
+uv sync
+```
+
+Run scripts with `uv run python ...` or activate `.venv`:
+
+```powershell
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e .
 ```
 
 Keep Google Ads credentials outside the repo. The `.gitignore` excludes common `google-ads*.yaml` and `google-ads*.json` credential filenames.
@@ -21,76 +27,79 @@ Keep Google Ads credentials outside the repo. The `.gitignore` excludes common `
 ## Pull Ads Reports
 
 ```powershell
-python scripts/pull_input_data.py `
-  --datasets ads_reports `
+uv run python scripts/pull_input_data.py `
+  --datasets campaign_opt `
   --output-course sys_think `
   --google-ads-yaml ..\google-ads-prod.yaml `
   --customer-id 1234567890
 ```
 
-Outputs are written under `data/<course>/reports`.
+Pulls **campaign_opt** data from the Google Ads API:
 
-The raw Search keyword export is written to
-`data/<course>/reports/Search keyword - raw input to models.csv`. The processed
-keyword-day panel is derived from that full export, not from a separate keyword-day
-report.
+- `reports/kw-day-panel.csv` — keyword-day clicks, cost, and filtered `all_conv` (via `keyword_view` GAQL; excludes Experiment campaigns)
+
+Add `keyword_planning` to `--datasets` when GKP set features are enabled in config.
+
+Outputs are written under `data/<course>/reports/`.
 
 ## Parsing Procedure
 
-The processed analysis files are generated in three steps.
+Run in order: **pull → clean → parse change history → build campaign-day panel**.
 
-First, parse the saved Google Ads change-history HTML. This writes compact budget
-history, campaign-version rows, and deduplicated keyword sets:
+### 1. Pull Google Ads reports
 
 ```powershell
-uv run python scripts/parse_change_history_html.py `
-  "data/sys_think/Change history - MIT xPRO - System Thinking - Google Ads.html" `
-  -o data/sys_think/change_history_budgets.csv `
-  --campaign-summary-output data/sys_think/processed/campaign-summary.csv `
-  --keyword-sets-output data/sys_think/processed/campaign-keyword-sets.csv `
-  --search-keyword-report "data/sys_think/reports/Search keyword - raw input to models.csv"
+uv run python scripts/pull_input_data.py `
+  --datasets campaign_opt `
+  --output-course sys_think `
+  --google-ads-yaml ..\google-ads-prod.yaml `
+  --customer-id 1234567890
 ```
 
-`campaign-summary.csv` is raw-report driven: intervals come from Search keyword
-coverage, positive keywords and match-type counts come from the raw Search keyword
-export, and budget/negative-keyword metadata comes from change history. If a
-campaign was renamed from an earlier run, the parser can fill missing budgets from
-the earlier campaign's budget changes. Rows that still have no daily budget are
-filtered out.
+Start date defaults to `min_date` in `config.py` (`2024-06-01` for `sys_think`).
 
-`campaign-keyword-sets.csv` stores the full positive and negative keyword lists.
-`campaign-summary.csv` references those rows by `keyword_set_id`. Budget-only
-splits share the union of observed keywords across the whole budget-only run, so
-a pure budget change does not create a different keyword set.
+→ `data/<course>/reports/kw-day-panel.csv`
 
-Next, clean the full raw Search keyword export into the processed keyword-day
-panel:
+### 2. Clean the kw-day-panel
 
 ```powershell
 uv run python scripts/process_input_data.py --output-course sys_think
 ```
 
-This writes `data/sys_think/processed/kw-day-panel.csv` with date, region,
-keyword, campaign, match type, clicks, cost, conversion value, currency, and first
-page CPC. It does not include impressions.
+→ `data/<course>/processed/kw-day-panel.csv`
 
-Finally, build the campaign-day panel from the processed keyword-day panel and
-campaign summary:
+### 3. Parse change history
+
+Save the change-history HTML under `data/<course>/`, then:
+
+```powershell
+uv run python scripts/parse_change_history_html.py --output-course sys_think
+```
+
+Uses the cleaned kw-day-panel for live keyword inventory. Writes `campaign-summary.csv` and `campaign-keyword-sets.csv`.
+
+### 4. Build campaign-day panel
 
 ```powershell
 uv run python scripts/generate_campaign_day_panel.py --output-course sys_think
 ```
 
-This writes `data/sys_think/processed/campaign-day-panel.csv` with date,
-campaign version, region, daily budget, match types, clicks, and cost.
+→ `data/<course>/processed/campaign-day-panel.csv` — clicks, cost, and `all_conv` per campaign version
+
+```powershell
+uv run python scripts/generate_campaign_day_panel.py --output-course sys_think
+```
+
+Joins the cleaned kw-day-panel with campaign summary. Writes:
+
+- `data/sys_think/processed/campaign-day-panel.csv` — date, campaign version, region, daily budget, match types, clicks, cost, and `all_conv`
 
 ## Change History Signals
 
 `data/sys_think/processed/campaign-summary.csv` uses the saved Google Ads change
 history HTML for campaign budget changes, negative keywords, campaign status, and
 campaign rename lineage. Positive keyword inventory and match-type counts come
-from the raw Search keyword report because that is more reliable for observed
-active keywords than inferring positives from change history.
+Positive keyword inventory and match-type counts come from the cleaned kw-day-panel.
 
 The same HTML contains other campaign changes that are useful for interpretation
 but are not yet represented as structured columns in the summary:
@@ -119,19 +128,30 @@ are likely `landing_page_url`, `num_rsa_created`, `num_rsa_changed`,
 
 ## Process Pulled Reports
 
+Step 1 of the parsing procedure above — cleans the raw API export only:
+
 ```powershell
-python scripts/process_input_data.py `
+uv run python scripts/process_input_data.py `
   --output-course sys_think
 ```
 
-By default, this cleans
-`data/<course>/reports/Search keyword - raw input to models.csv`, infers `region`
-from the campaign name, and writes `data/<course>/processed/kw-day-panel.csv`.
+Reads `data/<course>/reports/kw-day-panel.csv`, infers `region` from campaign name,
+and writes `data/<course>/processed/kw-day-panel.csv`.
+
+## Build keywords_classified (existing campaign keywords only)
+
+```powershell
+uv run python scripts/build_keywords_classified.py --course sys_think
+```
+
+Writes `data/<course>/gkp/keywords_classified.csv` with `Origin=existing` only
+(keywords from kw-day-panel, not search terms or Semrush
+candidates). Re-run after pulling new keyword performance data.
 
 ## Pull Keyword Planner Metrics
 
 ```powershell
-python scripts/pull_input_data.py `
+uv run python scripts/pull_input_data.py `
   --datasets keyword_planning `
   --output-course sys_think `
   --keyword-planning-input-file data\sys_think\gkp\keywords_classified.csv `
@@ -143,23 +163,23 @@ Outputs are written under `data/<course>/gkp`.
 
 ## Campaign budget + keyword-set optimization
 
-Config-driven pipeline (Python 3.13+). Install core + solver + ML extras:
+Config-driven pipeline (Python 3.11+). Install core + solver + ML extras:
 
 ```powershell
-pip install -e ".[optimization,ml]"
+uv sync --extra optimization --extra ml
 ```
 
 Default experiment config: `opt_results/sys_think/campaign/default/campaign_config.json`
 
 ```powershell
 # Full pipeline (panel → GKP set features → candidates → model tournament → Gurobi MILP)
-python scripts/run_campaign_pipeline.py --course sys_think
+uv run python scripts/run_campaign_pipeline.py --course sys_think
 
 # Individual steps
-python scripts/build_gkp_set_features.py --course sys_think
-python scripts/build_keyword_candidates.py --course sys_think
-python scripts/fit_response_models.py --course sys_think
-python scripts/optimize_campaign.py --course sys_think --budget 400
+uv run python scripts/build_gkp_set_features.py --course sys_think
+uv run python scripts/build_keyword_candidates.py --course sys_think
+uv run python scripts/fit_response_models.py --course sys_think
+uv run python scripts/optimize_campaign.py --course sys_think --budget 400
 
 # Walk-forward daily backtest (optimize each day in range; like ad_opt backtest_daily)
 uv run python scripts/backtest_campaign.py --course sys_think --start 2025-10-01 --end 2025-12-31
@@ -168,14 +188,14 @@ uv run python scripts/backtest_campaign.py --course sys_think --start 2025-10-01
 uv run python scripts/monitor_campaign_production.py --course sys_think --lag 1
 ```
 
-Notebook EDA (`eda_clicks_budget_keywords.ipynb`) is optional; install `.[notebook]` for Jupyter/matplotlib. Production scripts do not import the notebook.
+Notebook EDA (`eda_clicks_budget_keywords.ipynb`) is optional; add `--extra notebook` to `uv sync`. Production scripts do not import the notebook.
 
 See [`campaign_opt/README.md`](campaign_opt/README.md) for package layout, CV, and MILP backends.
 
 ## Query Auto-Applied Recommendation Changes
 
 ```powershell
-python scripts/query_change_events.py `
+uv run python scripts/query_change_events.py `
   --google-ads-yaml ..\google-ads-prod.yaml `
   --customer-id 1234567890 `
   --lookback-days 7

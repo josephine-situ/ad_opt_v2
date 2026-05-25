@@ -40,6 +40,17 @@ def get_holiday_calendars(country_codes: Iterable[str], years: list[int] | None 
     return calendars
 
 
+def season_from_month(month: int) -> str:
+    """Meteorological season (Northern Hemisphere) from calendar month 1–12."""
+    if month in (12, 1, 2):
+        return "Winter"
+    if month in (3, 4, 5):
+        return "Spring"
+    if month in (6, 7, 8):
+        return "Summer"
+    return "Fall"
+
+
 def calculate_days_to_next(d: pd.Timestamp, course_start_dts: list[str] | None = None) -> float:
     if course_start_dts is None:
         course_start_dts = []
@@ -61,7 +72,7 @@ def add_calendar_features(
     out[date_col] = pd.to_datetime(out[date_col])
     out["day_of_week"] = out[date_col].dt.day_name()
     out["is_weekend"] = (out[date_col].dt.weekday >= 5).astype(int)
-    out["month"] = out[date_col].dt.strftime("%b")
+    out["season"] = out[date_col].dt.month.map(season_from_month)
 
     years = sorted({int(y) for y in out[date_col].dt.year.unique()})
     country_codes = [region_to_country_code(r) for r in out[region_col].unique()]
@@ -98,7 +109,7 @@ def calendar_vector_for_date(
     enriched = add_calendar_features(row, course=course)
     cols = [
         "day_of_week",
-        "month",
+        "season",
         "is_weekend",
         "is_public_holiday",
         "days_to_next_course_start",

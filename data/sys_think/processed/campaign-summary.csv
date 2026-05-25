@@ -1,0 +1,48 @@
+campaign_version,keyword_set_id,campaign,start_date,end_date,change_type,daily_budget,match_types,num_unique_keywords,broad_keyword_count,phrase_keyword_count,exact_keyword_count,num_negative_keywords
+1,ks_0001,Course - System Thinking - Run 14 - Search - Lead Gen - A - Broad,2024-11-26,,raw_keyword_coverage,13.53,Broad,9,9,0,0,0
+2,ks_0002,Course - System Thinking - Run 14 - Search - Lead Gen - B - Broad,2024-11-25,,daily_budget,12.35,Broad,9,9,0,0,0
+3,ks_0003,Course - System Thinking - Run 14 - Search - Lead Gen - C - Broad,2024-11-26,,raw_keyword_coverage,6.18,Broad,9,9,0,0,0
+4,ks_0004,Course - System Thinking - Run 14 - Search - Lead Gen - C - Exact & Phrase,2024-06-27,2024-11-17,raw_keyword_coverage,19.42,Phrase; Exact,101,0,81,71,0
+5,ks_0004,Course - System Thinking - Run 14 - Search - Lead Gen - C - Exact & Phrase,2024-11-17,2024-11-25,daily_budget,21.18,Phrase; Exact,101,0,81,71,0
+6,ks_0004,Course - System Thinking - Run 14 - Search - Lead Gen - C - Exact & Phrase,2024-11-25,,daily_budget,15.00,Phrase; Exact,101,0,81,71,0
+7,ks_0005,Course - System Thinking - Run 16 - Search - Lead Gen - A - Exact & Phrase,2024-06-27,2024-11-17,raw_keyword_coverage,58.25,Phrase; Exact,106,0,85,78,0
+8,ks_0005,Course - System Thinking - Run 16 - Search - Lead Gen - A - Exact & Phrase,2024-11-17,2024-11-25,daily_budget,63.53,Phrase; Exact,106,0,85,78,0
+9,ks_0005,Course - System Thinking - Run 16 - Search - Lead Gen - A - Exact & Phrase,2024-11-25,2025-03-07,daily_budget,50.00,Phrase; Exact,106,0,85,78,0
+10,ks_0005,Course - System Thinking - Run 16 - Search - Lead Gen - A - Exact & Phrase,2025-03-07,2025-06-20,daily_budget,164.77,Phrase; Exact,106,0,85,78,0
+11,ks_0005,Course - System Thinking - Run 16 - Search - Lead Gen - A - Exact & Phrase,2025-06-20,2025-10-03,daily_budget,86.96,Phrase; Exact,106,0,85,78,0
+12,ks_0006,Course - System Thinking - Run 16 - Search - Lead Gen - A - Exact & Phrase,2025-10-03,,exact_keyword_remove,86.96,Phrase; Exact,46,0,28,30,0
+13,ks_0007,Course - System Thinking - Run 16 - Search - Lead Gen - B - Exact & Phrase,2024-06-26,2024-11-17,raw_keyword_coverage,38.83,Phrase; Exact,114,0,89,95,0
+14,ks_0007,Course - System Thinking - Run 16 - Search - Lead Gen - B - Exact & Phrase,2024-11-17,2024-11-25,daily_budget,42.35,Phrase; Exact,114,0,89,95,0
+15,ks_0007,Course - System Thinking - Run 16 - Search - Lead Gen - B - Exact & Phrase,2024-11-25,2025-03-07,daily_budget,30.00,Phrase; Exact,114,0,89,95,0
+16,ks_0007,Course - System Thinking - Run 16 - Search - Lead Gen - B - Exact & Phrase,2025-03-07,2025-06-20,daily_budget,65.91,Phrase; Exact,114,0,89,95,0
+17,ks_0007,Course - System Thinking - Run 16 - Search - Lead Gen - B - Exact & Phrase,2025-06-20,2025-10-03,daily_budget,34.78,Phrase; Exact,114,0,89,95,0
+18,ks_0008,Course - System Thinking - Run 16 - Search - Lead Gen - B - Exact & Phrase,2025-10-03,,exact_keyword_remove,34.78,Phrase; Exact,57,0,32,40,0
+19,ks_0009,Course - System Thinking - Run 16 - Search - Lead Gen - US - Broad,2024-11-27,2025-03-07,raw_keyword_coverage,96.47,Broad,10,10,0,0,0
+20,ks_0009,Course - System Thinking - Run 16 - Search - Lead Gen - US - Broad,2025-03-07,2025-06-20,daily_budget,153.42,Broad,10,10,0,0,0
+21,ks_0009,Course - System Thinking - Run 16 - Search - Lead Gen - US - Broad,2025-06-20,,daily_budget,26.09,Broad,10,10,0,0,0
+22,ks_0010,Course - System Thinking - Run 16 - Search - Lead Gen - US - Exact,2024-06-27,2024-11-17,raw_keyword_coverage,271.84,Phrase; Exact,115,0,95,100,0
+23,ks_0010,Course - System Thinking - Run 16 - Search - Lead Gen - US - Exact,2024-11-17,2024-11-25,daily_budget,296.47,Phrase; Exact,115,0,95,100,0
+24,ks_0010,Course - System Thinking - Run 16 - Search - Lead Gen - US - Exact,2024-11-25,2025-03-07,daily_budget,200.00,Phrase; Exact,115,0,95,100,0
+25,ks_0010,Course - System Thinking - Run 16 - Search - Lead Gen - US - Exact,2025-03-07,2025-06-20,daily_budget,275.00,Phrase; Exact,115,0,95,100,0
+26,ks_0010,Course - System Thinking - Run 16 - Search - Lead Gen - US - Exact,2025-06-20,2025-10-03,daily_budget,120.00,Phrase; Exact,115,0,95,100,0
+27,ks_0011,Course - System Thinking - Run 16 - Search - Lead Gen - US - Exact,2025-10-03,,exact_keyword_remove,120.00,Exact,14,0,0,14,0
+28,ks_0012,Course - System Thinking - Run 19 - Search - Prospecting - A,2025-10-20,2026-02-11,daily_budget,89.29,Broad; Phrase; Exact,102,5,86,32,0
+29,ks_0012,Course - System Thinking - Run 19 - Search - Prospecting - A,2026-02-11,2026-04-06,daily_budget,152.70,Broad; Phrase; Exact,102,5,86,32,0
+30,ks_0013,Course - System Thinking - Run 19 - Search - Prospecting - A,2026-04-06,2026-04-22,campaign_paused,152.70,Phrase; Exact,19,0,15,5,0
+31,ks_0014,Course - System Thinking - Run 19 - Search - Prospecting - A,2026-04-29,2026-05-02,campaign_active,152.70,Phrase; Exact,15,0,8,13,1338
+32,ks_0015,Course - System Thinking - Run 19 - Search - Prospecting - A,2026-05-02,2026-05-12,exact_keyword_remove;phrase_keyword_remove,152.70,Phrase; Exact,22,0,17,14,1338
+33,ks_0015,Course - System Thinking - Run 19 - Search - Prospecting - A,2026-05-12,,daily_budget,90.91,Phrase; Exact,22,0,17,14,1338
+34,ks_0016,Course - System Thinking - Run 19 - Search - Prospecting - B,2025-10-20,2026-02-11,daily_budget,35.71,Broad; Phrase; Exact,97,6,82,25,0
+35,ks_0016,Course - System Thinking - Run 19 - Search - Prospecting - B,2026-02-11,2026-04-06,daily_budget,61.90,Broad; Phrase; Exact,97,6,82,25,0
+36,ks_0017,Course - System Thinking - Run 19 - Search - Prospecting - B,2026-04-06,2026-04-22,campaign_paused,61.90,Phrase; Exact,24,0,19,5,0
+37,ks_0018,Course - System Thinking - Run 19 - Search - Prospecting - B,2026-04-29,2026-05-02,campaign_active,61.90,Phrase; Exact,6,0,5,2,1338
+38,ks_0019,Course - System Thinking - Run 19 - Search - Prospecting - B,2026-05-02,2026-05-12,exact_keyword_remove;phrase_keyword_remove,61.90,Phrase; Exact,18,0,12,11,1338
+39,ks_0019,Course - System Thinking - Run 19 - Search - Prospecting - B,2026-05-12,,daily_budget,36.36,Phrase; Exact,18,0,12,11,1338
+40,ks_0020,Course - System Thinking - Run 19 - Search - Prospecting - USA,2025-10-20,2026-02-11,raw_keyword_coverage,232.14,Broad; Phrase; Exact,39,6,8,37,0
+41,ks_0020,Course - System Thinking - Run 19 - Search - Prospecting - USA,2026-02-11,2026-03-31,daily_budget,198.10,Broad; Phrase; Exact,39,6,8,37,0
+42,ks_0021,Course - System Thinking - Run 19 - Search - Prospecting - USA,2026-03-31,2026-04-06,exact_keyword_remove,198.10,Exact,18,0,0,18,0
+43,ks_0022,Course - System Thinking - Run 19 - Search - Prospecting - USA,2026-04-06,2026-04-22,campaign_paused,198.10,Exact,7,0,0,7,0
+44,ks_0023,Course - System Thinking - Run 19 - Search - Prospecting - USA,2026-04-29,2026-05-02,campaign_active,198.10,Phrase; Exact,14,0,9,10,1338
+45,ks_0024,Course - System Thinking - Run 19 - Search - Prospecting - USA,2026-05-02,2026-05-05,exact_keyword_remove;phrase_keyword_remove,198.10,Phrase; Exact,14,0,11,9,1338
+46,ks_0025,Course - System Thinking - Run 19 - Search - Prospecting - USA,2026-05-05,2026-05-12,negative_exact_keyword_add,198.10,Phrase; Exact,22,0,16,13,1339
+47,ks_0025,Course - System Thinking - Run 19 - Search - Prospecting - USA,2026-05-12,,daily_budget,240.00,Phrase; Exact,22,0,16,13,1339

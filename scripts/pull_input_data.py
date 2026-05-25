@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Pull Google Ads reports and Keyword Planner data."""
+"""Pull Google Ads data required by campaign_opt."""
 
 import argparse
 import csv
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable
@@ -16,23 +16,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import COURSE_CONFIG
 from utils.ads_reporting import (
-    ReportFunction,
-    generate_age_clicks_and_conversion_report,
-    generate_device_clicks_and_conversion_report,
-    generate_hod_clicks_and_conversion_report,
     generate_kw_day_panel_report,
-    generate_loc_clicks_and_conversion_report,
-    generate_purchase_report,
-    generate_search_keyword_report,
-    generate_search_terms_report,
     write_to_file,
 )
 from utils.metrics import google_ads_metrics_client
 
-ADS_REPORTS = "ads_reports"
-KW_DAY_PANEL = "kw_day_panel"
+CAMPAIGN_OPT = "campaign_opt"
 KEYWORD_PLANNING = "keyword_planning"
-VALID_DATASETS = {ADS_REPORTS, KW_DAY_PANEL, KEYWORD_PLANNING}
+VALID_DATASETS = {CAMPAIGN_OPT, KEYWORD_PLANNING}
 
 
 def _gkp_month_header_sort_key(header: str) -> tuple[int, int]:
@@ -44,7 +35,9 @@ def _gkp_month_header_sort_key(header: str) -> tuple[int, int]:
 def validate_requested_datasets(datasets: Iterable[str]) -> set[str]:
     requested_datasets = {dataset.strip() for dataset in datasets if dataset.strip()}
     if not requested_datasets:
-        print(f"Error: --datasets must include at least one of: {', '.join(sorted(VALID_DATASETS))}")
+        print(
+            f"Error: --datasets must include at least one of: {', '.join(sorted(VALID_DATASETS))}"
+        )
         sys.exit(1)
 
     invalid_datasets = requested_datasets - VALID_DATASETS
@@ -56,94 +49,38 @@ def validate_requested_datasets(datasets: Iterable[str]) -> set[str]:
     return requested_datasets
 
 
-def get_budget_history_start_date(output_course: str) -> str | None:
-    budget_history_file = Path(f"data/{output_course}/change_history_budgets.csv")
-    if not budget_history_file.exists():
-        return None
+def _resolve_date_range(
+    output_course: str,
+    start_date: str | None,
+    end_date: str | None,
+) -> tuple[str, str, str]:
+    resolved_end = end_date or datetime.now().strftime("%Y-%m-%d")
+    if start_date:
+        resolved_start = start_date
+        start_source = "--start-date"
+    else:
+        resolved_start = COURSE_CONFIG[output_course]["min_date"]
+        start_source = f"config min_date ({resolved_start})"
+    return resolved_start, resolved_end, start_source
 
-    dates = []
-    with open(budget_history_file, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            raw_date = row.get("date", "").strip()
-            if raw_date:
-                dates.append(raw_date)
 
-    return min(dates) if dates else None
-
-
-def pull_ads_reports(
+def pull_campaign_opt(
     google_ads_client: GoogleAdsClient,
     customer_id: str,
     output_course: str,
     start_date: str | None = None,
     end_date: str | None = None,
-    bid_adj_effectiveness_end_date: str | None = None,
 ) -> None:
-    """Pull all Google Ads report CSVs for a course."""
-    if not end_date:
-        end_date = datetime.now().strftime("%Y-%m-%d")
-    if not start_date:
-        start_date = COURSE_CONFIG[output_course]["min_date"]
-
-    print(f"Pulling ads reports for course '{output_course}'...")
-    print(f"Date range: {start_date} to {end_date}")
-    print(f"Customer ID: {customer_id}")
-
-    report_functions: list[ReportFunction] = [
-        generate_search_keyword_report,
-        generate_search_terms_report,
-        generate_purchase_report,
-        generate_hod_clicks_and_conversion_report,
-        generate_age_clicks_and_conversion_report,
-        generate_device_clicks_and_conversion_report,
-        generate_loc_clicks_and_conversion_report,
-    ]
-
-    for report in report_functions:
-        report(google_ads_client, customer_id, output_course, start_date, end_date)
-
-    eff_end = bid_adj_effectiveness_end_date or (
-        datetime.now() - timedelta(days=1)
-    ).strftime("%Y-%m-%d")
-    eff_start = (datetime.strptime(eff_end, "%Y-%m-%d") - timedelta(days=7)).strftime(
-        "%Y-%m-%d"
+    """
+    Pull API reports used by the campaign_opt pipeline:
+      - kw-day-panel (keyword-day clicks/cost + filtered all_conv via keyword_view GAQL)
+    """
+    start_date, end_date, start_source = _resolve_date_range(
+        output_course, start_date, end_date
     )
 
-    print(f"Pulling 7d bid adjustment effectiveness reports ({eff_start} to {eff_end})...")
-    for generator in [
-        generate_hod_clicks_and_conversion_report,
-        generate_age_clicks_and_conversion_report,
-        generate_device_clicks_and_conversion_report,
-        generate_loc_clicks_and_conversion_report,
-    ]:
-        generator(
-            google_ads_client,
-            customer_id,
-            output_course,
-            eff_start,
-            eff_end,
-            output_suffix="_7d",
-        )
-
-    print(f"Successfully generated all reports for {output_course}")
-
-
-def pull_kw_day_panel(
-    google_ads_client: GoogleAdsClient,
-    customer_id: str,
-    output_course: str,
-    start_date: str | None = None,
-    end_date: str | None = None,
-) -> None:
-    """Pull only the keyword-day panel report for a course."""
-    if not end_date:
-        end_date = datetime.now().strftime("%Y-%m-%d")
-    if not start_date:
-        start_date = get_budget_history_start_date(output_course) or COURSE_CONFIG[output_course]["min_date"]
-
-    print(f"Pulling kw-day-panel for course '{output_course}'...")
-    print(f"Date range: {start_date} to {end_date}")
+    print(f"Pulling campaign_opt datasets for course '{output_course}'...")
+    print(f"Date range: {start_date} to {end_date} (start from {start_source})")
     print(f"Customer ID: {customer_id}")
 
     generate_kw_day_panel_report(
@@ -153,6 +90,8 @@ def pull_kw_day_panel(
         start_date,
         end_date,
     )
+
+    print(f"Successfully generated campaign_opt reports for {output_course}")
 
 
 def generate_rows_from_gkp_response(response: Any) -> tuple[list[dict[str, Any]], list[str]]:
@@ -209,6 +148,9 @@ def pull_keyword_planning(
     with open(keyword_planning_input_file, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            origin = row.get("Origin", "").strip().lower()
+            if origin and origin not in {"existing", "existing keywords"}:
+                continue
             keyword = row.get("Keyword", "").strip()
             if keyword:
                 keywords.append(keyword)
@@ -277,12 +219,16 @@ def pull_keyword_planning(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Pull Google Ads input data")
+    parser = argparse.ArgumentParser(
+        description="Pull Google Ads input data for campaign_opt.",
+    )
     parser.add_argument(
         "--datasets",
         type=str,
         required=True,
-        help="Comma-separated list of datasets to pull: ads_reports, kw_day_panel, keyword_planning",
+        help=(
+            "Comma-separated datasets: campaign_opt, keyword_planning (GKP)."
+        ),
     )
     parser.add_argument(
         "--keyword-planning-input-file",
@@ -310,29 +256,31 @@ def main() -> None:
         help="Google Ads customer ID.",
     )
     parser.add_argument(
-        "--bid-adj-effectiveness-end-date",
+        "--start-date",
         type=str,
         default="",
-        help="YYYY-MM-DD end date for *_7d.csv bid-adjustment reports. Defaults to yesterday.",
+        help="YYYY-MM-DD start date for campaign_opt reports. Defaults to min_date in config.py.",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=str,
+        default="",
+        help="YYYY-MM-DD end date for campaign_opt reports. Defaults to today.",
     )
 
     args = parser.parse_args()
     requested_datasets = validate_requested_datasets(args.datasets.split(","))
     google_ads_client = GoogleAdsClient.load_from_storage(args.google_ads_yaml)
+    start_date = args.start_date.strip() or None
+    end_date = args.end_date.strip() or None
 
-    if ADS_REPORTS in requested_datasets:
-        pull_ads_reports(
+    if CAMPAIGN_OPT in requested_datasets:
+        pull_campaign_opt(
             google_ads_client,
             args.customer_id,
             args.output_course,
-            bid_adj_effectiveness_end_date=args.bid_adj_effectiveness_end_date.strip() or None,
-        )
-
-    if KW_DAY_PANEL in requested_datasets:
-        pull_kw_day_panel(
-            google_ads_client,
-            args.customer_id,
-            args.output_course,
+            start_date=start_date,
+            end_date=end_date,
         )
 
     if KEYWORD_PLANNING in requested_datasets:

@@ -6,7 +6,6 @@ venv/
 .env
 google-ads*.yaml
 google-ads*.json
-data/
 logs/
 TODO.md
 
@@ -14,3 +13,31 @@ TODO.md
 presentation/build/
 /texput.log
 /SUMMARY_presentation.*
+
+figures/
+*cache*
+*ignore.csv
+
+# --- campaign_opt pipeline data (see campaign_opt/README.md) ---
+
+# Browser "Save Page As" assets — parser only reads the top-level .html file
+**/*_files/
+**/*.download
+
+# Raw API pulls — regeneratable via pull_input_data.py
+data/**/reports/
+
+# GKP API outputs — regeneratable; keep keywords_classified.csv input only
+data/**/gkp/*
+!data/**/gkp/keywords_classified.csv
+
+# Feature caches
+data/**/cache/
+
+# Track pipeline inputs + processed artifacts under data/<course>/
+data/*
+!data/*/
+!data/*/Change history*.html
+!data/*/processed/
+!data/*/processed/**
+!data/*/gkp/keywords_classified.csv

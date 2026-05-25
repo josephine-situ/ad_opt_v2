@@ -12,7 +12,7 @@ KW_DAY_PANEL_COLUMNS = [
     "match_type",
     "clicks",
     "cost",
-    "conv_value",
+    "all_conv",
     "currency_code",
     "first_page_cpc",
 ]
@@ -61,52 +61,18 @@ def _join_sorted_unique(values: pd.Series) -> str:
 
 
 def clean_kw_day_panel(input_file: str | Path, output_file: str | Path | None = None) -> pd.DataFrame:
-    """Clean the keyword-day panel and optionally write it to disk."""
+    """Clean the API kw-day-panel and optionally write it to disk."""
     df = pd.read_csv(input_file)
 
-    raw_search_keyword_columns = {
-        "Day",
-        "Search keyword",
-        "Search keyword match type",
-        "Campaign",
-        "Clicks",
-        "Conv. value",
-        "Currency code",
-        "Cost",
-        "First page CPC",
-    }
-    kw_day_panel_columns = {
-        "date",
-        "keyword",
-        "campaign",
-        "match_type",
-        "clicks",
-        "cost",
-    }
-    if raw_search_keyword_columns <= set(df.columns):
-        df = df.rename(
-            columns={
-                "Day": "date",
-                "Search keyword": "keyword",
-                "Search keyword match type": "match_type",
-                "Campaign": "campaign",
-                "Clicks": "clicks",
-                "Conv. value": "conv_value",
-                "Currency code": "currency_code",
-                "Cost": "cost",
-                "First page CPC": "first_page_cpc",
-            }
-        )
-    elif not kw_day_panel_columns <= set(df.columns):
-        missing_columns = (raw_search_keyword_columns - set(df.columns)) or (
-            kw_day_panel_columns - set(df.columns)
-        )
-        missing = ", ".join(sorted(missing_columns))
-        raise ValueError(f"kw-day-panel input is missing required column(s): {missing}")
+    required = {"date", "keyword", "campaign", "match_type", "clicks", "cost"}
+    missing = required - set(df.columns)
+    if missing:
+        missing_cols = ", ".join(sorted(missing))
+        raise ValueError(f"kw-day-panel input is missing required column(s): {missing_cols}")
 
-    for column in ["conv_value", "currency_code", "first_page_cpc"]:
+    for column in ["all_conv", "currency_code", "first_page_cpc"]:
         if column not in df.columns:
-            df[column] = pd.NA
+            df[column] = 0.0 if column == "all_conv" else pd.NA
 
     required_columns = set(KW_DAY_PANEL_COLUMNS) - {"region"}
     missing_columns = required_columns - set(df.columns)
@@ -123,8 +89,9 @@ def clean_kw_day_panel(input_file: str | Path, output_file: str | Path | None = 
 
     df["clicks"] = pd.to_numeric(df["clicks"], errors="coerce").fillna(0).astype("Int64")
 
-    for column in ["cost", "conv_value", "first_page_cpc"]:
+    for column in ["cost", "all_conv", "first_page_cpc"]:
         df[column] = pd.to_numeric(df[column], errors="coerce")
+    df["all_conv"] = df["all_conv"].fillna(0.0)
 
     df = df[KW_DAY_PANEL_COLUMNS].sort_values(
         ["date", "region", "campaign", "keyword", "match_type"],
@@ -137,59 +104,6 @@ def clean_kw_day_panel(input_file: str | Path, output_file: str | Path | None = 
         df.to_csv(output_path, index=False)
 
     return df
-
-
-def _read_clean_budget_history(budget_history_file: str | Path) -> pd.DataFrame:
-    """Read campaign budget change history and normalize key fields."""
-    budgets = pd.read_csv(budget_history_file)
-    required_columns = {"date", "campaign", "daily budget"}
-    missing_columns = required_columns - set(budgets.columns)
-    if missing_columns:
-        missing = ", ".join(sorted(missing_columns))
-        raise ValueError(f"budget history is missing required column(s): {missing}")
-
-    budgets = budgets.copy()
-    budgets["date"] = pd.to_datetime(budgets["date"]).astype("datetime64[ns]")
-    budgets["campaign"] = _clean_campaign(budgets["campaign"])
-    budgets["daily_budget"] = pd.to_numeric(
-        budgets["daily budget"].astype("string").str.replace(r"[$,]", "", regex=True),
-        errors="coerce",
-    )
-    budgets = budgets.dropna(subset=["date", "campaign", "daily_budget"])
-    budgets = budgets[["date", "campaign", "daily_budget"]].sort_values(["campaign", "date"])
-    return budgets
-
-
-def _add_daily_budgets(campaign_day: pd.DataFrame, budgets: pd.DataFrame) -> pd.DataFrame:
-    """Attach the most recent budget change on or before each campaign-day."""
-    if campaign_day.empty:
-        campaign_day["daily_budget"] = pd.Series(dtype="float64")
-        return campaign_day
-
-    if budgets.empty:
-        campaign_day["daily_budget"] = pd.NA
-        return campaign_day
-
-    campaign_day = campaign_day.copy()
-    campaign_day["date"] = pd.to_datetime(campaign_day["date"]).astype("datetime64[ns]")
-
-    budgeted_groups = []
-    for campaign, group in campaign_day.groupby("campaign", sort=False):
-        campaign_budgets = budgets[budgets["campaign"] == campaign]
-        if campaign_budgets.empty:
-            budgeted_group = group.copy()
-            budgeted_group["daily_budget"] = pd.NA
-        else:
-            budgeted_group = pd.merge_asof(
-                group.sort_values("date"),
-                campaign_budgets.sort_values("date"),
-                on="date",
-                by="campaign",
-                direction="backward",
-            )
-        budgeted_groups.append(budgeted_group)
-
-    return pd.concat(budgeted_groups, ignore_index=True)
 
 
 def _read_campaign_summary(campaign_summary_file: str | Path) -> pd.DataFrame:
@@ -260,27 +174,37 @@ def generate_campaign_day_panel(
     ].transform("sum")
     active_kw_day = kw_day[kw_day["active_date_cost"] > 0].copy()
 
+    agg: dict[str, tuple[str, str]] = {
+        "clicks": ("clicks", "sum"),
+        "cost": ("cost", "sum"),
+    }
+    if "all_conv" in active_kw_day.columns:
+        agg["all_conv"] = ("all_conv", "sum")
+
     campaign_day = (
         active_kw_day.groupby(["date", "campaign", "region"], dropna=False)
-        .agg(
-            clicks=("clicks", "sum"),
-            cost=("cost", "sum"),
-        )
+        .agg(**agg)
         .reset_index()
     )
     campaign_day = _attach_campaign_versions(campaign_day, campaign_summary)
     campaign_day["cost"] = campaign_day["cost"].round(2)
-    campaign_day = campaign_day[
-        [
-            "date",
-            "campaign_version",
-            "region",
-            "daily_budget",
-            "match_types",
-            "clicks",
-            "cost",
-        ]
-    ].sort_values(["date", "region", "campaign_version"], na_position="last")
+    if "all_conv" in campaign_day.columns:
+        campaign_day["all_conv"] = campaign_day["all_conv"].fillna(0.0).round(4)
+
+    output_columns = [
+        "date",
+        "campaign_version",
+        "region",
+        "daily_budget",
+        "match_types",
+        "clicks",
+        "cost",
+    ]
+    if "all_conv" in campaign_day.columns:
+        output_columns.append("all_conv")
+    campaign_day = campaign_day[output_columns].sort_values(
+        ["date", "region", "campaign_version"], na_position="last"
+    )
 
     for df, output_file in [
         (campaign_day, campaign_day_output_file),

@@ -15,6 +15,10 @@ from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config import COURSE_CONFIG
+from utils.campaign_metadata import read_keyword_day_index
 
 BUDGET_CHANGE_RE = re.compile(r"\bbudget\b", re.IGNORECASE)
 BUDGET_AMOUNT_CHANGE_RE = re.compile(
@@ -244,9 +248,9 @@ def decode_embedded_change_history_actions(html: str) -> list[ChangeAction]:
     if not match:
         return []
 
-    # The payload is a JavaScript string containing JSON strings. Python's
-    # literal parser handles the \xNN escapes used in saved Google Ads pages.
-    outer_payload = ast.literal_eval("'" + match.group(1) + "'")
+    # JS string literals may contain escapes like \/ that Python rejects.
+    js_payload = match.group(1).replace("\\/", "/")
+    outer_payload = ast.literal_eval("'" + js_payload + "'")
     outer = json.loads(outer_payload)
     table = json.loads(outer["2"])
 
@@ -361,27 +365,6 @@ def decode_change_history_actions(path: Path) -> list[ChangeAction]:
     if not actions:
         raise ValueError("Could not find change history rows in HTML.")
     return dedupe_actions(actions)
-
-
-def parse_change_history_html(path: Path) -> list[dict[str, str]]:
-    actions = decode_change_history_actions(path)
-    renames = extract_campaign_renames(actions)
-
-    output_rows: list[dict[str, str]] = []
-    for _order, date, campaign, daily_budget, _summary in sorted(
-        extract_budget_events(actions, renames),
-        key=lambda event: event[0],
-        reverse=True,
-    ):
-        output_rows.append(
-            {
-                "date": date,
-                "campaign": campaign,
-                "daily budget": daily_budget,
-            }
-        )
-
-    return output_rows
 
 
 def is_aggregate_campaign(value: str) -> bool:
@@ -987,28 +970,6 @@ def clean_keyword_text(value: str) -> str:
     return " ".join(value.strip().strip('"[]').lower().split())
 
 
-def read_search_keyword_index(path: Path) -> dict[str, list[tuple[str, str, str]]]:
-    """Return raw search keywords by campaign from the Google Ads export."""
-    with path.open(newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        required_columns = {"Day", "Search keyword", "Search keyword match type", "Campaign"}
-        missing_columns = required_columns - set(reader.fieldnames or [])
-        if missing_columns:
-            missing = ", ".join(sorted(missing_columns))
-            raise ValueError(f"search keyword report is missing required column(s): {missing}")
-
-        keywords_by_campaign: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
-        for row in reader:
-            campaign = clean_campaign_name(row["Campaign"])
-            day = row["Day"].strip()
-            keyword = clean_keyword_text(row["Search keyword"])
-            match_type = row["Search keyword match type"].strip().title()
-            if campaign and day and keyword and match_type:
-                keywords_by_campaign[campaign].append((day, keyword, match_type))
-
-    return keywords_by_campaign
-
-
 def next_iso_date(value: str) -> str:
     return (datetime.strptime(value, "%Y-%m-%d").date() + timedelta(days=1)).isoformat()
 
@@ -1090,13 +1051,13 @@ def inferred_previous_budget_from_next_change(
 
 def raw_campaign_summary_rows(
     actions: list[ChangeAction],
-    search_keyword_report: Path,
+    keyword_day_panel: Path,
 ) -> list[dict[str, str]]:
-    """Build campaign intervals from raw keyword coverage, then attach change history."""
+    """Build campaign intervals from keyword-day panel coverage, then attach change history."""
     renames = extract_campaign_renames(actions)
     snapshots = build_campaign_snapshots(actions)
     snapshots_by_campaign = snapshot_lookup_by_canonical_campaign(snapshots, renames)
-    keywords_by_campaign = read_search_keyword_index(search_keyword_report)
+    keywords_by_campaign = read_keyword_day_index(keyword_day_panel)
 
     rows: list[dict[str, str]] = []
     version = 1
@@ -1242,10 +1203,10 @@ def apply_union_keyword_set(rows: list[dict[str, str]]) -> None:
 
 def enrich_campaign_summary_with_search_keywords(
     rows: list[dict[str, str]],
-    search_keyword_report: Path,
+    keyword_day_panel: Path,
 ) -> list[dict[str, str]]:
-    """Use raw Search keyword rows for positive keyword sets and cross-checks."""
-    keywords_by_campaign = read_search_keyword_index(search_keyword_report)
+    """Use keyword-day panel rows for positive keyword sets and cross-checks."""
+    keywords_by_campaign = read_keyword_day_index(keyword_day_panel)
     enriched_rows: list[dict[str, str]] = []
     for row in rows:
         start_date = row["start_date"]
@@ -1285,14 +1246,6 @@ def enrich_campaign_summary_with_search_keywords(
         enriched_rows.append(enriched_row)
 
     return enriched_rows
-
-
-def keep_rows_with_raw_search_keyword_dates(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    return [
-        row
-        for row in rows
-        if int(row.get("_raw_report_row_count", "0") or 0) > 0
-    ]
 
 
 def keyword_set_key(row: dict[str, str]) -> tuple[str, ...]:
@@ -1445,96 +1398,161 @@ def write_csv(
         writer.writerows(rows)
 
 
+def find_change_history_html(course: str, html_file: Path | None = None) -> Path:
+    """Locate the saved change-history HTML under data/<course>/."""
+    if html_file is not None:
+        if not html_file.exists():
+            raise FileNotFoundError(f"Change history HTML not found: {html_file}")
+        return html_file
+
+    data_dir = Path(f"data/{course}")
+    if not data_dir.is_dir():
+        raise FileNotFoundError(
+            f"Course data directory not found: {data_dir}. "
+            "Save the Google Ads change history HTML there or pass --html-file."
+        )
+
+    candidates = sorted(data_dir.glob("*.html"))
+    preferred = [path for path in candidates if "change history" in path.name.lower()]
+    pool = preferred or candidates
+    if len(pool) == 1:
+        return pool[0]
+    if not pool:
+        raise FileNotFoundError(
+            f"No change history HTML in {data_dir}. "
+            "Save the Google Ads export there or pass --html-file."
+        )
+    names = ", ".join(path.name for path in pool)
+    raise FileNotFoundError(
+        f"Multiple HTML files in {data_dir}: {names}. Pass --html-file explicitly."
+    )
+
+
+def resolve_keyword_panel(course: str, kw_day_panel: Path | None) -> Path | None:
+    if kw_day_panel:
+        return kw_day_panel
+    processed = Path(f"data/{course}/processed/kw-day-panel.csv")
+    return processed if processed.exists() else None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Parse saved Google Ads change history HTML into budget and keyword CSVs."
     )
-    parser.add_argument("html_file", type=Path, help="Saved Google Ads change history HTML file.")
     parser.add_argument(
-        "-o",
-        "--output",
+        "--output-course",
+        type=str,
+        required=True,
+        choices=sorted(COURSE_CONFIG.keys()),
+        help="Course key; defaults all input/output paths under data/<course>/.",
+    )
+    parser.add_argument(
+        "--html-file",
         type=Path,
-        help="Budget-history CSV output path. Defaults to stdout.",
+        default=None,
+        help=(
+            "Saved Google Ads change history HTML. Defaults to the only "
+            "Change history HTML under data/<course>/."
+        ),
     )
     parser.add_argument(
         "--campaign-summary-output",
         type=Path,
-        help="Optional campaign-summary CSV generated directly from change history.",
+        default=None,
+        help="Campaign-summary CSV. Defaults to data/<course>/processed/campaign-summary.csv.",
     )
     parser.add_argument(
         "--keyword-sets-output",
         type=Path,
+        default=None,
         help=(
-            "Optional keyword-set CSV output. Defaults to campaign-keyword-sets.csv "
-            "next to --campaign-summary-output."
+            "Keyword-set CSV. Defaults to data/<course>/processed/campaign-keyword-sets.csv."
         ),
     )
     parser.add_argument(
-        "--search-keyword-report",
+        "--kw-day-panel",
         type=Path,
-        help="Optional raw Search keyword CSV used to cross-check campaign-summary keywords.",
+        default=None,
+        help="Processed kw-day-panel CSV. Defaults to data/<course>/processed/kw-day-panel.csv.",
     )
     args = parser.parse_args()
 
-    actions = decode_change_history_actions(args.html_file)
-    budget_rows = parse_change_history_html(args.html_file)
-    write_csv(budget_rows, args.output, ["date", "campaign", "daily budget"])
+    course = args.output_course
+    course_dir = Path(f"data/{course}")
+    processed_dir = course_dir / "processed"
 
-    summary_rows = []
-    keyword_set_rows = []
-    if args.campaign_summary_output:
-        if args.search_keyword_report:
-            summary_rows = raw_campaign_summary_rows(actions, args.search_keyword_report)
-        else:
-            summary_rows = campaign_summary_rows(actions)
-        summary_rows, keyword_set_rows = assign_keyword_set_ids(summary_rows)
-        keyword_sets_output = (
-            args.keyword_sets_output
-            or args.campaign_summary_output.with_name("campaign-keyword-sets.csv")
+    html_file = find_change_history_html(course, args.html_file)
+    campaign_summary_output = args.campaign_summary_output or (
+        processed_dir / "campaign-summary.csv"
+    )
+    keyword_sets_output = args.keyword_sets_output or (
+        processed_dir / "campaign-keyword-sets.csv"
+    )
+    keyword_panel = resolve_keyword_panel(
+        course,
+        args.kw_day_panel,
+    )
+
+    print(f"HTML: {html_file}", file=sys.stderr)
+    print(f"Campaign summary: {campaign_summary_output}", file=sys.stderr)
+    print(f"Keyword sets: {keyword_sets_output}", file=sys.stderr)
+    if keyword_panel:
+        print(f"Keyword panel: {keyword_panel}", file=sys.stderr)
+
+    actions = decode_change_history_actions(html_file)
+
+    if keyword_panel:
+        summary_rows = raw_campaign_summary_rows(actions, keyword_panel)
+    else:
+        print(
+            "[Warn] processed/kw-day-panel.csv not found; run process_input_data.py first "
+            "to fill keyword inventory from the API panel.",
+            file=sys.stderr,
         )
-        write_csv(
-            summary_rows,
-            args.campaign_summary_output,
-            [
-                "campaign_version",
-                "keyword_set_id",
-                "campaign",
-                "start_date",
-                "end_date",
-                "change_type",
-                "daily_budget",
-                "match_types",
-                "num_unique_keywords",
-                "broad_keyword_count",
-                "phrase_keyword_count",
-                "exact_keyword_count",
-                "num_negative_keywords",
-            ],
-        )
-        write_csv(
-            keyword_set_rows,
-            keyword_sets_output,
-            [
-                "keyword_set_id",
-                "broad_keywords",
-                "phrase_keywords",
-                "exact_keywords",
-                "unique_keywords",
-                "negative_broad_keywords",
-                "negative_phrase_keywords",
-                "negative_exact_keywords",
-                "negative_keywords",
-                "used_by_campaign_versions",
-            ],
-        )
+        summary_rows = campaign_summary_rows(actions)
+    summary_rows, keyword_set_rows = assign_keyword_set_ids(summary_rows)
+    write_csv(
+        summary_rows,
+        campaign_summary_output,
+        [
+            "campaign_version",
+            "keyword_set_id",
+            "campaign",
+            "start_date",
+            "end_date",
+            "change_type",
+            "daily_budget",
+            "match_types",
+            "num_unique_keywords",
+            "broad_keyword_count",
+            "phrase_keyword_count",
+            "exact_keyword_count",
+            "num_negative_keywords",
+        ],
+    )
+    write_csv(
+        keyword_set_rows,
+        keyword_sets_output,
+        [
+            "keyword_set_id",
+            "broad_keywords",
+            "phrase_keywords",
+            "exact_keywords",
+            "unique_keywords",
+            "negative_broad_keywords",
+            "negative_phrase_keywords",
+            "negative_exact_keywords",
+            "negative_keywords",
+            "used_by_campaign_versions",
+        ],
+    )
 
     print(
-        f"Parsed {len(budget_rows)} Search budget amount row(s).",
+        f"Parsed {len(actions)} change-history action(s).",
         file=sys.stderr,
     )
-    if args.campaign_summary_output:
-        print(f"Wrote {len(summary_rows)} campaign-summary row(s).", file=sys.stderr)
-        print(f"Wrote {len(keyword_set_rows)} campaign keyword-set row(s).", file=sys.stderr)
+    print(f"Wrote {len(summary_rows)} campaign-summary row(s).", file=sys.stderr)
+    print(f"Wrote {len(keyword_set_rows)} campaign keyword-set row(s).", file=sys.stderr)
 
 
 if __name__ == "__main__":

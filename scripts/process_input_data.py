@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Clean pulled Google Ads input data."""
+"""Clean pulled Google Ads kw-day-panel into the processed panel."""
 
 import argparse
 import sys
@@ -12,7 +12,7 @@ from utils.data_processing import clean_kw_day_panel
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Process pulled Google Ads input data")
+    parser = argparse.ArgumentParser(description="Clean pulled Google Ads kw-day-panel")
     parser.add_argument(
         "--output-course",
         type=str,
@@ -24,10 +24,7 @@ def main() -> None:
         "--input-file",
         type=str,
         default="",
-        help=(
-            "Raw Search keyword CSV. Defaults to "
-            "data/<course>/reports/Search keyword - raw input to models.csv."
-        ),
+        help="API kw-day-panel CSV. Defaults to data/<course>/reports/kw-day-panel.csv.",
     )
     parser.add_argument(
         "--output-file",
@@ -38,8 +35,7 @@ def main() -> None:
 
     args = parser.parse_args()
     input_file = (
-        args.input_file
-        or f"data/{args.output_course}/reports/Search keyword - raw input to models.csv"
+        args.input_file or f"data/{args.output_course}/reports/kw-day-panel.csv"
     )
     output_file = args.output_file or f"data/{args.output_course}/processed/kw-day-panel.csv"
 
