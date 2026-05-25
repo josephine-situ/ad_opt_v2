@@ -1,11 +1,15 @@
 from typing import TypedDict
 
 
-class CourseConfig(TypedDict):
+class CourseConfig(TypedDict, total=False):
     min_date: str
     regions: dict[str, list[str]]
     conversion_actions: list[str]
     purchase_actions: list[str]
+    start_dates: list[str]
+    campaign_budget: float
+    current_campaign_start_date: str
+    current_campaign_end_date: str
 
 
 REGION_CONFIG = {
@@ -173,6 +177,29 @@ COURSE_CONFIG: dict[str, CourseConfig] = {
     },
     "sys_think": {
         "min_date": "2022-07-01",
+        "start_dates": [
+            "2021-01-25",
+            "2021-04-05",
+            "2021-10-04",
+            "2022-01-31",
+            "2022-04-25",
+            "2022-10-03",
+            "2023-01-30",
+            "2023-04-10",
+            "2023-10-02",
+            "2024-02-05",
+            "2024-04-08",
+            "2024-10-07",
+            "2025-02-10",
+            "2025-04-14",
+            "2025-10-06",
+            "2026-02-02",
+            "2026-04-06",
+            "2026-06-15",
+        ],
+        "campaign_budget": 400.0,
+        "current_campaign_start_date": "2026-04-28",
+        "current_campaign_end_date": "2026-06-15",
         "regions": REGION_CONFIG["sys_think"],
         "conversion_actions": [
             "Purchase",

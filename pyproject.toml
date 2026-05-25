@@ -4,28 +4,37 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ad-opt-v2"
-version = "0.1.0"
-description = "Google Ads API data pull scripts for ad optimization workflows"
+version = "0.2.0"
+description = "Campaign-level Google Ads budget and keyword-set optimization"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "google-ads>=29.1.0",
-    "ipykernel>=7.2.0",
-    "jupyter>=1.1.1",
-    "matplotlib>=3.10.9",
     "numpy>=2.4.5",
     "pandas>=3.0.3",
     "python-dateutil>=2.9.0",
     "requests>=2.32.0",
-    "seaborn>=0.13.2",
     "sentence-transformers>=3.4.0",
     "pyarrow>=19.0.0",
-    "statsmodels>=0.14.6",
     "holidays>=0.97",
+    "scikit-learn>=1.6.0",
+    "joblib>=1.4.0",
 ]
 
+[project.optional-dependencies]
+ml = ["xgboost>=2.1.0"]
+optimization = ["gurobipy>=10.0.1"]
+notebook = [
+    "ipykernel>=7.2.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.9",
+    "seaborn>=0.13.2",
+    "statsmodels>=0.14.6",
+]
+dev = ["pytest>=8.0.0", "black>=24.0.0"]
+
 [tool.setuptools]
-packages = ["utils", "scripts"]
+packages = ["utils", "scripts", "campaign_opt"]
 
 [tool.black]
 line-length = 100

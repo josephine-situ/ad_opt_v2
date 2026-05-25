@@ -200,6 +200,7 @@ def _read_campaign_summary(campaign_summary_file: str | Path) -> pd.DataFrame:
         "start_date",
         "end_date",
         "daily_budget",
+        "match_types",
     }
     missing_columns = required_columns - set(summary.columns)
     if missing_columns:
@@ -232,6 +233,7 @@ def _attach_campaign_versions(campaign_day: pd.DataFrame, summary: pd.DataFrame)
                 continue
             matched["campaign_version"] = summary_row["campaign_version"]
             matched["daily_budget"] = summary_row["daily_budget"]
+            matched["match_types"] = summary_row["match_types"]
             matched_group_parts.append(matched)
 
         if matched_group_parts:
@@ -263,7 +265,6 @@ def generate_campaign_day_panel(
         .agg(
             clicks=("clicks", "sum"),
             cost=("cost", "sum"),
-            match_types=("match_type", _join_sorted_unique),
         )
         .reset_index()
     )

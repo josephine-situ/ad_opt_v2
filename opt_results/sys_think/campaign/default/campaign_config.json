@@ -1,0 +1,51 @@
+{
+  "exp_name": "default",
+  "course": "sys_think",
+  "target": "all_conv",
+  "secondary_metrics": ["clicks"],
+  "decision_variables": {
+    "segment_budget": { "enabled": true, "var": "x", "bounds": "historical" },
+    "keyword_set": { "enabled": true, "var": "y", "cardinality": "one_per_segment" }
+  },
+  "context_features": {
+    "calendar": [
+      "day_of_week",
+      "month",
+      "is_weekend",
+      "is_public_holiday",
+      "days_to_next_course_start"
+    ],
+    "keyword_set_static": [
+      "embed_cohesion",
+      "embed_dispersion",
+      "embed_course_sim_mean",
+      "embed_course_sim_p90",
+      "num_unique_keywords"
+    ],
+    "gkp_set": [
+      "last_month_searches_mean",
+      "competition_index_mean",
+      "bid_low_mean"
+    ]
+  },
+  "constraints": {
+    "total_budget": "B",
+    "regional_order": ["USA", "A", "B"]
+  },
+  "model_policy": {
+    "candidates": ["ridge", "power_log", "power_level", "random_forest", "xgboost"],
+    "selection_metric": "holdout_rmse_levels",
+    "secondary_selection_metrics": ["holdout_r2_levels", "holdout_mae_levels"],
+    "min_holdout_gain_vs_ridge": 0.03,
+    "optimizer_backend": "auto",
+    "stability_check": false,
+    "validation": { "scheme": "time_series_cv", "holdout_days": 75, "cv_folds": 5 }
+  },
+  "evaluation": {
+    "use_ensemble": true,
+    "baseline_budget": 0,
+    "weight_by_cv_rmse": true
+  },
+  "debug_write_lp": false,
+  "piecewise_budget_knots": 8
+}

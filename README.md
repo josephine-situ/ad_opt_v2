@@ -141,6 +141,37 @@ python scripts/pull_input_data.py `
 
 Outputs are written under `data/<course>/gkp`.
 
+## Campaign budget + keyword-set optimization
+
+Config-driven pipeline (Python 3.13+). Install core + solver + ML extras:
+
+```powershell
+pip install -e ".[optimization,ml]"
+```
+
+Default experiment config: `opt_results/sys_think/campaign/default/campaign_config.json`
+
+```powershell
+# Full pipeline (panel → GKP set features → candidates → model tournament → Gurobi MILP)
+python scripts/run_campaign_pipeline.py --course sys_think
+
+# Individual steps
+python scripts/build_gkp_set_features.py --course sys_think
+python scripts/build_keyword_candidates.py --course sys_think
+python scripts/fit_response_models.py --course sys_think
+python scripts/optimize_campaign.py --course sys_think --budget 400
+
+# Walk-forward daily backtest (optimize each day in range; like ad_opt backtest_daily)
+uv run python scripts/backtest_campaign.py --course sys_think --start 2025-10-01 --end 2025-12-31
+
+# Production monitor (compare latest plan vs actuals)
+uv run python scripts/monitor_campaign_production.py --course sys_think --lag 1
+```
+
+Notebook EDA (`eda_clicks_budget_keywords.ipynb`) is optional; install `.[notebook]` for Jupyter/matplotlib. Production scripts do not import the notebook.
+
+See [`campaign_opt/README.md`](campaign_opt/README.md) for package layout, CV, and MILP backends.
+
 ## Query Auto-Applied Recommendation Changes
 
 ```powershell

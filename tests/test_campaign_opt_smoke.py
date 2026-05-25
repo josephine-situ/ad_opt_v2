@@ -1,0 +1,65 @@
+"""Smoke tests with minimal synthetic campaign data."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from campaign_opt.coefficients import export_linear_solver_coeffs
+from campaign_opt.features import prepare_modeling_data, train_holdout_split
+from campaign_opt.modeling import run_tournament
+from campaign_opt.schema import load_campaign_config
+
+from tests.conftest import copy_synthetic_to_repo
+
+
+def test_config_load():
+    path = Path("opt_results/sys_think/campaign/default/campaign_config.json")
+    if not path.exists():
+        pytest.skip("default config missing")
+    cfg = load_campaign_config(path)
+    assert cfg.course == "sys_think"
+
+
+def test_tournament_on_synthetic(monkeypatch, synthetic_course, tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(root)
+    copy_synthetic_to_repo(synthetic_course, root)
+    config_path = Path("opt_results/sys_think/campaign/default/campaign_config.json")
+    if not config_path.exists():
+        pytest.skip("config missing")
+    config = load_campaign_config(config_path)
+    config.model_policy.candidates = ["ridge"]
+    config.model_policy.validation.holdout_days = 30
+
+    df = prepare_modeling_data(config)
+
+    if df.empty:
+        pytest.skip("empty panel")
+
+    config.target = "clicks"
+    train, holdout = train_holdout_split(df, config.model_policy.validation.holdout_days)
+    if len(holdout) < 5:
+        pytest.skip("insufficient holdout rows")
+
+    winner, metrics, manifest = run_tournament(train, holdout, config)
+    assert winner.name == "ridge"
+    assert "ridge" in metrics
+
+
+def test_linear_coeffs_export(monkeypatch, synthetic_course, tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(root)
+    copy_synthetic_to_repo(synthetic_course, root)
+    config_path = Path("opt_results/sys_think/campaign/default/campaign_config.json")
+    if not config_path.exists():
+        pytest.skip("config missing")
+    config = load_campaign_config(config_path)
+    df = prepare_modeling_data(config)
+    config.target = "clicks"
+    coeffs = export_linear_solver_coeffs(df, config, tmp_path / "c.json")
+    assert "segment_budget_slope" in coeffs
