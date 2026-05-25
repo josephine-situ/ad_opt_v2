@@ -9,3 +9,8 @@ google-ads*.json
 data/
 logs/
 TODO.md
+
+# LaTeX presentation (see presentation/.latexmkrc)
+presentation/build/
+/texput.log
+/SUMMARY_presentation.*
