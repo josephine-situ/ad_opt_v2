@@ -12,9 +12,9 @@ import pandas as pd
 from sklearn.metrics import mean_squared_error, r2_score
 
 from campaign_opt.decisions import region_of_segment
-from campaign_opt.modeling import _build_preprocessor, _prep_xy
+from campaign_opt.modeling import _build_preprocessor, _prep_xy, pipeline_feature_overview_lines
 from campaign_opt.schema import CampaignOptConfig
-from campaign_opt.train_specs import TrainSpec, get_train_specs
+from campaign_opt.train_specs import TrainSpec, get_train_spec
 from utils.campaign_features import build_keyword_set_feature_table, get_context_feature_columns
 from utils.date_features import calendar_vector_for_date
 
@@ -68,10 +68,13 @@ def _predict_member_levels(
         df[target] = 0.0
     if spec.transform is not None:
         df = spec.transform(df, target)
-    X, _ = _prep_xy(df, target, feature_cols, y_col=spec.fit_y_col)
-    if spec.budget_col != "daily_budget" and spec.budget_col in df.columns:
-        X = X.rename(columns={spec.budget_col: "daily_budget"})
-    pred = member.pipeline.predict(X)
+    if hasattr(member.pipeline, "predict_design_frame"):
+        pred = member.pipeline.predict_design_frame(df)
+    else:
+        X, _ = _prep_xy(df, target, feature_cols, y_col=spec.fit_y_col)
+        if spec.budget_col != "daily_budget" and spec.budget_col in df.columns:
+            X = X.rename(columns={spec.budget_col: "daily_budget"})
+        pred = member.pipeline.predict(X)
     if spec.inverse_pred is not None:
         pred = spec.inverse_pred(pred)
     return pred
@@ -82,9 +85,17 @@ def fit_member_on_train(
     train: pd.DataFrame,
     config: CampaignOptConfig,
     feature_cols: list[str],
+    *,
+    hyperparams: dict[str, Any] | None = None,
 ) -> FittedMember:
     """Fit one candidate on all training rows (no holdout split)."""
     from sklearn.pipeline import Pipeline
+
+    if spec.name == "ridge":
+        from campaign_opt.modeling import fit_ridge_full
+
+        pipe = fit_ridge_full(train, config, hyperparams=hyperparams)
+        return FittedMember(spec.name, pipe, spec)
 
     target = config.target
     tr = spec.transform(train, target) if spec.transform else train
@@ -93,7 +104,10 @@ def fit_member_on_train(
     if spec.budget_col != "daily_budget":
         X = X.rename(columns={spec.budget_col: "daily_budget"})
 
-    pipe = Pipeline([("prep", _build_preprocessor(feature_cols)), ("model", spec.estimator)])
+    from campaign_opt.train_specs import build_estimator
+
+    estimator = build_estimator(spec.name, hyperparams) if hyperparams else spec.estimator
+    pipe = Pipeline([("prep", _build_preprocessor(feature_cols, tr)), ("model", estimator)])
     pipe.fit(X, y)
     return FittedMember(spec.name, pipe, spec)
 
@@ -103,26 +117,29 @@ def fit_ensemble(
     config: CampaignOptConfig,
     *,
     member_weights: dict[str, float] | None = None,
+    member_hyperparams: dict[str, dict[str, Any]] | None = None,
 ) -> EnsembleModel:
     """
     Fit every candidate in ``model_policy`` on all training data.
     Weights default to equal; pass CV-based weights for RMSE-weighted blend.
     """
     feature_cols = get_context_feature_columns(config.context_features)
-    specs = get_train_specs()
     members: list[FittedMember] = []
 
     for name in config.model_policy.candidates:
-        spec = specs.get(name)
+        hp = (member_hyperparams or {}).get(name)
+        spec = get_train_spec(name, hp)
         if spec is None:
             continue
         try:
-            member = fit_member_on_train(spec, train, config, feature_cols)
+            member = fit_member_on_train(spec, train, config, feature_cols, hyperparams=hp)
             w = 1.0 if not member_weights else member_weights.get(name, 0.0)
             if w > 0:
                 member.weight = w
                 members.append(member)
                 print(f"    ensemble member fitted: {name} (w={w:.3f})")
+                for line in pipeline_feature_overview_lines(member.pipeline):
+                    print(line)
         except Exception as exc:
             print(f"    ensemble member skipped {name}: {exc}")
 
@@ -252,6 +269,7 @@ def compare_plan_and_actual(
     # Actual market decisions on this day (same segments as plan)
     actual_dec = actual_dec.copy()
     actual_dec["segment"] = actual_dec["segment"].astype(str)
+    actual_dec = actual_dec[actual_dec["segment"].isin(segments)]
     for seg in segments:
         if seg not in actual_dec["segment"].values:
             actual_dec = pd.concat(
@@ -300,6 +318,81 @@ def compare_plan_and_actual(
         how="left",
     )
     return out
+
+
+def week_planning_dates(
+    week_start: pd.Timestamp,
+    window_start: pd.Timestamp,
+    window_end: pd.Timestamp,
+) -> list[pd.Timestamp]:
+    """Mon–Sun dates for one budget week, clipped to the backtest window."""
+    week_start = pd.Timestamp(week_start).normalize()
+    dates = pd.date_range(week_start, week_start + pd.Timedelta(days=6), freq="D")
+    return [pd.Timestamp(d) for d in dates if window_start <= d <= window_end]
+
+
+def week_starts_in_window(
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    freq: str = "W-MON",
+) -> list[pd.Timestamp]:
+    """Mondays (or cadence anchor) in [start, end], plus start if the window opens mid-week."""
+    starts = [pd.Timestamp(d) for d in pd.date_range(start, end, freq=freq)]
+    if not starts or starts[0] > start:
+        starts = [pd.Timestamp(start).normalize()] + starts
+    return starts
+
+
+def compare_plan_and_actual_week(
+    ensemble: EnsembleModel,
+    plan: pd.DataFrame,
+    df: pd.DataFrame,
+    train: pd.DataFrame,
+    config: CampaignOptConfig,
+    week_dates: list[pd.Timestamp],
+    set_features: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Score a constant weekly plan against each day in week_dates.
+    Returns (weekly_agg_by_segment, daily_diagnostics).
+    """
+    daily_parts: list[pd.DataFrame] = []
+    for d in week_dates:
+        day_df = df[df["date"] == d]
+        if day_df.empty:
+            continue
+        comp = compare_plan_and_actual(
+            ensemble, plan, day_df, train, config, d, set_features
+        )
+        if comp.empty:
+            continue
+        comp = comp.copy()
+        comp["date"] = d.date().isoformat()
+        daily_parts.append(comp)
+
+    if not daily_parts:
+        return pd.DataFrame(), pd.DataFrame()
+
+    daily = pd.concat(daily_parts, ignore_index=True)
+    target = config.target
+    obs_col = f"observed_{target}"
+    agg_cols: dict[str, tuple[str, str]] = {
+        "pred_lift": ("pred_lift", "sum"),
+        "actual_model_lift": ("actual_model_lift", "sum"),
+        "f_plan_level": ("f_plan_level", "sum"),
+        "f_zero": ("f_zero", "sum"),
+        "n_days": ("date", "count"),
+    }
+    if obs_col in daily.columns:
+        agg_cols[obs_col] = (obs_col, "sum")
+    if "observed_clicks" in daily.columns:
+        agg_cols["observed_clicks"] = ("observed_clicks", "sum")
+
+    weekly = daily.groupby("segment", as_index=False).agg(**agg_cols)
+    for col in ("daily_budget", "keyword_set_id", "region"):
+        if col in plan.columns:
+            weekly = weekly.merge(plan[["segment", col]], on="segment", how="left")
+    return weekly, daily
 
 
 def metrics_from_comparison(comp: pd.DataFrame, target: str) -> dict[str, float | None]:

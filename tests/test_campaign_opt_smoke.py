@@ -12,9 +12,21 @@ import pytest
 from campaign_opt.coefficients import export_linear_solver_coeffs
 from campaign_opt.features import prepare_modeling_data, train_holdout_split
 from campaign_opt.modeling import run_tournament
-from campaign_opt.schema import load_campaign_config
+from campaign_opt.optimize import _resolve_backend, _resolve_optimizer_winner
+from campaign_opt.schema import CampaignOptConfig, ModelPolicy, load_campaign_config
 
 from tests.conftest import copy_synthetic_to_repo
+
+
+def test_optimizer_winner_resolves_tree_embed_backend():
+    config = CampaignOptConfig(
+        exp_name="t",
+        course="sys_think",
+        model_policy=ModelPolicy(optimizer_winner="xgboost"),
+    )
+    manifest = {"winner": "power_level", "backend": "piecewise_linear"}
+    assert _resolve_optimizer_winner(config, manifest) == "xgboost"
+    assert _resolve_backend(config, manifest) == "tree_embed"
 
 
 def test_config_load():
@@ -63,3 +75,7 @@ def test_linear_coeffs_export(monkeypatch, synthetic_course, tmp_path):
     config.target = "clicks"
     coeffs = export_linear_solver_coeffs(df, config, tmp_path / "c.json")
     assert "segment_budget_slope" in coeffs
+    assert "context_feature_coefs" in coeffs
+    assert "static_context_lift" in coeffs
+    saved = json.loads((tmp_path / "c.json").read_text(encoding="utf-8"))
+    assert "keyword_set_effect" not in saved

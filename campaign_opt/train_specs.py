@@ -2,13 +2,34 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
+
+# Ridge / power models: no grid in ad_opt; keep a modest alpha search.
+# Tree models: match ad_opt/scripts/modeling.py XGB grid (small trees, low n_estimators).
+_AD_OPT_XGB_GRID = {
+    "n_estimators": [5, 10, 20],
+    "max_depth": [2, 3, 4],
+    "learning_rate": [0.1, 0.3],
+}
+
+DEFAULT_HYPERPARAM_GRIDS: dict[str, dict[str, list[Any]]] = {
+    "ridge": {"alpha": [0.01, 0.1, 1.0, 10.0, 100.0]},
+    "power_log": {"alpha": [0.01, 0.1, 1.0, 10.0, 100.0]},
+    "power_level": {"alpha": [0.01, 0.1, 1.0, 10.0, 100.0]},
+    # RF has no grid in ad_opt; use the same small-tree ranges as XGB there.
+    "random_forest": {
+        "n_estimators": _AD_OPT_XGB_GRID["n_estimators"],
+        "max_depth": _AD_OPT_XGB_GRID["max_depth"],
+        "min_samples_leaf": [10, 20],
+    },
+    "xgboost": dict(_AD_OPT_XGB_GRID),
+}
 
 
 @dataclass(frozen=True)
@@ -34,17 +55,46 @@ def power_transform(df: pd.DataFrame, target: str) -> pd.DataFrame:
 
 def power_level_transform(df: pd.DataFrame, target: str) -> pd.DataFrame:
     out = df.dropna(subset=["daily_budget"]).copy()
-    out["log_budget"] = np.log(out["daily_budget"].astype(float).clip(lower=0.01))
-    return out.rename(columns={"log_budget": "daily_budget"})
+    out["daily_budget"] = np.log(out["daily_budget"].astype(float).clip(lower=0.01))
+    return out
+
+
+def build_estimator(name: str, hyperparams: dict[str, Any] | None = None) -> Any:
+    """Build a sklearn estimator for ``name`` using optional tuned hyperparameters."""
+    hp = hyperparams or {}
+    if name in ("ridge", "power_log", "power_level"):
+        return Ridge(alpha=float(hp.get("alpha", 1.0)))
+    if name == "random_forest":
+        return RandomForestRegressor(
+            n_estimators=int(hp.get("n_estimators", 10)),
+            max_depth=int(hp.get("max_depth", 3)),
+            min_samples_leaf=int(hp.get("min_samples_leaf", 20)),
+            random_state=42,
+            n_jobs=-1,
+        )
+    if name == "xgboost":
+        from xgboost import XGBRegressor
+
+        return XGBRegressor(
+            objective="reg:squarederror",
+            n_estimators=int(hp.get("n_estimators", 10)),
+            max_depth=int(hp.get("max_depth", 3)),
+            learning_rate=float(hp.get("learning_rate", 0.1)),
+            subsample=float(hp.get("subsample", 1.0)),
+            colsample_bytree=float(hp.get("colsample_bytree", 1.0)),
+            random_state=42,
+            n_jobs=-1,
+        )
+    raise ValueError(f"Unknown model name: {name}")
 
 
 def get_train_specs() -> dict[str, TrainSpec]:
     specs: dict[str, TrainSpec] = {
-        "ridge": TrainSpec("ridge", "linear", Ridge(alpha=1.0)),
+        "ridge": TrainSpec("ridge", "linear", build_estimator("ridge")),
         "power_log": TrainSpec(
             "power_log",
             "piecewise_linear",
-            Ridge(alpha=1.0),
+            build_estimator("power_log"),
             budget_col="log_budget",
             transform=power_transform,
             inverse_pred=np.expm1,
@@ -53,38 +103,27 @@ def get_train_specs() -> dict[str, TrainSpec]:
         "power_level": TrainSpec(
             "power_level",
             "piecewise_linear",
-            Ridge(alpha=1.0),
+            build_estimator("power_level"),
             transform=power_level_transform,
         ),
         "random_forest": TrainSpec(
             "random_forest",
             "tree_embed",
-            RandomForestRegressor(
-                n_estimators=100,
-                max_depth=6,
-                min_samples_leaf=20,
-                random_state=42,
-                n_jobs=-1,
-            ),
+            build_estimator("random_forest"),
         ),
     }
     try:
-        from xgboost import XGBRegressor
-
-        specs["xgboost"] = TrainSpec(
-            "xgboost",
-            "tree_embed",
-            XGBRegressor(
-                n_estimators=80,
-                max_depth=4,
-                learning_rate=0.08,
-                min_child_weight=20,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                random_state=42,
-                n_jobs=-1,
-            ),
-        )
+        build_estimator("xgboost")
+        specs["xgboost"] = TrainSpec("xgboost", "tree_embed", build_estimator("xgboost"))
     except ImportError:
         pass
     return specs
+
+
+def get_train_spec(name: str, hyperparams: dict[str, Any] | None = None) -> TrainSpec | None:
+    base = get_train_specs().get(name)
+    if base is None:
+        return None
+    if not hyperparams:
+        return base
+    return replace(base, estimator=build_estimator(name, hyperparams))

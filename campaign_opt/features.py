@@ -11,15 +11,32 @@ from utils.campaign_features import (
 )
 
 
+def filter_modeling_lookback(
+    df: pd.DataFrame,
+    lookback_days: int | None,
+    date_col: str = "date",
+) -> pd.DataFrame:
+    """Keep rows with ``date_col`` in the last ``lookback_days`` through panel max date."""
+    if not lookback_days or lookback_days <= 0:
+        return df
+    out = df.copy()
+    out[date_col] = pd.to_datetime(out[date_col])
+    max_date = out[date_col].max()
+    cutoff = max_date - pd.Timedelta(days=int(lookback_days))
+    return out[out[date_col] >= cutoff].copy()
+
+
 def prepare_modeling_data(config: CampaignOptConfig | str) -> pd.DataFrame:
     if isinstance(config, str):
         course = config
         target = "all_conv"
         context_features: dict[str, list[str]] = {}
+        lookback_days = None
     else:
         course = config.course
         target = config.target
         context_features = config.context_features
+        lookback_days = config.modeling_lookback_days
 
     df = build_modeling_frame(course, target_col=target)
     context_cols = get_context_feature_columns(context_features) if context_features else []
@@ -28,7 +45,7 @@ def prepare_modeling_data(config: CampaignOptConfig | str) -> pd.DataFrame:
             if col not in df.columns:
                 df[col] = pd.NA
     df = df.dropna(subset=["daily_budget", "segment"])
-    return df
+    return filter_modeling_lookback(df, lookback_days)
 
 
 def train_holdout_split(
