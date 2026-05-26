@@ -3,7 +3,5 @@
   "end": "2026-03-31",
   "n_days": 31,
   "mean_rmse_model_lift": null,
-  "mean_holdout_r2": 0.731482793075156,
-  "mean_holdout_rmse": 1.3851878190860911,
-  "mean_plan_budget_total": 374.5570952073262
+  "mean_plan_budget_total": 412.70000000000016
 }

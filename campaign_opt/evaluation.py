@@ -12,7 +12,12 @@ import pandas as pd
 from sklearn.metrics import mean_squared_error, r2_score
 
 from campaign_opt.decisions import region_of_segment
-from campaign_opt.modeling import _build_preprocessor, _prep_xy, pipeline_feature_overview_lines
+from campaign_opt.modeling import (
+    _build_preprocessor,
+    _prep_xy,
+    base_tournament_candidates,
+    pipeline_feature_overview_lines,
+)
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.train_specs import TrainSpec, get_train_spec
 from utils.campaign_features import build_keyword_set_feature_table, get_context_feature_columns
@@ -132,7 +137,7 @@ def fit_ensemble(
     feature_cols = get_context_feature_columns(config.context_features)
     members: list[FittedMember] = []
 
-    for name in config.model_policy.candidates:
+    for name in base_tournament_candidates(config.model_policy.candidates):
         hp = (member_hyperparams or {}).get(name)
         spec = get_train_spec(name, hp)
         if spec is None:
@@ -236,10 +241,37 @@ def fit_single_model_evaluation(
     """
     from campaign_opt.modeling import hyperparams_from_manifest
 
+    from campaign_opt.modeling import (
+        ENSEMBLE_MEMBER_GROUPS,
+        fit_ensemble_tournament,
+        is_ensemble_candidate,
+    )
+
     model_name = model_name or optimizer_winner_name(config, manifest)
     feature_cols = feature_cols or manifest.get("feature_cols") or get_context_feature_columns(
         config.context_features
     )
+    if model_name == "ensemble_ridge_xgb":
+        member_names = ENSEMBLE_MEMBER_GROUPS[model_name]
+        member_hp = {
+            m: hyperparams_from_manifest(manifest, m) or {}
+            for m in member_names
+        }
+        ensemble = fit_ensemble_tournament(
+            model_name,
+            member_names,
+            fit_df,
+            fit_df.iloc[0:0],
+            config,
+            feature_cols,
+            member_hyperparams=member_hp,
+        ).pipeline
+        for member in ensemble.members:
+            for line in pipeline_feature_overview_lines(member.pipeline):
+                print(line)
+        return ensemble
+    if is_ensemble_candidate(model_name):
+        raise ValueError(f"Evaluation model {model_name!r} is not supported for plan_vs_actual")
     hp = hyperparams_from_manifest(manifest, model_name)
     spec = get_train_spec(model_name, hp)
     if spec is None:
@@ -256,15 +288,20 @@ def fit_single_model_evaluation(
 
 
 def save_evaluation_model(ensemble: EnsembleModel, path: Path, *, model_name: str = "") -> Path:
-    """Persist the single-member evaluation pipeline (not the optimizer artifact)."""
+    """Persist the evaluation model (not the optimizer artifact)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not ensemble.members:
         raise RuntimeError("Evaluation model has no fitted members")
-    name = model_name or ensemble.members[0].name
+    name = model_name or (
+        ensemble.members[0].name
+        if len(ensemble.members) == 1
+        else "ensemble_ridge_xgb"
+    )
     if not path.name.startswith("evaluation_"):
         path = path.parent / f"evaluation_{name}.joblib"
-    joblib.dump(ensemble.members[0].pipeline, path)
+    artifact = ensemble if len(ensemble.members) > 1 else ensemble.members[0].pipeline
+    joblib.dump(artifact, path)
     return path
 
 
@@ -464,11 +501,15 @@ def compare_plan_and_actual(
     config: CampaignOptConfig,
     planning_date: pd.Timestamp,
     set_features: pd.DataFrame,
+    *,
+    market_ensemble: EnsembleModel | None = None,
 ) -> pd.DataFrame:
     """
     Score optimizer plan vs historical market campaigns on this day.
 
-    Uses the evaluation ensemble ``f`` (same model as plan-vs-actual scoring):
+    Uses ``ensemble`` for optimizer plan rows. Market rows use ``market_ensemble`` when
+    provided (defaults to ``ensemble``), so panel counterfactuals stay stable when the
+    plan scorer is a wider tournament ensemble.
       - ``pred_lift``: f(plan budget, plan keyword set) - f(baseline_budget, plan keyword set)
       - ``actual_model_lift``: f(actual campaign budget, actual keyword set)
         - f(baseline_budget, actual keyword set) on panel campaign rows
@@ -478,6 +519,7 @@ def compare_plan_and_actual(
     reference. Market rows use ``row_kind='market'``.
     """
     target = config.target
+    market_model = market_ensemble or ensemble
     market_dec = actual_decisions_by_segment(day_df)
     if market_dec.empty:
         return pd.DataFrame()
@@ -533,22 +575,22 @@ def compare_plan_and_actual(
         planning_date,
         set_features,
         config.course,
-        ensemble.feature_cols,
-        ensemble.baseline_budget,
+        market_model.feature_cols,
+        market_model.baseline_budget,
     )
     market_rows = build_segment_decision_rows(
-        market_dec, planning_date, set_features, config.course, ensemble.feature_cols
+        market_dec, planning_date, set_features, config.course, market_model.feature_cols
     )
     market_scored = market_dec.copy()
     market_scored["row_kind"] = "market"
     market_scored["pred_lift"] = np.nan
     market_scored["pred_lift_raw"] = np.nan
-    market_scored["actual_model_lift_raw"] = ensemble.predict_incremental_raw(
+    market_scored["actual_model_lift_raw"] = market_model.predict_incremental_raw(
         market_rows, market_baseline_rows
     )
     market_scored["actual_model_lift"] = np.clip(market_scored["actual_model_lift_raw"], 0, None)
-    market_scored["f_plan_level"] = ensemble.predict_levels(market_rows)
-    market_scored["f_zero"] = ensemble.predict_levels(market_baseline_rows)
+    market_scored["f_plan_level"] = market_model.predict_levels(market_rows)
+    market_scored["f_zero"] = market_model.predict_levels(market_baseline_rows)
     market_scored["campaign_budget"] = market_scored["daily_budget"]
     market_scored["actual_budget"] = market_scored["daily_budget"]
     market_scored["actual_keyword_set_id"] = market_scored["keyword_set_id"]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Re-score an existing daily backtest with walk-forward ensemble evaluation."""
+"""Re-score an existing daily backtest with a full-panel ensemble evaluation model."""
 
 import argparse
 import json
@@ -11,7 +11,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from campaign_opt.backtest import _cv_rmse_weights, optimizer_manifest_for_backtest
+from campaign_opt.backtest import _cv_rmse_weights, _load_holdout_metrics, optimizer_manifest_for_backtest
 from campaign_opt.backtest_analysis import analyze_backtest_run, load_backtest_config
 from campaign_opt.evaluation import (
     compare_plan_and_actual,
@@ -19,8 +19,7 @@ from campaign_opt.evaluation import (
     plan_vs_actual_row_metrics,
     save_ensemble,
 )
-from campaign_opt.features import prepare_modeling_data, train_before_date
-from campaign_opt.modeling import run_tournament
+from campaign_opt.features import prepare_modeling_data
 from campaign_opt.schema import default_config_path, load_campaign_config
 from utils.campaign_features import build_keyword_set_feature_table
 from utils.tee_logging import setup_tee_logging
@@ -82,6 +81,23 @@ def main() -> None:
     if not plan_dirs:
         raise SystemExit(f"No plan day folders under {src / 'plans'}")
 
+    static_metrics = _load_holdout_metrics(config)
+    weights = (
+        _cv_rmse_weights(static_metrics)
+        if config.evaluation.weight_by_cv_rmse and static_metrics
+        else None
+    )
+    dmin = pd.to_datetime(df["date"]).min().date()
+    dmax = pd.to_datetime(df["date"]).max().date()
+    print(f"Fitting evaluation ensemble on full panel: {len(df)} rows ({dmin} → {dmax})")
+    eval_model = fit_ensemble(
+        df,
+        config,
+        member_weights=weights,
+        member_hyperparams=opt_manifest.get("best_hyperparams"),
+    )
+    save_ensemble(eval_model, dst / "ensemble_model.joblib")
+
     daily_rows: list[dict] = []
     for day_dir in plan_dirs:
         plan_path = day_dir / "campaign_plan.csv"
@@ -108,7 +124,6 @@ def main() -> None:
             daily_rows.append(day_row)
             continue
 
-        train = train_before_date(df, opt_date)
         holdout = df[df["date"] == opt_date]
         if holdout.empty:
             print(f"  [{opt_date.date()}] skip — no holdout rows")
@@ -119,20 +134,6 @@ def main() -> None:
         shutil.copy2(plan_path, out_day / "campaign_plan.csv")
         if (day_dir / "optimizer_xgboost.joblib").exists():
             shutil.copy2(day_dir / "optimizer_xgboost.joblib", out_day / "optimizer_xgboost.joblib")
-
-        metrics_table: dict[str, dict[str, float]] = {}
-        if config.evaluation.weight_by_cv_rmse:
-            _, metrics_table, _ = run_tournament(train, holdout, config)
-
-        weights = _cv_rmse_weights(metrics_table) if metrics_table else None
-        print(f"  [{opt_date.date()}] fitting ensemble on {len(train)} rows...")
-        eval_model = fit_ensemble(
-            train,
-            config,
-            member_weights=weights,
-            member_hyperparams=opt_manifest.get("best_hyperparams"),
-        )
-        save_ensemble(eval_model, out_day / "ensemble_model.joblib")
 
         comp = compare_plan_and_actual(
             eval_model, plan, holdout, df, config, opt_date, set_features

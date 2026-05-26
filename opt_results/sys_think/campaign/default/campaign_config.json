@@ -36,11 +36,19 @@
     "budget_tiebreak_penalty": 1e-4
   },
   "model_policy": {
-    "candidates": ["ridge", "power_log", "power_level", "random_forest", "xgboost"],
+    "candidates": [
+      "ridge",
+      "power_log",
+      "power_level",
+      "random_forest",
+      "xgboost",
+      "ensemble",
+      "ensemble_ridge_xgb"
+    ],
     "selection_metric": "holdout_rmse_levels",
     "secondary_selection_metrics": ["holdout_r2_levels", "holdout_mae_levels"],
-    "optimizer_winner": "xgboost",
-    "optimizer_backend": "tree_embed",
+    "optimizer_winner": "ensemble_ridge_xgb",
+    "optimizer_backend": "auto",
     "stability_check": false,
     "validation": {
       "scheme": "time_series_cv",
@@ -51,7 +59,7 @@
     }
   },
   "evaluation": {
-    "use_ensemble": false,
+    "use_ensemble": true,
     "baseline_budget": 0,
     "weight_by_cv_rmse": true
   },

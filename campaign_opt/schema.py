@@ -26,7 +26,7 @@ class ValidationConfig:
 @dataclass
 class EvaluationConfig:
     """How plan vs actual is scored (incremental lift vs same keyword set at baseline_budget)."""
-    use_ensemble: bool = True  # if False, fit optimizer_winner once on full modeling panel for plan_vs_actual
+    use_ensemble: bool = True  # if True, multi-member ensemble; if False, optimizer_winner — both fit on full panel
     baseline_budget: float = 0.0
     weight_by_cv_rmse: bool = True  # else equal-weight average
 
@@ -34,7 +34,15 @@ class EvaluationConfig:
 @dataclass
 class ModelPolicy:
     candidates: list[str] = field(
-        default_factory=lambda: ["ridge", "power_log", "power_level", "random_forest", "xgboost"]
+        default_factory=lambda: [
+            "ridge",
+            "power_log",
+            "power_level",
+            "random_forest",
+            "xgboost",
+            "ensemble",
+            "ensemble_ridge_xgb",
+        ]
     )
     selection_metric: str = "holdout_rmse_levels"
     secondary_selection_metrics: list[str] = field(

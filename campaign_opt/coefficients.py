@@ -14,6 +14,7 @@ from campaign_opt.linear_design import (
     SEGMENT_STRUCTURAL_EXACT,
     SEGMENT_STRUCTURAL_PREFIXES,
     LinearMilpDesign,
+    LinearMilpRidgeModel,
     build_linear_milp_design_matrix,
     segment_intercept_from_model,
     segment_slope_from_model,
@@ -223,6 +224,36 @@ def coeffs_from_linear_milp_design(
         "calendar_offset": cal_effect,
         "global_intercept": float(model.intercept_),
     }
+
+
+def ridge_embed_coeffs(
+    artifact: LinearMilpRidgeModel,
+    train: pd.DataFrame,
+    config: CampaignOptConfig,
+    candidates: pd.DataFrame,
+    set_features: pd.DataFrame,
+    planning_date: pd.Timestamp,
+    segments: list[str],
+) -> dict:
+    """MILP ridge coeffs with per-segment calendar for ``ridge_xgb_embed`` (matches ``predict_design_frame``)."""
+    design = build_linear_milp_design_matrix(train, config, columns=artifact.x_columns)
+    # No slope shrinkage: coeffs must match ``predict_design_frame`` on the fitted ridge.
+    coeffs = coeffs_from_linear_milp_design(
+        artifact.model, design, config, shrink_weight=0.0, min_budget_levels=1
+    )
+    context_coefs = coeffs["context_feature_coefs"]
+    cal_cols = coeffs["calendar_context_columns"]
+    coeffs["calendar_offset_by_segment"] = {
+        str(seg): calendar_offset_from_context_coefs(
+            context_coefs,
+            cal_cols,
+            pd.Timestamp(planning_date),
+            region_of_segment(seg),
+            config.course,
+        )
+        for seg in segments
+    }
+    return refresh_static_context_lift(coeffs, config, candidates, set_features)
 
 
 def export_linear_solver_coeffs(

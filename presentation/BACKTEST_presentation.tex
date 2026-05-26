@@ -21,6 +21,7 @@
 \usepackage{lmodern}
 \usepackage{amsmath}
 \usepackage{booktabs}
+\usepackage{graphicx}
 \usepackage{microtype}
 
 \begin{document}
@@ -34,10 +35,10 @@
   $x_s \geq 0$ daily budget;\;
   $y_{s,k} \in \{0,1\}$ with $\sum_{k \in \mathcal{K}_s} y_{s,k} = 1$.
 
-  \textbf{Response} (XGBoost, \texttt{tree\_embed}; target \texttt{conv\_scaled\_clicks}; planning-day calendar fixed):
+  \textbf{Response} (\texttt{ensemble\_ridge\_xgb}, \texttt{tree\_embed}; target \texttt{conv\_scaled\_clicks}; planning-day calendar fixed):
   \[
     \widehat{y}_{s,k}(x_s)
-      = \hat f_{\mathrm{XGB}}\!\bigl(x_s,\, \mathbf{z}^{\mathrm{cal}},\, \boldsymbol{\phi}_k\bigr),
+      = \hat f_{\mathrm{opt}}\!\bigl(x_s,\, \mathbf{z}^{\mathrm{cal}},\, \boldsymbol{\phi}_k\bigr),
     \qquad
     \boldsymbol{\phi}_k \text{: set-level semantic + GKP features.}
   \]
@@ -77,7 +78,7 @@
   \textbf{Lists \& features:} match-type columns (\texttt{broad}/\texttt{phrase}/\texttt{exact} keywords assigned by dominant clicks); GKP aggregates + embedding cohesion/dispersion/course similarity merged in \texttt{build\_gkp\_set\_features.py} $\rightarrow$ \texttt{keyword-set-features.csv}.
 
   \vspace{0.25em}
-  {\footnotesize MILP picks \textbf{one set per segment} per day; optimizer refits XGB on \texttt{date}${<}t$, then solves with Gurobi.}
+  {\footnotesize MILP picks \textbf{one set per segment} per day; \texttt{ensemble\_ridge\_xgb} fit on full panel, plans solved walk-forward (\texttt{date}${<}t$ train rows for features).}
 \end{frame}
 
 \begin{frame}{Backtest at a glance}
@@ -89,7 +90,42 @@
   \textbf{Daily walk-forward:} for each $t$, train on \texttt{date} $< t$, solve MILP (budget + keyword set), score plan vs.\ panel actuals.
 
   \vspace{0.5em}
-  \textbf{Evaluation:} walk-forward \textbf{ensemble} (ridge, power\_log, power\_level, RF, XGB; CV-RMSE weights) refit daily on \texttt{date}${<}t$ for \texttt{plan\_vs\_actual}. Optimizer: XGB refit daily (unchanged).
+  \textbf{Evaluation:} 5-member CV-weighted \textbf{ensemble} (see \textbf{Models}); fit once on full panel. Optimizer: \texttt{ensemble\_ridge\_xgb} (\texttt{tree\_embed}), reused daily.
+\end{frame}
+
+\begin{frame}{Models}
+  \footnotesize
+  \textbf{Target:} \texttt{conv\_scaled\_clicks}.
+  \textbf{Context} $\mathbf{z}$: planning-day calendar + keyword-set features (GKP, embeddings).
+
+  \vspace{0.2em}
+  \textbf{Evaluation ensemble} (backtest / \texttt{plan\_vs\_actual}; fit once on full panel):
+  \begin{align*}
+    \hat f(x_s,\mathbf{z})
+      &= \textstyle\sum_m w_m \hat f_m(x_s,\mathbf{z}) \big/ \textstyle\sum_m w_m,
+      \quad w_m \propto 1/\mathrm{CV\mbox{-}RMSE}_m,\\
+    \mathcal{M} &= \{\text{ridge},\,\text{power\_log},\,\text{power\_level},\,\text{RF},\,\text{XGB}\}.
+  \end{align*}
+  \textbf{Lift:}
+  $\mathrm{lift}=\max\bigl(\hat f(x_s^{\mathrm{dec}},\mathbf{z})-\hat f(0,\mathbf{z}),\,0\bigr)$
+  (counterfactual at \$0 budget; same $\mathbf{z}$ for plan vs.\ actual).
+
+  \vspace{0.15em}
+  \begin{itemize}
+    \item \textbf{ridge} (MILP-linear design):
+      $y=\alpha_s+\beta_s x_s+\mathbf{z}^\top\boldsymbol{\gamma}+\varepsilon$;
+      $\alpha_s,\beta_s$ from region + match flags + $x_s\times$(region, match) + $\mathbf{z}$.
+    \item \textbf{power\_log}: $\log(1{+}y)=\alpha_s+\beta_s\log x_s+\mathbf{z}^\top\boldsymbol{\gamma}+\varepsilon$;
+      predict $\hat y=\mathrm{expm1}(\cdot)$ (elasticity in log--log space).
+    \item \textbf{power\_level}: $y=\alpha_s+\beta_s\log x_s+\mathbf{z}^\top\boldsymbol{\gamma}+\varepsilon$
+      (Ridge on levels; budget feature $=\log x_s$).
+    \item \textbf{random\_forest / xgboost}: $\hat y = g(\text{region},\,\text{match},\,x_s,\,\mathbf{z})$
+      (trees on scaled $x_s$, OHE region, numeric/categorical $\mathbf{z}$).
+  \end{itemize}
+  {\scriptsize Optimizer MILP: \texttt{ensemble\_ridge\_xgb} (\texttt{tree\_embed}); 5-member ensemble is scoring-only for \texttt{plan\_vs\_actual}.}
+
+  \vspace{0.1em}
+  \normalsize
 \end{frame}
 
 \begin{frame}{Headline results}
@@ -99,24 +135,68 @@
     \toprule
     & \textbf{Model (plan)} & \textbf{Actual (panel)} & \textbf{Observed} \\
     \midrule
-    Mean daily lift$^\ast$ & $1.91 \pm 0.11$ & $3.62 \pm 0.09$ (raw) & --- \\
-    Mean daily budget & \$375 $\pm$ \$2 & \$413 & --- \\
+    Mean daily lift$^\ast$ & $6.13 \pm 0.01$ & $2.09 \pm 0.03$ (raw) & --- \\
+    Mean daily budget & \$413 & \$413 & --- \\
     Mean \texttt{conv\_scaled} total & --- & --- & $15.1$ \\
   \bottomrule
   \end{tabular}
 
   \vspace{0.35em}
   \raggedright
-  {\scriptsize $^\ast$Lift $= \hat f(\text{plan}) - \hat f(0)$ vs.\ $\hat f(\text{actual budget, actual set}) - \hat f(0)$ using the daily ensemble $\hat f$. All 31/31 days have positive raw actual lift (vs.\ 1/31 with single XGBoost scoring).}
+  {\scriptsize $^\ast$Lift $= \hat f(\text{plan}) - \hat f(0)$ vs.\ $\hat f(\text{actual budget, actual set}) - \hat f(0)$ using the evaluation ensemble $\hat f$. All 31/31 days have positive raw actual lift.}
 
   \vspace{0.25em}
   \normalsize
-  \textbf{Takeaway:} Plans stay $\sim$9\% below cap with positive plan lift, but \textbf{ensemble scores historical configs higher than the plan} (actual lift $>$ model lift). Observed levels ($\sim$15/day) remain far above predicted increments.
+  \textbf{Takeaway:} Plans use the full \$413/day cap with high predicted plan lift ($\sim$6/day), but \textbf{ensemble scores actual configs below the plan} (actual lift $\sim$2/day). Observed levels ($\sim$15/day) remain far above predicted increments.
+\end{frame}
+
+\begin{frame}{Regional breakdown}
+  \footnotesize
+  \textbf{Window:} 2026-03-01 -- 2026-03-31 (31 days). Shares sum to 100\% within each row.
+  \textbf{Regions:} USA, A, B (segment $\rightarrow$ region map).
+
+  \vspace{0.35em}
+  \centering
+  \textbf{Budget share} (fraction of total \texttt{daily\_budget})
+  \begin{tabular}{lccc}
+    \toprule
+    Scenario & USA & A & B \\
+    \midrule
+    Model (optimizer plan) & 41\% & 41\% & 19\% \\
+    Actual (panel campaigns) & 48\% & 37\% & 15\% \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.45em}
+  \textbf{Lift share} (fraction of total incremental model lift$^\dagger$)
+  \begin{tabular}{lccc}
+    \toprule
+    Scenario & USA & A & B \\
+    \midrule
+    Model (plan) & 31\% & 35\% & 34\% \\
+    Actual (panel) & 25\% & 38\% & 37\% \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.45em}
+  \textbf{Observed \texttt{conv\_scaled\_clicks}} (panel totals, same all month)
+  \begin{tabular}{lccc}
+    \toprule
+    & USA & A & B \\
+    \midrule
+    Share of daily observed & 12\% & 34\% & 54\% \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.3em}
+  \raggedright
+  {\scriptsize $^\dagger$Lift $= \hat f(\text{budget}, \text{set}) - \hat f(0, \text{set})$ from the evaluation ensemble; not realized conversions.
+  Source: \texttt{regional\_breakdown.csv} in \texttt{backtest/2026-03-01\_2026-03-31}.}
 \end{frame}
 
 \begin{frame}{Evaluation model fit}
-  \textbf{Scoring model:} CV-weighted ensemble of all \texttt{model\_policy} candidates; refit daily on \texttt{date} $< t$ (tournament for weights).\\
-  \textbf{Optimizer model:} XGBoost (\texttt{tree\_embed}), refit daily on \texttt{date} $< t$.
+  \textbf{Scoring model:} CV-RMSE--weighted ensemble (Models slide); using all data.\\
+  \textbf{Optimizer model:} \texttt{ensemble\_ridge\_xgb} (\texttt{tree\_embed}); evaluation ensemble fit on full panel.
 
   \vspace{0.4em}
   \centering
@@ -124,46 +204,53 @@
     \toprule
     Metric (ensemble scoring, Mar 2026) & Value \\
     \midrule
-    Mean RMSE(pred lift vs.\ observed) & 5.55 \\
-    Segments at \$0 budget (mean) & 2 / 6 \\
-    Days with positive raw actual lift & 31 / 31 \\
+    \multicolumn{2}{l}{\textit{Tournament holdout (levels, 159 days):}} \\
+    Ensemble holdout RMSE / $R^2$ / MAE & 1.56 / 0.70 / 1.25 \\
+    \texttt{ensemble\_ridge\_xgb} holdout RMSE / $R^2$ & 1.83 / 0.59 \\
     \midrule
-    \multicolumn{2}{l}{\textit{Prior single-XGB scoring (same plans):}} \\
-    Mean actual lift (raw) & $-1.49 \pm 0.09$ \\
-    Days with positive raw actual lift & 1 / 31 \\
+    Mean RMSE(pred lift vs.\ observed) & 4.88 \\
+    Segments at \$0 budget (mean) & 0 / 6 \\
+    Days with positive raw actual lift & 31 / 31 \\
+    Model lift improvement vs.\ actual & $+193\%$ \\
     \bottomrule
   \end{tabular}
 
   \vspace{0.35em}
   \raggedright
-  {\scriptsize Ensemble blends ridge/power marginals with tree models; reduces negative counterfactual lift at observed spend vs.\ XGB-only $\hat f$.}
+  {\scriptsize Ensemble blends ridge/power marginals with tree models; holdout RMSE 1.56 vs.\ 2.20 for XGB alone (tournament).}
 \end{frame}
 
 \begin{frame}{Model tournament metrics}
-  \footnotesize
-  \textbf{Setup:} target \texttt{conv\_scaled\_clicks}; 2{,}258 segment-days (train 2{,}099 / holdout 159, last 75 days); 3-fold time-series CV on train; hyperparameter tune per candidate.
+  \scriptsize
+  \textbf{Setup:} \texttt{conv\_scaled\_clicks}; 2{,}258 segment-days (train 2{,}099 / holdout 159); 3-fold time-series CV; tuned per candidate.
 
-  \vspace{0.35em}
+  \vspace{0.15em}
   \centering
-  \begin{tabular}{lcccc}
+  \setlength{\tabcolsep}{4pt}
+  \renewcommand{\arraystretch}{0.9}
+  \resizebox{0.98\textwidth}{!}{%
+  \begin{tabular}{@{}lrrrr@{}}
     \toprule
-    \textbf{Candidate} & \textbf{CV RMSE} & \textbf{CV $R^2$} & \textbf{Holdout RMSE} & \textbf{Holdout $R^2$} \\
+    Candidate & CV-RMSE & CV-$R^2$ & Ho-RMSE & Ho-$R^2$ \\
     \midrule
     ridge & 2.80 & 0.01 & 2.68 & 0.12 \\
     power\_log & 2.75 & 0.06 & 1.50 & 0.73 \\
-    \textbf{power\_level} & \textbf{2.64} & \textbf{0.10} & \textbf{1.82} & \textbf{0.60} \\
-    random\_forest & 2.83 & $-$0.16 & 2.51 & 0.23 \\
+    \textbf{power\_level} & \textbf{2.64} & \textbf{0.10} & 1.82 & 0.60 \\
+    RF & 2.83 & $-$0.16 & 2.51 & 0.23 \\
     xgboost & 2.73 & $-$0.07 & 2.20 & 0.41 \\
+    \midrule
+    \textbf{ensemble} (5-mem.) & 2.68 & 0.05 & \textbf{1.56} & \textbf{0.70} \\
+    ens.\ ridge+xgb & 2.72 & 0.02 & 1.83 & 0.59 \\
     \bottomrule
-  \end{tabular}
+  \end{tabular}}
 
-  \vspace{0.35em}
+  \vspace{0.2em}
   \raggedright
-  \normalsize
-  \textbf{CV winner:} \texttt{power\_level} (lowest mean CV RMSE on levels).\\
-  \textbf{Backtest path:} \texttt{optimizer\_winner: xgboost} + \texttt{tree\_embed} for MILP; \texttt{evaluation.use\_ensemble: true} for \texttt{plan\_vs\_actual} (walk-forward daily).
+  \textbf{CV winner:} \texttt{power\_level}.
+  \textbf{Holdout:} best single \texttt{power\_log} (1.50); best overall 5-member \texttt{ensemble} (1.56, MAE 1.25).\\
+  \textbf{Backtest:} optimizer \texttt{ensemble\_ridge\_xgb}; evaluation 5-member ensemble (CV-RMSE weights).
 
-  {\scriptsize Source: \texttt{fit\_response\_models.py} $\rightarrow$ \texttt{holdout\_metrics.json}; rescored window \texttt{2026-03-01\_2026-03-31\_ensemble}.}
+  {\tiny Source: \texttt{holdout\_metrics.json} (\texttt{fit\_response\_models.py}).}
 \end{frame}
 
 \begin{frame}{What we built}
@@ -181,7 +268,7 @@
     \item \textbf{Target:} \texttt{conv\_scaled\_clicks} not raw \texttt{all\_conv} --- conversions are regime-heavy; clicks more stable; scaling weights toward segment conv efficiency.
     \item \textbf{Lever:} \texttt{daily\_budget} (configured cap), not cost.
     \item \textbf{Validation:} time-series CV (3 folds, $\geq$50\% train fraction).
-    \item \textbf{Production path:} \texttt{optimizer\_winner: xgboost}; refit walk-forward each backtest day.
+    \item \textbf{Production path:} \texttt{optimizer\_winner: ensemble\_ridge\_xgb}; evaluation 5-member ensemble with CV-RMSE weights.
   \end{itemize}
 \end{frame}
 
@@ -198,45 +285,32 @@
     Segment & \texttt{keyword\_set\_id} \\
     \midrule
     A / Broad & \texttt{synthetic\_A\_Broad\_semantic\_2} (31) \\
-    A / Phrase; Exact & \texttt{ks\_0013} (31) \\
+    A / Phrase; Exact & \texttt{synthetic\_A\_Phrase; Exact\_dispersion\_9} (31) \\
     B / Broad & \texttt{synthetic\_B\_Broad\_semantic\_5} (31) \\
-    B / Phrase; Exact & \texttt{ks\_0019} (16), \texttt{synthetic\_B\_Phrase; Exact\_semantic\_12} (15) \\
-    USA / Broad & \texttt{synthetic\_USA\_Broad\_top\_15} (28), \texttt{...\_composite\_18} (3) \\
-    USA / Phrase; Exact & \texttt{...\_composite\_22} (17), \texttt{...\_dispersion\_21} (14) \\
+    B / Phrase; Exact & \texttt{synthetic\_B\_Phrase; Exact\_dispersion\_13} (31) \\
+    USA / Broad & \texttt{synthetic\_USA\_Broad\_semantic\_16} (31) \\
+    USA / Phrase; Exact & \texttt{synthetic\_USA\_Phrase; Exact\_dispersion\_21} (31) \\
     \bottomrule
   \end{tabular}
 
   \vspace{0.25em}
-  \textbf{Regional lift shares:}
-  \begin{tabular}{lccc}
-    \toprule
-    & USA & A & B \\
-    \midrule
-    Model & 52\% & 31\% & 17\% \\
-    Actual & 39\% & 37\% & 24\% \\
-    Observed & 12\% & 34\% & 54\% \\
-    \bottomrule
-  \end{tabular}
+  \raggedright
+  {\scriptsize Regional budget / lift / observed shares: \textbf{Regional breakdown} slide.}
 \end{frame}
 
 \begin{frame}{Caveats}
   \begin{itemize}
-    \item \textbf{Lift $\neq$ observed level:} predicted daily lifts $\mathcal{O}(1)$--$4$ vs.\ observed $\sim$15; scoring is counterfactual on $\hat f$, not realized outcomes.
-    \item \textbf{Scoring vs.\ optimizer mismatch:} MILP uses XGB; ensemble (ridge/power-heavy) can rank actual $>$ plan even when plans look good under XGB.
-    \item \textbf{Single-XGB artifact:} full-panel XGB scoring gave negative actual lift on 30/31 days; fixed by ensemble, not by changing plans.
-    \item \textbf{Set stability:} A/B Broad + A Phrase; Exact fixed all month; USA/B Phrase; Exact switch mid-window.
-    \item \textbf{Sparse budgets:} 2/6 segments routinely at \$0.
+    \item \textbf{Lift $\neq$ observed level:} predicted daily lifts $\mathcal{O}(2)$--$6$ vs.\ observed $\sim$15; scoring is counterfactual on $\hat f$, not realized outcomes.
+    \item \textbf{Scoring vs.\ optimizer mismatch:} MILP uses \texttt{ensemble\_ridge\_xgb}; evaluation uses the wider 5-member ensemble --- plan lift can exceed actual lift under $\hat f$.
+    \item \textbf{Set stability:} fixed synthetic keyword set per segment all 31 days (dispersion / semantic pools).
+    \item \textbf{Budget binding:} all segments receive positive budget; plan totals hit the \$413/day cap.
   \end{itemize}
 \end{frame}
 
 \begin{frame}{Next steps}
   \begin{enumerate}
-    \item \textbf{Enable ensemble in config:} set \texttt{evaluation.use\_ensemble: true} for production monitor + backtest.
-    \item \textbf{Response form:} power / saturation instead of XGB for optimizer marginals (align with CV winner).
-    \item \textbf{Calibration:} level-fit so predicted lift matches observed scale.
-    \item \textbf{Targets:} A/B \texttt{clicks} vs.\ \texttt{conv\_scaled} vs.\ \texttt{all\_conv}.
+    \item \textbf{Response form:} align optimizer with CV/holdout winner (\texttt{power\_log} / 5-member ensemble) vs.\ current \texttt{ensemble\_ridge\_xgb}.
     \item \textbf{Two-stage backtest:} fixed sets for period + weekly budgets.
-    \item \textbf{GKP / Planner:} extend set features; audit $\mathcal{K}_s$.
   \end{enumerate}
 \end{frame}
 

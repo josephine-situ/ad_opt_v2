@@ -35,6 +35,42 @@ from utils.campaign_features import (
 )
 from utils.shrinkage import segment_budget_level_counts
 
+# Meta-candidates: weighted average of base learners (not MILP backends themselves).
+ENSEMBLE_CANDIDATE_NAMES = frozenset({"ensemble", "ensemble_ridge_xgb"})
+BASE_TOURNAMENT_CANDIDATES = [
+    "ridge",
+    "power_log",
+    "power_level",
+    "random_forest",
+    "xgboost",
+]
+ENSEMBLE_MEMBER_GROUPS: dict[str, list[str]] = {
+    "ensemble": list(BASE_TOURNAMENT_CANDIDATES),
+    "ensemble_ridge_xgb": ["ridge", "xgboost"],
+}
+
+
+def is_ensemble_candidate(name: str) -> bool:
+    return name in ENSEMBLE_CANDIDATE_NAMES
+
+
+def base_tournament_candidates(candidates: list[str]) -> list[str]:
+    """Drop ensemble meta-candidates; used for walk-forward evaluation ensembles."""
+    return [n for n in candidates if not is_ensemble_candidate(n)]
+
+
+def _cv_rmse_member_weights(
+    metrics_table: dict[str, dict[str, float]],
+    member_names: list[str],
+) -> dict[str, float]:
+    inv: dict[str, float] = {}
+    for name in member_names:
+        m = metrics_table.get(name) or {}
+        rmse = m.get("cv_rmse_levels") or m.get("holdout_rmse_levels") or float("inf")
+        inv[name] = 1.0 / max(rmse, 1e-9)
+    total = sum(inv.values()) or 1.0
+    return {k: v / total for k, v in inv.items()}
+
 
 @dataclass
 class ModelResult:
@@ -74,16 +110,24 @@ def eval_pipeline_holdout(
     sub = holdout.dropna(subset=[target, "daily_budget", "region"])
     if sub.empty:
         return None
-    X, y = _prep_xy(sub, target, feature_cols)
-    if len(X) == 0:
-        return None
-    pred = np.clip(pipeline.predict(X), 0, None)
+    from campaign_opt.evaluation import EnsembleModel
+
+    if isinstance(pipeline, EnsembleModel):
+        if "segment" not in sub.columns:
+            return None
+        pred = pipeline.predict_levels(sub)
+        y = sub[target].astype(float).values
+    else:
+        X, y = _prep_xy(sub, target, feature_cols)
+        if len(X) == 0:
+            return None
+        pred = np.clip(pipeline.predict(X), 0, None)
     m = _level_metrics(y, pred)
     return {
         "holdout_r2": m["holdout_r2_levels"],
         "holdout_rmse": m["holdout_rmse_levels"],
         "holdout_mae": m["holdout_mae_levels"],
-        "n_holdout": float(len(X)),
+        "n_holdout": float(len(sub)),
     }
 
 
@@ -285,6 +329,28 @@ def refit_optimizer_model(
     manifest: dict[str, Any],
 ) -> Any:
     """Refit a named tournament candidate on ``train`` for production optimization."""
+    if model_name == "ensemble_ridge_xgb":
+        member_names = ENSEMBLE_MEMBER_GROUPS["ensemble_ridge_xgb"]
+        member_hp = {
+            m: hyperparams_from_manifest(manifest, m) or {}
+            for m in member_names
+        }
+        empty_holdout = train.iloc[0:0]
+        return fit_ensemble_tournament(
+            "ensemble_ridge_xgb",
+            member_names,
+            train,
+            empty_holdout,
+            config,
+            get_context_feature_columns(config.context_features),
+            member_hyperparams=member_hp,
+            member_weights=None,
+        ).pipeline
+    if is_ensemble_candidate(model_name):
+        raise ValueError(
+            f"optimizer_winner {model_name!r} is not supported for MILP optimization; "
+            "use 'ensemble_ridge_xgb' or a base model such as 'xgboost'."
+        )
     fitter = FITTERS.get(model_name)
     if fitter is None:
         raise ValueError(f"Unknown optimizer_winner: {model_name!r}")
@@ -308,6 +374,37 @@ def refit_winner_on_data(
 
     Evaluation metrics on ``winner`` (CV / holdout from the train split) are preserved.
     """
+    if is_ensemble_candidate(winner.name):
+        member_names = ENSEMBLE_MEMBER_GROUPS[winner.name]
+        member_hp = winner.best_hyperparams if isinstance(winner.best_hyperparams, dict) else {}
+        if member_hp and not any(isinstance(v, dict) for v in member_hp.values()):
+            member_hp = {}
+        empty = df.iloc[0:0]
+        refit = fit_ensemble_tournament(
+            winner.name,
+            member_names,
+            df,
+            empty,
+            config,
+            feature_cols,
+            member_hyperparams=member_hp,
+            member_weights=None,
+        )
+        return ModelResult(
+            name=winner.name,
+            pipeline=refit.pipeline,
+            backend=winner.backend,
+            holdout_rmse=winner.holdout_rmse,
+            holdout_r2=winner.holdout_r2,
+            holdout_mae=winner.holdout_mae,
+            log_r2_diagnostic=winner.log_r2_diagnostic,
+            cv_rmse=winner.cv_rmse,
+            cv_r2=winner.cv_r2,
+            cv_mae=winner.cv_mae,
+            best_hyperparams=winner.best_hyperparams,
+            extra=refit.extra,
+        )
+
     spec = get_train_spec(winner.name, winner.best_hyperparams)
     if spec is None:
         raise ValueError(f"Unknown winner model: {winner.name}")
@@ -418,13 +515,157 @@ def fit_xgboost(
     )
 
 
+def fit_ensemble_tournament(
+    name: str,
+    member_names: list[str],
+    train: pd.DataFrame,
+    holdout: pd.DataFrame,
+    config: CampaignOptConfig,
+    feature_cols: list[str],
+    *,
+    member_hyperparams: dict[str, dict[str, Any]] | None = None,
+    member_weights: dict[str, float] | None = None,
+    hyperparams: dict[str, Any] | None = None,
+) -> ModelResult:
+    """Fit member models on train and score level predictions on holdout (equal or CV weights)."""
+    from campaign_opt.evaluation import EnsembleModel, fit_member_on_train
+
+    del hyperparams  # per-member params live in member_hyperparams
+    members = []
+    mhp = member_hyperparams or {}
+    for mname in member_names:
+        hp = mhp.get(mname)
+        spec = get_train_spec(mname, hp)
+        if spec is None:
+            continue
+        member = fit_member_on_train(spec, train, config, feature_cols, hyperparams=hp)
+        w = 1.0 if not member_weights else member_weights.get(mname, 0.0)
+        if member_weights is not None and w <= 0:
+            continue
+        member.weight = w
+        members.append(member)
+
+    if not members:
+        raise RuntimeError(f"No ensemble members fitted for {name}")
+
+    ensemble = EnsembleModel(
+        members=members,
+        feature_cols=feature_cols,
+        target=config.target,
+        baseline_budget=float(config.evaluation.baseline_budget),
+    )
+
+    target = config.target
+    sub = holdout.dropna(subset=[target, "daily_budget", "segment"])
+    if len(sub) == 0:
+        m = {
+            "holdout_rmse_levels": float("nan"),
+            "holdout_r2_levels": float("nan"),
+            "holdout_mae_levels": float("nan"),
+        }
+    else:
+        pred = ensemble.predict_levels(sub)
+        m = _level_metrics(sub[target].astype(float).values, pred)
+
+    return ModelResult(
+        name=name,
+        pipeline=ensemble,
+        backend="tree_embed",
+        holdout_rmse=m["holdout_rmse_levels"],
+        holdout_r2=m["holdout_r2_levels"],
+        holdout_mae=m["holdout_mae_levels"],
+        best_hyperparams=mhp or None,
+        extra={"member_names": member_names, "ensemble": ensemble},
+    )
+
+
+def fit_ensemble(
+    train,
+    holdout,
+    config,
+    feature_cols,
+    *,
+    hyperparams: dict[str, Any] | None = None,
+    member_hyperparams: dict[str, dict[str, Any]] | None = None,
+    member_weights: dict[str, float] | None = None,
+) -> ModelResult:
+    mhp = member_hyperparams or (
+        hyperparams if hyperparams and any(isinstance(v, dict) for v in hyperparams.values()) else None
+    )
+    return fit_ensemble_tournament(
+        "ensemble",
+        ENSEMBLE_MEMBER_GROUPS["ensemble"],
+        train,
+        holdout,
+        config,
+        feature_cols,
+        member_hyperparams=mhp,
+        member_weights=member_weights,
+    )
+
+
+def fit_ensemble_ridge_xgb(
+    train,
+    holdout,
+    config,
+    feature_cols,
+    *,
+    hyperparams: dict[str, Any] | None = None,
+    member_hyperparams: dict[str, dict[str, Any]] | None = None,
+    member_weights: dict[str, float] | None = None,
+) -> ModelResult:
+    mhp = member_hyperparams or (
+        hyperparams if hyperparams and any(isinstance(v, dict) for v in hyperparams.values()) else None
+    )
+    return fit_ensemble_tournament(
+        "ensemble_ridge_xgb",
+        ENSEMBLE_MEMBER_GROUPS["ensemble_ridge_xgb"],
+        train,
+        holdout,
+        config,
+        feature_cols,
+        member_hyperparams=mhp,
+        member_weights=member_weights,
+    )
+
+
 FITTERS: dict[str, Callable[..., ModelResult]] = {
     "ridge": fit_ridge,
     "power_log": fit_power_log,
     "power_level": fit_power_level,
     "random_forest": fit_random_forest,
     "xgboost": fit_xgboost,
+    "ensemble": fit_ensemble,
+    "ensemble_ridge_xgb": fit_ensemble_ridge_xgb,
 }
+
+
+def _ensure_member_hyperparams(
+    member_names: list[str],
+    train: pd.DataFrame,
+    config: CampaignOptConfig,
+    feature_cols: list[str],
+    best_hyperparams_all: dict[str, Any],
+    *,
+    tune: bool,
+    n_folds: int,
+) -> dict[str, dict[str, Any]]:
+    member_hp: dict[str, dict[str, Any]] = {}
+    for mname in member_names:
+        existing = best_hyperparams_all.get(mname)
+        if isinstance(existing, dict) and existing:
+            member_hp[mname] = existing
+            continue
+        base_fitter = FITTERS.get(mname)
+        if base_fitter is None:
+            continue
+        if tune:
+            hp, _ = tune_hyperparams(mname, base_fitter, train, config, feature_cols, n_folds=n_folds)
+            member_hp[mname] = hp
+            best_hyperparams_all[mname] = hp
+        else:
+            member_hp[mname] = {}
+    return member_hp
 
 
 def _short_name(name: str, *, max_len: int = 36) -> str:
@@ -596,7 +837,60 @@ def run_tournament(
             continue
         try:
             hyperparams: dict[str, Any] | None = None
-            if tune:
+            if is_ensemble_candidate(name):
+                member_names = ENSEMBLE_MEMBER_GROUPS[name]
+                member_hp = _ensure_member_hyperparams(
+                    member_names,
+                    train,
+                    config,
+                    feature_cols,
+                    best_hyperparams_all,
+                    tune=tune,
+                    n_folds=n_folds,
+                )
+                weights = (
+                    _cv_rmse_member_weights(metrics_table, member_names)
+                    if config.evaluation.weight_by_cv_rmse
+                    else None
+                )
+
+                def _fit_ensemble(
+                    tr: pd.DataFrame,
+                    ho: pd.DataFrame,
+                    cfg: CampaignOptConfig,
+                    fc: list[str],
+                    *,
+                    _name: str = name,
+                    _members: list[str] = member_names,
+                    _mhp: dict[str, dict[str, Any]] = member_hp,
+                    _weights: dict[str, float] | None = weights,
+                ) -> ModelResult:
+                    return fit_ensemble_tournament(
+                        _name,
+                        _members,
+                        tr,
+                        ho,
+                        cfg,
+                        fc,
+                        member_hyperparams=_mhp,
+                        member_weights=_weights,
+                    )
+
+                if tune or run_cv:
+                    cv_metrics = cross_validate_model(
+                        _fit_ensemble, train, config, feature_cols, n_folds=n_folds
+                    )
+                    res = _fit_ensemble(train, holdout, config, feature_cols)
+                    res.cv_rmse = cv_metrics["cv_rmse_levels"]
+                    res.cv_r2 = cv_metrics["cv_r2_levels"]
+                    res.cv_mae = cv_metrics["cv_mae_levels"]
+                    res.best_hyperparams = member_hp or None
+                    best_hyperparams_all[name] = member_hp
+                else:
+                    res = _fit_ensemble(train, holdout, config, feature_cols)
+                    res.best_hyperparams = member_hp or None
+                    best_hyperparams_all[name] = member_hp
+            elif tune:
                 hyperparams, cv_metrics = tune_hyperparams(
                     name, fitter, train, config, feature_cols, n_folds=n_folds
                 )

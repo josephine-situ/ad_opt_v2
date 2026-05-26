@@ -242,9 +242,9 @@ Use `--skip-gkp` / `--skip-candidates` when GKP set features are disabled or alr
 uv run python scripts/backtest_campaign.py --course sys_think --start 2025-10-01 --end 2025-12-31
 ```
 
-One MILP per day in range (train on `date < t`, optimize budget + keyword set, score vs actual). Optimization uses `optimizer_winner` / `optimizer_backend` from config (e.g. XGBoost + `tree_embed`); the model is refit on `date < t` each day. **`fit_response_models.py` is optional** if `optimizer_winner` is set—it supplies tuned hyperparameters when `model_manifest.json` exists. With `evaluation.use_ensemble: true`, backtest still runs a walk-forward tournament for ensemble weights unless you use `--static-model` and saved `holdout_metrics.json`. With `use_ensemble: false`, one evaluation model (default: `optimizer_winner`, e.g. XGBoost) is fit **once on the full modeling panel** (`prepare_modeling_data` frame), saved as `evaluation_{model}.joblib` under the backtest window dir, and used for every day's `plan_vs_actual.csv`. The MILP optimizer still refits walk-forward on `date < t` each day (`optimizer_*.joblib`).
+One MILP per day in range (train on `date < t`, optimize budget + keyword set, score vs actual). Optimization uses `optimizer_winner` / `optimizer_backend` from config (e.g. XGBoost + `tree_embed`); the model is refit on `date < t` each day. **`fit_response_models.py` is optional** if `optimizer_winner` is set—it supplies tuned hyperparameters when `model_manifest.json` exists. With `evaluation.use_ensemble: true` or `false`, the plan-vs-actual scorer is fit **once on the full modeling panel** (`prepare_modeling_data` frame)—saved as `ensemble_model.joblib` or `evaluation_{model}.joblib`. Member weights use `holdout_metrics.json` when `weight_by_cv_rmse` is enabled. The MILP optimizer refits walk-forward on `date < t` each day for non-ensemble winners; `ensemble_ridge_xgb` is fit once on the full panel and reused (`optimizer_ensemble_ridge_xgb.joblib` under the backtest window).
 
-Optional flags: `--strategy daily` (explicit), `--static-model` (reuse first-day evaluation ensemble).
+Optional flags: `--strategy daily` (explicit), `--static-model` (legacy; evaluation ensemble is always full-panel).
 
 ### Two-stage mode (fixed keyword sets + weekly budgets)
 

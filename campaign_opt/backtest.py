@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import joblib
 import pandas as pd
 
 from campaign_opt.evaluation import (
@@ -18,7 +19,7 @@ from campaign_opt.evaluation import (
     save_evaluation_model,
 )
 from campaign_opt.features import train_before_date
-from campaign_opt.modeling import eval_pipeline_holdout, run_tournament
+from campaign_opt.modeling import eval_pipeline_holdout, refit_optimizer_model
 from campaign_opt.optimize import run_optimizer
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.train_specs import get_train_spec
@@ -101,8 +102,8 @@ def run_daily_backtest(
     """
     For each day t in [start, end]:
       - Optimize on walk-forward train (date < t) via ``run_optimizer``
-      - Score plan vs actual with a full-panel evaluation model (``use_ensemble: false``)
-        or a walk-forward ensemble (``use_ensemble: true``)
+      - Score plan vs actual with a model fit once on the full modeling panel
+        (``use_ensemble`` true or false). ``refit_each_day`` is ignored for evaluation.
     """
     out_dir = Path(out_dir)
     plans_dir = out_dir / "plans"
@@ -119,9 +120,28 @@ def run_daily_backtest(
         config.context_features
     )
 
-    if not config.evaluation.use_ensemble and eval_winner:
-        dmin = pd.to_datetime(df["date"]).min().date()
-        dmax = pd.to_datetime(df["date"]).max().date()
+    dmin = pd.to_datetime(df["date"]).min().date()
+    dmax = pd.to_datetime(df["date"]).max().date()
+    static_optimizer_path: Path | None = None
+
+    if config.evaluation.use_ensemble:
+        weights = (
+            _cv_rmse_weights(static_metrics)
+            if config.evaluation.weight_by_cv_rmse and static_metrics
+            else None
+        )
+        print(
+            f"Fitting evaluation ensemble on full panel: "
+            f"{len(df)} rows ({dmin} → {dmax})"
+        )
+        static_eval_model = fit_ensemble(
+            df,
+            config,
+            member_weights=weights,
+            member_hyperparams=opt_manifest.get("best_hyperparams"),
+        )
+        save_ensemble(static_eval_model, out_dir / "ensemble_model.joblib")
+    elif eval_winner:
         print(
             f"Fitting evaluation model {eval_winner!r} on full panel: "
             f"{len(df)} rows ({dmin} → {dmax})"
@@ -134,6 +154,16 @@ def run_daily_backtest(
             feature_cols=feature_cols,
         )
         save_evaluation_model(static_eval_model, out_dir / f"evaluation_{eval_winner}.joblib")
+
+    if eval_winner == "ensemble_ridge_xgb":
+        opt_path = out_dir / f"optimizer_{eval_winner}.joblib"
+        print(
+            f"Fitting optimizer {eval_winner!r} on full panel: "
+            f"{len(df)} rows ({dmin} → {dmax})"
+        )
+        pipeline = refit_optimizer_model(eval_winner, df, config, opt_manifest)
+        joblib.dump(pipeline, opt_path)
+        static_optimizer_path = opt_path
 
     for opt_date in dates:
         opt_date = pd.Timestamp(opt_date)
@@ -150,11 +180,6 @@ def run_daily_backtest(
             print(f"  [{opt_date.date()}] skip — no panel rows on this date")
             continue
 
-        metrics_table: dict[str, dict[str, float]] = static_metrics
-        if config.evaluation.use_ensemble and refit_each_day:
-            _, metrics_table, _ = run_tournament(train, holdout, config)
-            static_metrics = metrics_table
-
         plan = run_optimizer(
             config,
             opt_manifest,
@@ -163,7 +188,7 @@ def run_daily_backtest(
             panel,
             total_budget=total_budget,
             output_dir=day_dir,
-            model_path=day_dir / "winner_model.joblib",
+            model_path=static_optimizer_path or day_dir / "winner_model.joblib",
             planning_date=opt_date,
             write_outputs=True,
         )
@@ -179,27 +204,7 @@ def run_daily_backtest(
             "plan_budget_total": float(plan_budget.sum()),
             "n_segments_zero_budget": int((plan_budget <= 0).sum()),
         }
-        eval_model = None
-        if config.evaluation.use_ensemble:
-            if refit_each_day or static_eval_model is None:
-                weights = (
-                    _cv_rmse_weights(metrics_table)
-                    if config.evaluation.weight_by_cv_rmse and metrics_table
-                    else None
-                )
-                print(f"  [{opt_date.date()}] fitting ensemble on {len(train)} rows...")
-                eval_model = fit_ensemble(
-                    train,
-                    config,
-                    member_weights=weights,
-                    member_hyperparams=opt_manifest.get("best_hyperparams"),
-                )
-                save_ensemble(eval_model, day_dir / "ensemble_model.joblib")
-                static_eval_model = eval_model
-            else:
-                eval_model = static_eval_model
-        elif eval_winner:
-            eval_model = static_eval_model
+        eval_model = static_eval_model if config.evaluation.use_ensemble or eval_winner else None
 
         if eval_model is not None:
             if not config.evaluation.use_ensemble and eval_model.members:

@@ -9,9 +9,12 @@ import pandas as pd
 
 from campaign_opt.backends.linear import solve_linear_campaign_milp
 from campaign_opt.backends.piecewise_linear import solve_piecewise_campaign_milp
-from campaign_opt.backends.tree_embed import solve_tree_embed_campaign_milp
+from campaign_opt.backends.tree_embed import (
+    solve_ridge_xgb_embed_campaign_milp,
+    solve_tree_embed_campaign_milp,
+)
 from campaign_opt.coefficients import export_linear_solver_coeffs, load_linear_solver_coeffs
-from campaign_opt.modeling import refit_optimizer_model
+from campaign_opt.modeling import is_ensemble_candidate, refit_optimizer_model
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.train_specs import get_train_spec
 
@@ -22,6 +25,13 @@ def _resolve_backend(config: CampaignOptConfig, manifest: dict) -> str:
     policy = config.model_policy
     if policy.optimizer_backend != "auto":
         return policy.optimizer_backend
+    if policy.optimizer_winner == "ensemble_ridge_xgb":
+        return "ridge_xgb_embed"
+    if policy.optimizer_winner and is_ensemble_candidate(policy.optimizer_winner):
+        raise ValueError(
+            f"optimizer_winner={policy.optimizer_winner!r} has no MILP backend; "
+            "use ensemble_ridge_xgb or set optimizer_backend explicitly."
+        )
     if policy.optimizer_winner:
         spec = get_train_spec(policy.optimizer_winner)
         if spec is not None:
@@ -60,10 +70,14 @@ def _tree_embed_model_path(
     path = Path(model_path or output_dir / "winner_model.joblib")
     winner_name = _resolve_optimizer_winner(config, manifest)
     manifest_winner = manifest.get("winner")
-    if winner_name == manifest_winner and path.exists():
-        if config.model_policy.optimizer_winner:
-            print(f"[Info] Using winner_model.joblib for optimizer_winner={winner_name!r}")
-        return path
+    if path.exists():
+        if model_path is not None:
+            print(f"[Info] Using optimizer model at {path} ({winner_name!r})")
+            return path
+        if winner_name == manifest_winner:
+            if config.model_policy.optimizer_winner:
+                print(f"[Info] Using winner_model.joblib for optimizer_winner={winner_name!r}")
+            return path
 
     print(
         f"[Info] Refitting {winner_name!r} on {len(train)} rows for optimization "
@@ -152,6 +166,23 @@ def run_optimizer(
             config, manifest, train, output_dir, model_path
         )
         return solve_tree_embed_campaign_milp(
+            config,
+            embed_path,
+            train,
+            candidates,
+            panel,
+            total_budget=total_budget,
+            output_dir=output_dir,
+            planning_date=planning_date or pd.Timestamp(train["date"].max()),
+            write_outputs=write_outputs,
+            fixed_keyword_sets=fixed_keyword_sets,
+            fixed_budgets=fixed_budgets,
+        )
+    if backend == "ridge_xgb_embed":
+        embed_path = _tree_embed_model_path(
+            config, manifest, train, output_dir, model_path
+        )
+        return solve_ridge_xgb_embed_campaign_milp(
             config,
             embed_path,
             train,
