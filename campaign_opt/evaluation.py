@@ -165,21 +165,21 @@ def fit_ensemble(
     )
 
 
-def optimizer_winner_name(config: CampaignOptConfig, manifest: dict) -> str:
-    """Model used for optimization / single-model plan-vs-actual (``optimizer_winner`` overrides manifest)."""
-    return config.model_policy.optimizer_winner or str(manifest.get("winner") or "")
+def optimizer_winner_name(config: CampaignOptConfig) -> str:
+    """Configured optimizer / single-model evaluation candidate."""
+    from campaign_opt.optimize import require_optimizer_winner
+
+    return require_optimizer_winner(config)
 
 
-def optimizer_model_path(output_dir: Path, winner_name: str) -> Path | None:
-    """Path to the refitted optimizer pipeline saved during ``run_optimizer``."""
-    output_dir = Path(output_dir)
-    for fname in (f"optimizer_{winner_name}.joblib" if winner_name else "", "winner_model.joblib"):
-        if not fname:
-            continue
-        path = output_dir / fname
-        if path.exists():
-            return path
-    return None
+def optimizer_model_path(output_dir: Path, winner_name: str) -> Path:
+    """Path to the optimizer pipeline saved by ``run_optimizer``."""
+    if not winner_name:
+        raise ValueError("winner_name is required")
+    path = Path(output_dir) / f"optimizer_{winner_name}.joblib"
+    if not path.exists():
+        raise FileNotFoundError(f"Missing optimizer artifact: {path}")
+    return path
 
 
 def fit_single_model_evaluation(
@@ -205,7 +205,7 @@ def fit_single_model_evaluation(
         is_ensemble_candidate,
     )
 
-    model_name = model_name or optimizer_winner_name(config, manifest)
+    model_name = model_name or optimizer_winner_name(config)
     feature_cols = feature_cols or manifest.get("feature_cols") or get_context_feature_columns(
         config.context_features
     )

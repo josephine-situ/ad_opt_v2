@@ -24,7 +24,7 @@ from campaign_opt.decisions import (
     historical_budget_bounds,
 )
 from campaign_opt.modeling import _prep_xy
-from campaign_opt.optimize import _tree_embed_model_path
+from campaign_opt.optimize import _fit_and_save_embed_model
 from campaign_opt.schema import default_config_path, load_campaign_config
 from utils.campaign_features import (
     add_segment_column,
@@ -97,8 +97,8 @@ def test_embed_matches_sklearn_at_low_budget_after_leaf_tighten():
         pd.read_csv(Path("data") / config.course / "processed" / "segment-keyword-candidates.csv"),
         config.constraints,
     )
-    model_path = _tree_embed_model_path(
-        config, manifest, production, out_dir, out_dir / "winner_model.joblib"
+    model_path = _fit_and_save_embed_model(
+        config, manifest, production, out_dir, tune=False
     )
     pipeline = joblib.load(model_path)
     planning_date = pd.Timestamp(production["date"].max())

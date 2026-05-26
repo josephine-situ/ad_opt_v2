@@ -84,7 +84,7 @@ def main() -> None:
     static_metrics = _load_holdout_metrics(config)
     weights = (
         _cv_rmse_weights(static_metrics)
-        if config.evaluation.weight_by_cv_rmse and static_metrics
+        if config.evaluation.weight_by_cv_rmse
         else None
     )
     dmin = pd.to_datetime(df["date"]).min().date()

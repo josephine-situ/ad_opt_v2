@@ -30,7 +30,6 @@ def main() -> None:
     parser.add_argument("--exp-name", default="default")
     parser.add_argument("--budget", type=float, default=None)
     parser.add_argument("--planning-date", default="")
-    parser.add_argument("--refit-coeffs", action="store_true", help="Re-fit linear MILP coeffs instead of using fit-time linear_coeffs.json")
     args = parser.parse_args()
 
     config_path = Path(args.config) if args.config else default_config_path(args.course, args.exp_name)
@@ -91,9 +90,8 @@ def main() -> None:
         panel,
         total_budget=total_budget,
         output_dir=out_dir,
-        model_path=out_dir / "winner_model.joblib",
         planning_date=planning_date,
-        refit_coeffs=args.refit_coeffs,
+        tune_optimizer=False,
     )
     print(f"Optimization complete. Plan rows: {len(plan)}")
     print(plan.to_string(index=False))

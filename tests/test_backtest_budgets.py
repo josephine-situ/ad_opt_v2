@@ -44,13 +44,13 @@ def test_budgets_proportional_to_conversion_rates():
     assert budgets["B / Phrase; Exact"] > budgets["A / Broad"]
 
 
-def test_load_fit_manifest_missing_without_optimizer_winner(tmp_path: Path):
+def test_load_fit_manifest_requires_optimizer_winner():
     config = CampaignOptConfig(exp_name="t", course="sys_think")
-    with pytest.raises(FileNotFoundError, match="optimizer_winner"):
+    with pytest.raises(ValueError, match="optimizer_winner"):
         load_fit_manifest(config)
 
 
-def test_optimizer_manifest_from_config_without_fit():
+def test_optimizer_manifest_requires_fit_artifacts(tmp_path: Path):
     config = CampaignOptConfig(
         exp_name="t2",
         course="sys_think",
@@ -59,13 +59,17 @@ def test_optimizer_manifest_from_config_without_fit():
             optimizer_backend="tree_embed",
         ),
     )
-    manifest = load_fit_manifest(config)
-    assert manifest["winner"] == "xgboost"
-    assert manifest["backend"] == "tree_embed"
+    with pytest.raises(FileNotFoundError, match="model_manifest.json"):
+        load_fit_manifest(config)
 
 
 def test_daily_backtest_uses_production_manifest_not_fixed_budgets(tmp_path: Path):
-    manifest = {"winner": "xgboost", "backend": "tree_embed", "best_hyperparams": {}}
+    manifest = {
+        "winner": "xgboost",
+        "backend": "tree_embed",
+        "best_hyperparams": {},
+        "feature_cols": ["day_of_week"],
+    }
 
     df = pd.DataFrame(
         {
@@ -111,12 +115,25 @@ def test_daily_backtest_uses_production_manifest_not_fixed_budgets(tmp_path: Pat
     config = CampaignOptConfig(
         exp_name="t",
         course="sys_think",
+        model_policy=ModelPolicy(optimizer_winner="xgboost"),
         evaluation=EvaluationConfig(use_ensemble=False),
     )
     exp_dir = config.exp_dir()
     exp_dir.mkdir(parents=True, exist_ok=True)
     (exp_dir / "model_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    with patch("campaign_opt.backtest.run_optimizer", side_effect=fake_optimizer):
+    comp = pd.DataFrame(
+        {
+            "pred_lift": [1.0],
+            "actual_model_lift": [0.8],
+            "observed_clicks": [3.0],
+            "row_kind": ["plan"],
+        }
+    )
+    with (
+        patch("campaign_opt.backtest._fit_evaluation_model", return_value=MagicMock()),
+        patch("campaign_opt.backtest.run_optimizer", side_effect=fake_optimizer),
+        patch("campaign_opt.backtest.compare_plan_and_actual", return_value=comp),
+    ):
         summary = run_daily_backtest(
             config,
             df,
@@ -126,10 +143,10 @@ def test_daily_backtest_uses_production_manifest_not_fixed_budgets(tmp_path: Pat
             end=pd.Timestamp("2025-01-02"),
             total_budget=100.0,
             out_dir=tmp_path,
-            refit_each_day=True,
         )
 
     assert captured.get("fixed_budgets") is None
+    assert captured["tune_optimizer"] is True
     assert captured["manifest"]["winner"] == "xgboost"
     assert len(summary) == 1
     assert summary.iloc[0]["plan_budget_total"] == 50.0
@@ -137,7 +154,12 @@ def test_daily_backtest_uses_production_manifest_not_fixed_budgets(tmp_path: Pat
 
 
 def test_daily_backtest_writes_plan_vs_actual_without_ensemble(tmp_path: Path):
-    manifest = {"winner": "power_level", "backend": "tree_embed", "best_hyperparams": {}}
+    manifest = {
+        "winner": "power_level",
+        "backend": "tree_embed",
+        "best_hyperparams": {},
+        "feature_cols": ["day_of_week"],
+    }
     comp = pd.DataFrame(
         {
             "segment": ["A / Broad"],
@@ -217,7 +239,6 @@ def test_daily_backtest_writes_plan_vs_actual_without_ensemble(tmp_path: Path):
             end=pd.Timestamp("2025-01-02"),
             total_budget=100.0,
             out_dir=tmp_path,
-            refit_each_day=True,
         )
 
     mock_fit.assert_called_once()

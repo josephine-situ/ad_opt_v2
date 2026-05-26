@@ -96,11 +96,6 @@ def main() -> None:
         default=None,
         help="For two_stage: pandas offset alias for budget re-optimization (default W-MON)",
     )
-    parser.add_argument(
-        "--static-model",
-        action="store_true",
-        help="Fit model once on first day/week only (faster; more leakage risk)",
-    )
     args = parser.parse_args()
 
     config_path = Path(args.config) if args.config else default_config_path(args.course, args.exp_name)
@@ -130,7 +125,6 @@ def main() -> None:
             "target": config.target,
             "total_budget": args.budget
             or float(COURSE_CONFIG.get(config.course, {}).get("campaign_budget", 400.0)),
-            "static_model": args.static_model,
         },
     )
 
@@ -152,7 +146,6 @@ def main() -> None:
             end=end,
             total_budget=total_budget,
             out_dir=out_dir,
-            refit_each_week=not args.static_model,
             budget_cadence=budget_cadence,
         )
         print(f"Finished {len(summary)} weeks. Summary: {out_dir / 'weekly_backtest_summary.csv'}")
@@ -166,7 +159,6 @@ def main() -> None:
             end=end,
             total_budget=total_budget,
             out_dir=out_dir,
-            refit_each_day=not args.static_model,
         )
         print(f"Finished {len(summary)} days. Summary: {out_dir / 'daily_backtest_summary.csv'}")
 

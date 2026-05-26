@@ -327,22 +327,52 @@ def refit_optimizer_model(
     train: pd.DataFrame,
     config: CampaignOptConfig,
     manifest: dict[str, Any],
+    *,
+    tune: bool | None = None,
 ) -> Any:
-    """Refit a named tournament candidate on ``train`` for production optimization."""
+    """
+    Refit a named tournament candidate on ``train`` for MILP embedding.
+
+    When ``tune`` is true (walk-forward backtest), hyperparameters are chosen by
+    time-series CV on ``train``. When false (production optimize), hyperparameters
+    must be present in ``manifest``.
+    """
+    val = config.model_policy.validation
+    do_tune = val.tune_hyperparams if tune is None else tune
+    feature_cols = manifest.get("feature_cols")
+    if not feature_cols:
+        raise ValueError("manifest missing feature_cols; run fit_response_models.py")
+    n_folds = val.cv_folds
+    empty_holdout = train.iloc[0:0]
+
     if model_name == "ensemble_ridge_xgb":
         member_names = ENSEMBLE_MEMBER_GROUPS["ensemble_ridge_xgb"]
-        member_hp = {
-            m: hyperparams_from_manifest(manifest, m) or {}
-            for m in member_names
-        }
-        empty_holdout = train.iloc[0:0]
+        if do_tune:
+            member_hp = _ensure_member_hyperparams(
+                member_names,
+                train,
+                config,
+                feature_cols,
+                {},
+                tune=True,
+                n_folds=n_folds,
+            )
+        else:
+            member_hp = {}
+            for m in member_names:
+                hp = hyperparams_from_manifest(manifest, m)
+                if not hp:
+                    raise ValueError(
+                        f"manifest missing best_hyperparams for ensemble member {m!r}"
+                    )
+                member_hp[m] = hp
         return fit_ensemble_tournament(
             "ensemble_ridge_xgb",
             member_names,
             train,
             empty_holdout,
             config,
-            get_context_feature_columns(config.context_features),
+            feature_cols,
             member_hyperparams=member_hp,
             member_weights=None,
         ).pipeline
@@ -354,11 +384,14 @@ def refit_optimizer_model(
     fitter = FITTERS.get(model_name)
     if fitter is None:
         raise ValueError(f"Unknown optimizer_winner: {model_name!r}")
-    feature_cols = manifest.get("feature_cols") or get_context_feature_columns(
-        config.context_features
-    )
-    hyperparams = hyperparams_from_manifest(manifest, model_name)
-    empty_holdout = train.iloc[0:0]
+    if do_tune:
+        hyperparams, _ = tune_hyperparams(
+            model_name, fitter, train, config, feature_cols, n_folds=n_folds
+        )
+    else:
+        hyperparams = hyperparams_from_manifest(manifest, model_name)
+        if hyperparams is None:
+            raise ValueError(f"manifest missing best_hyperparams for {model_name!r}")
     res = fitter(train, empty_holdout, config, feature_cols, hyperparams=hyperparams)
     return res.pipeline
 

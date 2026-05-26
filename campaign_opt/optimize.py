@@ -13,7 +13,7 @@ from campaign_opt.backends.tree_embed import (
     solve_ridge_xgb_embed_campaign_milp,
     solve_tree_embed_campaign_milp,
 )
-from campaign_opt.coefficients import export_linear_solver_coeffs, load_linear_solver_coeffs
+from campaign_opt.coefficients import export_linear_solver_coeffs
 from campaign_opt.modeling import is_ensemble_candidate, refit_optimizer_model
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.train_specs import get_train_spec
@@ -21,69 +21,46 @@ from campaign_opt.train_specs import get_train_spec
 _LINEAR_BACKENDS = frozenset({"linear", "piecewise_linear"})
 
 
+def require_optimizer_winner(config: CampaignOptConfig) -> str:
+    winner = config.model_policy.optimizer_winner
+    if not winner:
+        raise ValueError("model_policy.optimizer_winner must be set in campaign_config.json")
+    return winner
+
+
 def _resolve_backend(config: CampaignOptConfig, manifest: dict) -> str:
     policy = config.model_policy
+    winner = require_optimizer_winner(config)
     if policy.optimizer_backend != "auto":
         return policy.optimizer_backend
-    if policy.optimizer_winner == "ensemble_ridge_xgb":
+    if winner == "ensemble_ridge_xgb":
         return "ridge_xgb_embed"
-    if policy.optimizer_winner and is_ensemble_candidate(policy.optimizer_winner):
+    if is_ensemble_candidate(winner):
         raise ValueError(
-            f"optimizer_winner={policy.optimizer_winner!r} has no MILP backend; "
+            f"optimizer_winner={winner!r} has no MILP backend; "
             "use ensemble_ridge_xgb or set optimizer_backend explicitly."
         )
-    if policy.optimizer_winner:
-        spec = get_train_spec(policy.optimizer_winner)
-        if spec is not None:
-            return spec.backend
-    return manifest.get("backend", "linear")
+    spec = get_train_spec(winner)
+    if spec is None:
+        raise ValueError(f"Unknown optimizer_winner: {winner!r}")
+    return spec.backend
 
 
-def _resolve_optimizer_winner(config: CampaignOptConfig, manifest: dict) -> str:
-    return config.model_policy.optimizer_winner or manifest.get("winner", "ridge")
-
-
-def _load_linear_coeffs(
-    config: CampaignOptConfig,
-    train: pd.DataFrame,
-    output_dir: Path,
-    *,
-    refit_coeffs: bool,
-) -> dict:
-    coeffs_path = output_dir / "linear_coeffs.json"
-    if not refit_coeffs and coeffs_path.exists():
-        coeffs = load_linear_solver_coeffs(coeffs_path)
-        print(f"[Info] Using saved linear coeffs from {coeffs_path}")
-        return coeffs
-    coeffs = export_linear_solver_coeffs(train, config, coeffs_path)
-    print(f"[Info] Exported linear coeffs to {coeffs_path}")
-    return coeffs
-
-
-def _tree_embed_model_path(
+def _fit_and_save_embed_model(
     config: CampaignOptConfig,
     manifest: dict,
     train: pd.DataFrame,
     output_dir: Path,
-    model_path: Path | None,
+    *,
+    tune: bool,
 ) -> Path:
-    path = Path(model_path or output_dir / "winner_model.joblib")
-    winner_name = _resolve_optimizer_winner(config, manifest)
-    manifest_winner = manifest.get("winner")
-    if path.exists():
-        if model_path is not None:
-            print(f"[Info] Using optimizer model at {path} ({winner_name!r})")
-            return path
-        if winner_name == manifest_winner:
-            if config.model_policy.optimizer_winner:
-                print(f"[Info] Using winner_model.joblib for optimizer_winner={winner_name!r}")
-            return path
-
+    """Fit optimizer model on ``train``, persist, and return path for MILP embedding."""
+    winner_name = require_optimizer_winner(config)
     print(
-        f"[Info] Refitting {winner_name!r} on {len(train)} rows for optimization "
-        f"(manifest winner={manifest_winner!r})"
+        f"[Info] Fitting optimizer {winner_name!r} on {len(train)} rows "
+        f"(tune={tune})"
     )
-    pipeline = refit_optimizer_model(winner_name, train, config, manifest)
+    pipeline = refit_optimizer_model(winner_name, train, config, manifest, tune=tune)
     path = output_dir / f"optimizer_{winner_name}.joblib"
     joblib.dump(pipeline, path)
     return path
@@ -98,24 +75,22 @@ def run_optimizer(
     *,
     total_budget: float,
     output_dir: Path,
-    model_path: Path | None = None,
     planning_date: pd.Timestamp | None = None,
     planning_dates: list[pd.Timestamp] | None = None,
     fixed_keyword_sets: dict[str, str] | None = None,
     fixed_budgets: dict[str, float] | None = None,
     write_outputs: bool = True,
-    refit_coeffs: bool = False,
+    tune_optimizer: bool = False,
 ) -> pd.DataFrame:
     """Pick solver backend from manifest and return segment-level plan."""
     output_dir = Path(output_dir)
     backend = _resolve_backend(config, manifest)
-    optimizer_winner = _resolve_optimizer_winner(config, manifest)
+    optimizer_winner = require_optimizer_winner(config)
 
-    if config.model_policy.optimizer_winner:
-        print(
-            f"[Info] optimizer_winner={optimizer_winner!r} "
-            f"(manifest winner={manifest.get('winner')!r}, backend={backend})"
-        )
+    print(
+        f"[Info] optimizer_winner={optimizer_winner!r} "
+        f"(manifest winner={manifest.get('winner')!r}, backend={backend})"
+    )
 
     dates = planning_dates
     if dates is None and planning_date is not None:
@@ -123,11 +98,13 @@ def run_optimizer(
     multi_day = dates is not None and len(dates) > 1
     if multi_day or fixed_budgets is not None:
         if backend not in _LINEAR_BACKENDS:
-            print(
-                f"[Info] Using linear backend for multi-day/fixed-budget solve "
-                f"(requested backend={backend})"
+            raise ValueError(
+                f"backend {backend!r} does not support multi-day or fixed-budget optimization; "
+                "use strategy two_stage or a linear backend."
             )
-            backend = "linear"
+
+    if planning_date is None and (dates is None or len(dates) == 0):
+        raise ValueError("planning_date or planning_dates is required")
 
     milp_kwargs = dict(
         fixed_keyword_sets=fixed_keyword_sets,
@@ -137,7 +114,11 @@ def run_optimizer(
     )
 
     if backend in _LINEAR_BACKENDS:
-        coeffs = _load_linear_coeffs(config, train, output_dir, refit_coeffs=refit_coeffs)
+        coeffs_path = output_dir / "linear_coeffs.json"
+        coeffs = export_linear_solver_coeffs(train, config, coeffs_path)
+        print(f"[Info] Exported linear coeffs to {coeffs_path}")
+
+    plan_date = pd.Timestamp(planning_date) if planning_date is not None else pd.Timestamp(dates[0])
 
     if backend == "linear":
         return solve_linear_campaign_milp(
@@ -162,8 +143,8 @@ def run_optimizer(
             **milp_kwargs,
         )
     if backend == "tree_embed":
-        embed_path = _tree_embed_model_path(
-            config, manifest, train, output_dir, model_path
+        embed_path = _fit_and_save_embed_model(
+            config, manifest, train, output_dir, tune=tune_optimizer
         )
         return solve_tree_embed_campaign_milp(
             config,
@@ -173,14 +154,14 @@ def run_optimizer(
             panel,
             total_budget=total_budget,
             output_dir=output_dir,
-            planning_date=planning_date or pd.Timestamp(train["date"].max()),
+            planning_date=plan_date,
             write_outputs=write_outputs,
             fixed_keyword_sets=fixed_keyword_sets,
             fixed_budgets=fixed_budgets,
         )
     if backend == "ridge_xgb_embed":
-        embed_path = _tree_embed_model_path(
-            config, manifest, train, output_dir, model_path
+        embed_path = _fit_and_save_embed_model(
+            config, manifest, train, output_dir, tune=tune_optimizer
         )
         return solve_ridge_xgb_embed_campaign_milp(
             config,
@@ -190,7 +171,7 @@ def run_optimizer(
             panel,
             total_budget=total_budget,
             output_dir=output_dir,
-            planning_date=planning_date or pd.Timestamp(train["date"].max()),
+            planning_date=plan_date,
             write_outputs=write_outputs,
             fixed_keyword_sets=fixed_keyword_sets,
             fixed_budgets=fixed_budgets,

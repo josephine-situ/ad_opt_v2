@@ -242,9 +242,9 @@ Use `--skip-gkp` / `--skip-candidates` when GKP set features are disabled or alr
 uv run python scripts/backtest_campaign.py --course sys_think --start 2025-10-01 --end 2025-12-31
 ```
 
-One MILP per day in range (train on `date < t`, optimize budget + keyword set, score vs actual). Optimization uses `optimizer_winner` / `optimizer_backend` from config (e.g. XGBoost + `tree_embed`); the model is refit on `date < t` each day. **`fit_response_models.py` is optional** if `optimizer_winner` is set—it supplies tuned hyperparameters when `model_manifest.json` exists. With `evaluation.use_ensemble: true` or `false`, the plan-vs-actual scorer is fit **once on the full modeling panel** (`prepare_modeling_data` frame)—saved as `ensemble_model.joblib` or `evaluation_{model}.joblib`. Member weights use `holdout_metrics.json` when `weight_by_cv_rmse` is enabled. The MILP optimizer refits walk-forward on `date < t` each day for non-ensemble winners; `ensemble_ridge_xgb` is fit once on the full panel and reused (`optimizer_ensemble_ridge_xgb.joblib` under the backtest window).
+One MILP per day in range: fit the **optimizer** on walk-forward train (`date < t`) with time-series CV hyperparameter search, embed in Gurobi, then optimize budget + keyword set. Requires `fit_response_models.py` artifacts (`model_manifest.json`, `holdout_metrics.json` when `evaluation.weight_by_cv_rmse` is true). The **evaluation** scorer is fit **once on the full modeling panel**—saved as `ensemble_model.joblib` or `evaluation_{model}.joblib`.
 
-Optional flags: `--strategy daily` (explicit), `--static-model` (legacy; evaluation ensemble is always full-panel).
+Optional flags: `--strategy daily` (explicit).
 
 ### Two-stage mode (fixed keyword sets + weekly budgets)
 

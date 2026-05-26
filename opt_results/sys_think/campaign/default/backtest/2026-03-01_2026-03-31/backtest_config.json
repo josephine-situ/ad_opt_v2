@@ -6,6 +6,5 @@
   "strategy": "daily",
   "budget_cadence": "W-MON",
   "target": "conv_scaled_clicks",
-  "total_budget": 412.7,
-  "static_model": false
+  "total_budget": 412.7
 }
