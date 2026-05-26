@@ -46,11 +46,11 @@ def main() -> None:
     if not (Path("data") / config.course / "processed" / "campaign-day-panel.csv").exists():
         _run(panel_script)
 
-    if not args.skip_gkp:
-        _run([py, "scripts/build_gkp_set_features.py", "--course", config.course])
-
     if not args.skip_candidates:
         _run([py, "scripts/build_keyword_candidates.py", "--course", config.course])
+
+    if not args.skip_gkp:
+        _run([py, "scripts/build_gkp_set_features.py", "--course", config.course])
 
     _run([py, "scripts/fit_response_models.py", "--course", config.course, "--config", str(config_path)])
 

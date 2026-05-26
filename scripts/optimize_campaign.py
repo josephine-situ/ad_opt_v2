@@ -10,6 +10,11 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from campaign_opt.decisions import (
+    apply_candidate_region_policy,
+    parse_allowed_match_types,
+    parse_excluded_regions,
+)
 from campaign_opt.features import prepare_modeling_data, train_holdout_split
 from campaign_opt.optimize import run_optimizer
 from campaign_opt.schema import default_config_path, load_campaign_config
@@ -25,6 +30,7 @@ def main() -> None:
     parser.add_argument("--exp-name", default="default")
     parser.add_argument("--budget", type=float, default=None)
     parser.add_argument("--planning-date", default="")
+    parser.add_argument("--refit-coeffs", action="store_true", help="Re-fit linear MILP coeffs instead of using fit-time linear_coeffs.json")
     args = parser.parse_args()
 
     config_path = Path(args.config) if args.config else default_config_path(args.course, args.exp_name)
@@ -42,40 +48,52 @@ def main() -> None:
 
     df = prepare_modeling_data(config)
     holdout_days = config.model_policy.validation.holdout_days
-    train, _ = train_holdout_split(df, holdout_days)
+    train, holdout = train_holdout_split(df, holdout_days)
+    production = (
+        pd.concat([train, holdout], ignore_index=True).sort_values("date")
+        if len(holdout)
+        else train
+    )
     panel = add_segment_column(load_campaign_day_panel(config.course))
 
     cand_path = Path("data") / config.course / "processed" / "segment-keyword-candidates.csv"
+    allowed_match_types = parse_allowed_match_types(config.constraints)
+    excluded_regions = parse_excluded_regions(config.constraints)
     if not cand_path.exists():
         from utils.keyword_candidates import build_segment_candidates
 
-        candidates, extended = build_segment_candidates(config.course)
+        candidates, extended = build_segment_candidates(
+            config.course,
+            allowed_match_types=allowed_match_types,
+            excluded_regions=excluded_regions or None,
+        )
         cand_path.parent.mkdir(parents=True, exist_ok=True)
         candidates.to_csv(cand_path, index=False)
         extended.to_csv(
             Path("data") / config.course / "processed" / "campaign-keyword-sets-extended.csv",
             index=False,
         )
-    candidates = pd.read_csv(cand_path)
+    candidates = apply_candidate_region_policy(pd.read_csv(cand_path), config.constraints)
 
     course_cfg = COURSE_CONFIG.get(config.course, {})
     total_budget = args.budget or float(course_cfg.get("campaign_budget", 400.0))
     planning_date = (
         pd.Timestamp(args.planning_date)
         if args.planning_date
-        else pd.Timestamp(train["date"].max())
+        else pd.Timestamp(production["date"].max())
     )
 
     plan = run_optimizer(
         config,
         manifest,
-        train,
+        production,
         candidates,
         panel,
         total_budget=total_budget,
         output_dir=out_dir,
         model_path=out_dir / "winner_model.joblib",
         planning_date=planning_date,
+        refit_coeffs=args.refit_coeffs,
     )
     print(f"Optimization complete. Plan rows: {len(plan)}")
     print(plan.to_string(index=False))

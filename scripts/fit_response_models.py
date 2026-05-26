@@ -8,8 +8,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from campaign_opt.feature_artifacts import save_modeling_artifacts
 from campaign_opt.features import prepare_modeling_data, train_holdout_split
-from campaign_opt.modeling import run_tournament, save_manifest
+from campaign_opt.modeling import model_feature_overview_lines, run_tournament, save_manifest
 from campaign_opt.schema import default_config_path, load_campaign_config
 from utils.tee_logging import setup_tee_logging
 
@@ -28,6 +29,12 @@ def main() -> None:
     setup_tee_logging(log_file=None, default_log_prefix=f"fit_models_{config.course}")
 
     df = prepare_modeling_data(config)
+    if config.modeling_lookback_days:
+        print(
+            f"Modeling lookback: last {config.modeling_lookback_days} days "
+            f"({df['date'].min().date()} to {df['date'].max().date()}, "
+            f"{df['date'].nunique()} days, {len(df)} rows)"
+        )
     if config.target not in df.columns or df[config.target].isna().all():
         if config.target == "all_conv":
             print("[Warn] all_conv missing; falling back to clicks for tournament.")
@@ -41,14 +48,25 @@ def main() -> None:
     print(f"Train rows: {len(train)}, holdout rows: {len(holdout)}")
     print(f"Validation scheme: {config.model_policy.validation.scheme}")
 
-    winner, metrics_table, manifest = run_tournament(train, holdout, config)
+    artifact_paths = save_modeling_artifacts(out_dir, config, train, holdout)
+    print(f"Saved feature artifacts under {out_dir / 'features'}")
+
+    winner, metrics_table, manifest = run_tournament(train, holdout, config, export_dir=out_dir)
     manifest["config_path"] = str(config_path)
+    manifest["feature_artifacts"] = artifact_paths
 
     save_manifest(manifest, winner, out_dir / "model_manifest.json")
     with open(out_dir / "holdout_metrics.json", "w", encoding="utf-8") as f:
         json.dump(metrics_table, f, indent=2)
 
-    print(f"Winner: {winner.name} (backend={manifest['backend']})")
+    print(
+        f"Winner: {winner.name} (backend={manifest['backend']}, "
+        f"holdout R^2={winner.holdout_r2:.4f})"
+    )
+    for line in model_feature_overview_lines(
+        winner, shap_effects=manifest.get("shap_mean_effects")
+    ):
+        print(line)
 
 
 if __name__ == "__main__":
