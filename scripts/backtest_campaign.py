@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """
-Walk-forward daily backtest over a date range.
+Walk-forward campaign backtest over a date range.
 
-For each day t in [--start, --end]:
-  - Train on campaign-days with date < t
-  - Model tournament with time-series CV
-  - Solve budget + keyword-set MILP for day t
-  - Compare plan vs actuals on day t
-
-Pattern mirrors ad_opt ``backtest_daily.py``.
+Default (``--strategy daily``): one full optimize per calendar day.
+Two-stage (``--strategy two_stage``): fix keyword sets for the period, re-optimize
+budgets weekly (Mon–Sun sum of daily predictions).
 """
 
 import argparse
@@ -20,6 +16,13 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from campaign_opt.backtest import run_daily_backtest
+from campaign_opt.backtest_analysis import analyze_backtest_run, backtest_window_dir, save_backtest_config
+from campaign_opt.backtest_two_stage import run_two_stage_backtest
+from campaign_opt.decisions import (
+    apply_candidate_region_policy,
+    parse_allowed_match_types,
+    parse_excluded_regions,
+)
 from campaign_opt.features import prepare_modeling_data
 from campaign_opt.schema import default_config_path, load_campaign_config
 from config import COURSE_CONFIG
@@ -28,32 +31,7 @@ from utils.keyword_candidates import build_segment_candidates
 from utils.tee_logging import setup_tee_logging
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Daily walk-forward campaign backtest.")
-    parser.add_argument("--course", default="sys_think")
-    parser.add_argument("--config", default="")
-    parser.add_argument("--exp-name", default="default")
-    parser.add_argument("--start", required=True, help="Backtest start date YYYY-MM-DD")
-    parser.add_argument("--end", required=True, help="Backtest end date YYYY-MM-DD")
-    parser.add_argument("--budget", type=float, default=None)
-    parser.add_argument(
-        "--static-model",
-        action="store_true",
-        help="Fit model once on first day only (faster; more leakage risk)",
-    )
-    args = parser.parse_args()
-
-    config_path = Path(args.config) if args.config else default_config_path(args.course, args.exp_name)
-    config = load_campaign_config(config_path)
-    out_dir = config.exp_dir() / "backtest" / f"{args.start}_{args.end}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    setup_tee_logging(log_file=None, default_log_prefix=f"backtest_daily_{config.course}")
-
-    start = pd.Timestamp(args.start)
-    end = pd.Timestamp(args.end)
-    print(f"Backtest window: {start.date()} → {end.date()}")
-
+def _load_backtest_inputs(config, course: str):
     df = prepare_modeling_data(config)
     if config.target not in df.columns or df[config.target].isna().all():
         print(f"[Warn] target={config.target} missing; using clicks")
@@ -61,30 +39,140 @@ def main() -> None:
 
     panel = add_segment_column(load_campaign_day_panel(config.course))
     cand_path = Path("data") / config.course / "processed" / "segment-keyword-candidates.csv"
+    allowed_match_types = parse_allowed_match_types(config.constraints)
+    excluded_regions = parse_excluded_regions(config.constraints)
     if not cand_path.exists():
-        candidates, extended = build_segment_candidates(config.course)
+        candidates, extended = build_segment_candidates(
+            config.course,
+            allowed_match_types=allowed_match_types,
+            excluded_regions=excluded_regions or None,
+        )
         cand_path.parent.mkdir(parents=True, exist_ok=True)
         candidates.to_csv(cand_path, index=False)
         extended.to_csv(
             Path("data") / config.course / "processed" / "campaign-keyword-sets-extended.csv",
             index=False,
         )
-    candidates = pd.read_csv(cand_path)
+    candidates = apply_candidate_region_policy(pd.read_csv(cand_path), config.constraints)
+    return df, panel, candidates
 
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Walk-forward campaign backtest.")
+    parser.add_argument("--course", default="sys_think")
+    parser.add_argument("--config", default="")
+    parser.add_argument("--exp-name", default="default")
+    parser.add_argument("--start", required=True, help="Backtest start date YYYY-MM-DD")
+    parser.add_argument("--end", required=True, help="Backtest end date YYYY-MM-DD")
+    parser.add_argument(
+        "--day",
+        default="",
+        help="Run a single day only (sets start=end=day; for Slurm array tasks)",
+    )
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="After backtest, run performance summary (analyze_backtest_results)",
+    )
+    parser.add_argument(
+        "--analyze-only",
+        action="store_true",
+        help="Skip backtest; only summarize existing outputs in the window dir",
+    )
+    parser.add_argument("--budget", type=float, default=None)
+    parser.add_argument(
+        "--strategy",
+        choices=("daily", "two_stage"),
+        default=None,
+        help="Backtest mode: daily (default) or two_stage (fixed keyword sets + weekly budgets)",
+    )
+    parser.add_argument(
+        "--keyword-set-horizon",
+        default=None,
+        help="For two_stage: period (default) — keyword sets chosen over full [start, end]",
+    )
+    parser.add_argument(
+        "--budget-cadence",
+        default=None,
+        help="For two_stage: pandas offset alias for budget re-optimization (default W-MON)",
+    )
+    parser.add_argument(
+        "--static-model",
+        action="store_true",
+        help="Fit model once on first day/week only (faster; more leakage risk)",
+    )
+    args = parser.parse_args()
+
+    config_path = Path(args.config) if args.config else default_config_path(args.course, args.exp_name)
+    config = load_campaign_config(config_path)
+    strategy = args.strategy or config.backtest.strategy
+    budget_cadence = args.budget_cadence or config.backtest.budget_cadence
+
+    start = pd.Timestamp(args.day or args.start)
+    end = pd.Timestamp(args.day or args.end)
+    out_dir = backtest_window_dir(config.course, args.exp_name, args.start, args.end)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    log_prefix = f"backtest_{strategy}_{config.course}"
+    setup_tee_logging(log_file=None, default_log_prefix=log_prefix)
+
+    print(f"Backtest window: {start.date()} → {end.date()} (strategy={strategy})")
+
+    save_backtest_config(
+        out_dir,
+        {
+            "course": config.course,
+            "exp_name": args.exp_name,
+            "start_day": args.start,
+            "end_day": args.end,
+            "strategy": strategy,
+            "budget_cadence": budget_cadence,
+            "target": config.target,
+            "total_budget": args.budget
+            or float(COURSE_CONFIG.get(config.course, {}).get("campaign_budget", 400.0)),
+            "static_model": args.static_model,
+        },
+    )
+
+    if args.analyze_only:
+        result = analyze_backtest_run(out_dir, target=config.target)
+        print(f"Analysis complete: {result.get('backtest_summary')}")
+        return
+
+    df, panel, candidates = _load_backtest_inputs(config, args.course)
     total_budget = args.budget or float(COURSE_CONFIG.get(config.course, {}).get("campaign_budget", 400.0))
 
-    summary = run_daily_backtest(
-        config,
-        df,
-        candidates,
-        panel,
-        start=start,
-        end=end,
-        total_budget=total_budget,
-        out_dir=out_dir,
-        refit_each_day=not args.static_model,
-    )
-    print(f"Finished {len(summary)} days. Summary: {out_dir / 'daily_backtest_summary.csv'}")
+    if strategy == "two_stage":
+        summary = run_two_stage_backtest(
+            config,
+            df,
+            candidates,
+            panel,
+            start=start,
+            end=end,
+            total_budget=total_budget,
+            out_dir=out_dir,
+            refit_each_week=not args.static_model,
+            budget_cadence=budget_cadence,
+        )
+        print(f"Finished {len(summary)} weeks. Summary: {out_dir / 'weekly_backtest_summary.csv'}")
+    else:
+        summary = run_daily_backtest(
+            config,
+            df,
+            candidates,
+            panel,
+            start=start,
+            end=end,
+            total_budget=total_budget,
+            out_dir=out_dir,
+            refit_each_day=not args.static_model,
+        )
+        print(f"Finished {len(summary)} days. Summary: {out_dir / 'daily_backtest_summary.csv'}")
+
+    if args.analyze:
+        result = analyze_backtest_run(out_dir, target=config.target)
+        print(f"Analysis: {result.get('backtest_summary')}")
 
 
 if __name__ == "__main__":
