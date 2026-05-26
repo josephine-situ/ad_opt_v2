@@ -7,7 +7,19 @@ import pandas as pd
 from campaign_opt.decisions import historical_budget_bounds
 
 
-def test_historical_budget_bounds_zero_lower_bound():
+def test_historical_budget_bounds_allows_zero_for_single_level():
+    panel = pd.DataFrame(
+        {
+            "segment": ["A / Broad"] * 3,
+            "daily_budget": [13.5, 13.5, 13.5],
+        }
+    )
+    lo, hi = historical_budget_bounds(panel, ["A / Broad"])["A / Broad"]
+    assert lo == 0.0
+    assert hi == 13.5
+
+
+def test_historical_budget_bounds_uses_min_max_for_multiple_levels():
     panel = pd.DataFrame(
         {
             "segment": ["A / Broad", "A / Broad", "A / Broad"],
@@ -15,5 +27,12 @@ def test_historical_budget_bounds_zero_lower_bound():
         }
     )
     lo, hi = historical_budget_bounds(panel, ["A / Broad"])["A / Broad"]
-    assert lo == 0.0
+    assert lo == 13.5
     assert hi == 20.0
+
+
+def test_historical_budget_bounds_empty_panel_fallback():
+    panel = pd.DataFrame({"segment": [], "daily_budget": []})
+    lo, hi = historical_budget_bounds(panel, ["B / Broad"])["B / Broad"]
+    assert lo == 0.0
+    assert hi == 500.0

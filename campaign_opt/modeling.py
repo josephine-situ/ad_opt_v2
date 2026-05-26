@@ -61,6 +61,32 @@ def _level_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     }
 
 
+def eval_pipeline_holdout(
+    pipeline: Any,
+    holdout: pd.DataFrame,
+    config: CampaignOptConfig,
+    feature_cols: list[str],
+) -> dict[str, float] | None:
+    """Level-scale RMSE / R² / MAE on holdout rows (walk-forward backtest diagnostic)."""
+    if holdout.empty:
+        return None
+    target = config.target
+    sub = holdout.dropna(subset=[target, "daily_budget", "region"])
+    if sub.empty:
+        return None
+    X, y = _prep_xy(sub, target, feature_cols)
+    if len(X) == 0:
+        return None
+    pred = np.clip(pipeline.predict(X), 0, None)
+    m = _level_metrics(y, pred)
+    return {
+        "holdout_r2": m["holdout_r2_levels"],
+        "holdout_rmse": m["holdout_rmse_levels"],
+        "holdout_mae": m["holdout_mae_levels"],
+        "n_holdout": float(len(X)),
+    }
+
+
 def _ensure_tree_segment_features(df: pd.DataFrame) -> pd.DataFrame:
     if all(col in df.columns for col in TREE_SEGMENT_FEATURE_COLS):
         return df

@@ -10,7 +10,7 @@ import pytest
 
 from campaign_opt.evaluation import (
     EnsembleModel,
-    build_baseline_rows,
+    build_baseline_rows_for_decisions,
     build_segment_decision_rows,
     fit_ensemble,
 )
@@ -53,9 +53,15 @@ def test_incremental_zero_budget_baseline(tiny_config, synthetic_course, monkeyp
     baseline_sets = df.groupby("segment")["keyword_set_id"].first()
     planning_date = pd.Timestamp(df["date"].max())
 
-    baseline_rows = build_baseline_rows(
-        list(segments),
-        baseline_sets,
+    dec = pd.DataFrame(
+        {
+            "segment": segments,
+            "daily_budget": [50.0, 80.0],
+            "keyword_set_id": baseline_sets.loc[segments].values,
+        }
+    )
+    baseline_rows = build_baseline_rows_for_decisions(
+        dec,
         planning_date,
         set_feats,
         tiny_config.course,
@@ -65,15 +71,12 @@ def test_incremental_zero_budget_baseline(tiny_config, synthetic_course, monkeyp
     f0 = ensemble.predict_levels(baseline_rows)
     assert np.all(f0 >= 0)
 
-    dec = pd.DataFrame(
-        {
-            "segment": segments,
-            "daily_budget": [50.0, 80.0],
-            "keyword_set_id": baseline_sets.loc[segments].values,
-        }
-    )
     dec_rows = build_segment_decision_rows(
         dec, planning_date, set_feats, tiny_config.course, ensemble.feature_cols
     )
+    assert "region" in dec_rows.columns
+    assert dec_rows["region"].notna().all()
+    raw = ensemble.predict_incremental_raw(dec_rows, baseline_rows)
     lift = ensemble.predict_incremental(dec_rows, baseline_rows)
+    assert np.allclose(lift, np.clip(raw, 0, None))
     assert len(lift) == len(segments)

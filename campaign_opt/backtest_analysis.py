@@ -44,6 +44,46 @@ def load_backtest_config(backtest_dir: Path) -> dict[str, Any]:
         return {}
 
 
+def _safe_read_csv(path: Path) -> pd.DataFrame:
+    """Read CSV; return empty frame if missing or zero-byte (pandas EmptyDataError)."""
+    path = Path(path)
+    if not path.exists() or path.stat().st_size == 0:
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
+def _compile_from_campaign_plans(backtest_dir: Path) -> pd.DataFrame:
+    """Minimal per-day table from plans/YYYYMMDD/campaign_plan.csv (no ensemble metrics)."""
+    plans_dir = Path(backtest_dir) / "plans"
+    if not plans_dir.exists():
+        return pd.DataFrame()
+
+    rows: list[dict[str, Any]] = []
+    for sub in sorted(plans_dir.iterdir()):
+        if not sub.is_dir() or len(sub.name) != 8 or not sub.name.isdigit():
+            continue
+        plan_path = sub / "campaign_plan.csv"
+        plan = _safe_read_csv(plan_path)
+        if plan.empty:
+            continue
+        day = f"{sub.name[:4]}-{sub.name[4:6]}-{sub.name[6:8]}"
+        if "opt_date" in plan.columns and pd.notna(plan["opt_date"].iloc[0]):
+            day = str(plan["opt_date"].iloc[0])
+        budget = pd.to_numeric(plan.get("daily_budget"), errors="coerce").fillna(0.0)
+        rows.append(
+            {
+                "Day": day,
+                "n_segments": len(plan),
+                "opt_budget_total": float(budget.sum()),
+                "n_segments_zero_budget": int((budget <= 0).sum()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _day_from_path(path: Path) -> str | None:
     parent = path.parent.name
     if len(parent) == 8 and parent.isdigit():
@@ -60,9 +100,8 @@ def collect_plan_vs_actual(backtest_dir: Path) -> pd.DataFrame:
 
     frames: list[pd.DataFrame] = []
     for path in sorted(plans_dir.rglob("plan_vs_actual*.csv")):
-        try:
-            df = pd.read_csv(path)
-        except Exception:
+        df = _safe_read_csv(path)
+        if df.empty:
             continue
         if df.empty:
             continue
@@ -91,20 +130,37 @@ def collect_plan_vs_actual(backtest_dir: Path) -> pd.DataFrame:
 
 def _agg_day(group: pd.DataFrame, target: str) -> dict[str, Any]:
     obs_col = f"observed_{target}"
+    if "row_kind" in group.columns:
+        plan = group[group["row_kind"] == "plan"]
+        market = group[group["row_kind"] == "market"]
+    else:
+        plan = group
+        market = group.iloc[0:0]
     row: dict[str, Any] = {
         "Day": group["date"].iloc[0] if "date" in group.columns else None,
-        "n_segments": len(group),
-        "pred_lift_total": float(group["pred_lift"].sum()) if "pred_lift" in group.columns else 0.0,
-        "actual_model_lift_total": float(group["actual_model_lift"].sum())
+        "n_segments": len(plan) if len(plan) else len(group),
+        "pred_lift_total": float(plan["pred_lift"].sum()) if "pred_lift" in plan.columns and len(plan) else 0.0,
+        "actual_model_lift_total": float(market["actual_model_lift"].sum())
+        if "actual_model_lift" in market.columns and len(market)
+        else float(group["actual_model_lift"].sum())
         if "actual_model_lift" in group.columns
         else 0.0,
-        "opt_budget_total": float(group["daily_budget"].sum()) if "daily_budget" in group.columns else 0.0,
-        "act_budget_total": float(group["actual_budget"].sum())
+        "pred_lift_raw_total": float(plan["pred_lift_raw"].sum())
+        if "pred_lift_raw" in plan.columns and len(plan)
+        else None,
+        "actual_model_lift_raw_total": float(market["actual_model_lift_raw"].sum())
+        if "actual_model_lift_raw" in market.columns and len(market)
+        else None,
+        "opt_budget_total": float(plan["daily_budget"].sum()) if "daily_budget" in plan.columns and len(plan) else 0.0,
+        "act_budget_total": float(market["daily_budget"].sum())
+        if "daily_budget" in market.columns and len(market)
+        else float(group["actual_budget"].sum())
         if "actual_budget" in group.columns
         else 0.0,
     }
-    if obs_col in group.columns:
-        row["observed_total"] = float(group[obs_col].sum())
+    obs_src = market if len(market) and obs_col in market.columns else group
+    if obs_col in obs_src.columns:
+        row["observed_total"] = float(pd.to_numeric(obs_src[obs_col], errors="coerce").sum())
     elif "observed_clicks" in group.columns:
         row["observed_total"] = float(group["observed_clicks"].sum())
     else:
@@ -136,12 +192,13 @@ def compile_evaluation_results(
             return pd.DataFrame(daily_parts)
 
     daily_path = backtest_dir / "daily_backtest_summary.csv"
-    if daily_path.exists():
-        df = pd.read_csv(daily_path)
+    df = _safe_read_csv(daily_path)
+    if not df.empty:
         rename = {
             "opt_date": "Day",
             "pred_lift_total": "pred_lift_total",
             "actual_model_lift_total": "actual_model_lift_total",
+            "plan_budget_total": "opt_budget_total",
         }
         df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
         if "Day" not in df.columns and "opt_date" in df.columns:
@@ -149,13 +206,13 @@ def compile_evaluation_results(
         return df
 
     weekly_path = backtest_dir / "weekly_backtest_summary.csv"
-    if weekly_path.exists():
-        df = pd.read_csv(weekly_path)
+    df = _safe_read_csv(weekly_path)
+    if not df.empty:
         if "week_start" in df.columns:
             df["Day"] = df["week_start"]
         return df
 
-    return pd.DataFrame()
+    return _compile_from_campaign_plans(backtest_dir)
 
 
 def _window_dates_from_dir(backtest_dir: Path) -> tuple[str, str]:
@@ -205,47 +262,109 @@ def _add_region_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _regional_lift_column(df: pd.DataFrame, clipped_col: str, raw_col: str) -> str:
+    if raw_col in df.columns and pd.to_numeric(df[raw_col], errors="coerce").notna().any():
+        return raw_col
+    return clipped_col
+
+
+def _scenario_slice(plan_df: pd.DataFrame, scenario: str) -> pd.DataFrame:
+    """Plan rows for Model; market (panel campaign) rows for Actual."""
+    if "row_kind" not in plan_df.columns:
+        return plan_df
+    kind = "plan" if scenario == "Model" else "market"
+    return plan_df[plan_df["row_kind"] == kind].copy()
+
+
 def regional_breakdown(
     plan_df: pd.DataFrame,
     *,
     target: str = "clicks",
 ) -> pd.DataFrame:
-    """Spend / lift / observed share by region (opt vs actual)."""
+    """
+    Regional **shares** of spend, model incremental lift, and observed target.
+
+    ``Conversions {region}`` is each region's fraction of total incremental lift
+    (not absolute conversions). Model uses optimizer plan rows; Actual uses panel
+    market rows only, with raw lift when available (same as ``backtest_summary``).
+    """
     if plan_df.empty:
         return pd.DataFrame()
 
-    df = _add_region_columns(plan_df)
+    plan_df = _add_region_columns(plan_df)
     obs_col = f"observed_{target}"
+    market_obs = _scenario_slice(plan_df, "Actual")
     rows: list[dict[str, Any]] = []
 
-    for label, budget_col in (("Opt", "daily_budget"), ("Act", "actual_budget")):
+    scenario_specs = (
+        (
+            "Model",
+            _scenario_slice(plan_df, "Model"),
+            "daily_budget",
+            _regional_lift_column(plan_df, "pred_lift", "pred_lift_raw"),
+        ),
+        (
+            "Actual",
+            _scenario_slice(plan_df, "Actual"),
+            "daily_budget",
+            _regional_lift_column(plan_df, "actual_model_lift", "actual_model_lift_raw"),
+        ),
+    )
+
+    obs_total = 0.0
+    if obs_col in market_obs.columns:
+        obs_total = float(pd.to_numeric(market_obs[obs_col], errors="coerce").sum())
+    elif "observed_clicks" in market_obs.columns:
+        obs_total = float(pd.to_numeric(market_obs["observed_clicks"], errors="coerce").sum())
+
+    for label, slice_df, budget_col, conv_col in scenario_specs:
+        if slice_df.empty:
+            continue
+        lift = pd.to_numeric(slice_df[conv_col], errors="coerce") if conv_col in slice_df.columns else pd.Series(dtype=float)
+        budget = (
+            pd.to_numeric(slice_df[budget_col], errors="coerce")
+            if budget_col in slice_df.columns
+            else pd.Series(dtype=float)
+        )
         totals = {
-            "budget": float(df[budget_col].sum()) if budget_col in df.columns else 0.0,
-            "lift": float(df["pred_lift" if label == "Opt" else "actual_model_lift"].sum())
-            if ("pred_lift" if label == "Opt" else "actual_model_lift") in df.columns
-            else 0.0,
-            "observed": float(df[obs_col].sum())
-            if obs_col in df.columns
-            else float(df["observed_clicks"].sum())
-            if "observed_clicks" in df.columns
-            else 0.0,
+            "budget": float(budget.sum()),
+            "conversions": float(lift.sum()),
         }
         row: dict[str, Any] = {"scenario": label}
         for reg in REGIONS:
-            sub = df[df["region"] == reg]
+            sub = slice_df[slice_df["region"] == reg]
             row[f"Spend {reg}"] = (
-                float(sub[budget_col].sum()) / totals["budget"] if totals["budget"] > 0 else 0.0
+                float(pd.to_numeric(sub[budget_col], errors="coerce").sum()) / totals["budget"]
+                if totals["budget"] > 0 and budget_col in sub.columns
+                else 0.0
             )
-            lift_col = "pred_lift" if label == "Opt" else "actual_model_lift"
-            row[f"Lift {reg}"] = (
-                float(sub[lift_col].sum()) / totals["lift"] if totals["lift"] > 0 else 0.0
-            )
-            if obs_col in sub.columns or "observed_clicks" in sub.columns:
-                obs_sum = float(sub[obs_col].sum()) if obs_col in sub.columns else float(sub["observed_clicks"].sum())
-                row[f"Observed {reg}"] = obs_sum / totals["observed"] if totals["observed"] > 0 else 0.0
+            if totals["conversions"] != 0 and conv_col in sub.columns:
+                row[f"Conversions {reg}"] = (
+                    float(pd.to_numeric(sub[conv_col], errors="coerce").sum()) / totals["conversions"]
+                )
+            else:
+                row[f"Conversions {reg}"] = 0.0
+            obs_sub = market_obs[market_obs["region"] == reg]
+            if obs_total > 0 and (obs_col in obs_sub.columns or "observed_clicks" in obs_sub.columns):
+                if obs_col in obs_sub.columns:
+                    obs_sum = float(pd.to_numeric(obs_sub[obs_col], errors="coerce").sum())
+                else:
+                    obs_sum = float(pd.to_numeric(obs_sub["observed_clicks"], errors="coerce").sum())
+                row[f"Observed {reg}"] = obs_sum / obs_total
+            else:
+                row[f"Observed {reg}"] = 0.0
         rows.append(row)
 
     return pd.DataFrame(rows)
+
+
+def _daily_lift_total_column(df: pd.DataFrame, clipped_col: str, raw_col: str) -> str:
+    """Prefer signed daily totals when present (clipped totals are often ~0 for market rows)."""
+    if raw_col in df.columns:
+        raw = pd.to_numeric(df[raw_col], errors="coerce")
+        if raw.notna().any():
+            return raw_col
+    return clipped_col
 
 
 def summarize_performance(
@@ -253,7 +372,7 @@ def summarize_performance(
     *,
     target: str = "clicks",
 ) -> pd.DataFrame:
-    """Mean ± SE performance table (opt plan vs actual decisions vs observed)."""
+    """Mean ± SE table with Model and Actual rows (ad_opt-style layout)."""
     if eval_df.empty:
         return pd.DataFrame()
 
@@ -261,105 +380,126 @@ def summarize_performance(
     if "Day" in df.columns:
         df = df.drop_duplicates(subset=["Day"])
 
-    def _mean_se(series: pd.Series) -> tuple[float, float]:
-        s = pd.to_numeric(series, errors="coerce").dropna()
+    def _mean_se(col: str) -> tuple[float, float]:
+        s = pd.to_numeric(df[col], errors="coerce").dropna()
         if s.empty:
             return 0.0, 0.0
         return float(s.mean()), float(s.sem()) if len(s) > 1 else 0.0
 
-    pred_m, pred_se = _mean_se(df.get("pred_lift_total", pd.Series(dtype=float)))
-    act_m, act_se = _mean_se(df.get("actual_model_lift_total", pd.Series(dtype=float)))
-    obs_m, obs_se = _mean_se(df.get("observed_total", pd.Series(dtype=float)))
-    opt_cost_m, opt_cost_se = _mean_se(df.get("opt_budget_total", pd.Series(dtype=float)))
-    act_cost_m, act_cost_se = _mean_se(df.get("act_budget_total", pd.Series(dtype=float)))
+    model_lift_col = _daily_lift_total_column(df, "pred_lift_total", "pred_lift_raw_total")
+    actual_lift_col = _daily_lift_total_column(
+        df, "actual_model_lift_total", "actual_model_lift_raw_total"
+    )
 
-    imp_lift = (pred_m - act_m) / act_m if act_m > 0 else 0.0
-    imp_obs = (pred_m - obs_m) / obs_m if obs_m and obs_m > 0 else 0.0
-    clicks_per_dollar_opt = pred_m / opt_cost_m if opt_cost_m > 0 else 0.0
-    clicks_per_dollar_act = act_m / act_cost_m if act_cost_m > 0 else 0.0
+    model_conv_m, model_conv_se = _mean_se(model_lift_col)
+    actual_conv_m, actual_conv_se = _mean_se(actual_lift_col)
+    model_budget_m, model_budget_se = _mean_se("opt_budget_total")
+    actual_budget_m, actual_budget_se = _mean_se("act_budget_total")
 
-    row = {
-        "target": target,
-        "n_days": len(df),
-        "avg pred_lift (opt)": pred_m,
-        "se pred_lift (opt)": pred_se,
-        "avg model_lift (act)": act_m,
-        "se model_lift (act)": act_se,
-        "avg observed": obs_m,
-        "se observed": obs_se,
-        "avg budget (opt)": opt_cost_m,
-        "se budget (opt)": opt_cost_se,
-        "avg budget (act)": act_cost_m,
-        "se budget (act)": act_cost_se,
-        "lift/$ (opt)": clicks_per_dollar_opt,
-        "lift/$ (act)": clicks_per_dollar_act,
-        "improvement pred vs act lift": imp_lift,
-        "improvement pred vs observed": imp_obs,
-    }
+    model_conv_per_dollar = model_conv_m / model_budget_m if model_budget_m > 0 else 0.0
+    actual_conv_per_dollar = actual_conv_m / actual_budget_m if actual_budget_m > 0 else 0.0
+
+    if actual_conv_m != 0:
+        imp_conv = (model_conv_m - actual_conv_m) / abs(actual_conv_m)
+    else:
+        imp_conv = np.nan
+    if actual_conv_per_dollar != 0:
+        imp_conv_per_dollar = (model_conv_per_dollar - actual_conv_per_dollar) / abs(actual_conv_per_dollar)
+    else:
+        imp_conv_per_dollar = np.nan
+
+    n_days = len(df)
+    rows = [
+        {
+            "scenario": "Model",
+            "target": target,
+            "n_days": n_days,
+            "conversions": model_conv_m,
+            "conversions_se": model_conv_se,
+            "budget": model_budget_m,
+            "budget_se": model_budget_se,
+            "conversions_per_dollar": model_conv_per_dollar,
+            "improvement_conversions_pct": 100.0 * imp_conv if pd.notna(imp_conv) else np.nan,
+            "improvement_conversions_per_dollar_pct": 100.0 * imp_conv_per_dollar
+            if pd.notna(imp_conv_per_dollar)
+            else np.nan,
+        },
+        {
+            "scenario": "Actual",
+            "target": target,
+            "n_days": n_days,
+            "conversions": actual_conv_m,
+            "conversions_se": actual_conv_se,
+            "budget": actual_budget_m,
+            "budget_se": actual_budget_se,
+            "conversions_per_dollar": actual_conv_per_dollar,
+            "improvement_conversions_pct": np.nan,
+            "improvement_conversions_per_dollar_pct": np.nan,
+        },
+    ]
+    out = pd.DataFrame(rows)
+    out["lift_source"] = (
+        "raw" if actual_lift_col.endswith("_raw_total") or model_lift_col.endswith("_raw_total") else "clipped"
+    )
     if "rmse_pred_vs_actual_model_lift" in df.columns:
-        row["mean rmse pred vs act lift"] = float(
+        out["mean_rmse_model_vs_actual"] = float(
             pd.to_numeric(df["rmse_pred_vs_actual_model_lift"], errors="coerce").mean()
         )
-    return pd.DataFrame([row])
+    return out
 
 
 def generate_performance_latex(summary_df: pd.DataFrame) -> str:
-    """LaTeX table for backtest performance (campaign-level metrics)."""
+    """LaTeX table for backtest performance (Model / Actual rows, ad_opt-style)."""
     if summary_df.empty:
         return ""
-
-    df = summary_df.copy()
 
     def fmt(mean: float, se: float, decimals: int = 1) -> str:
         return f"{mean:,.{decimals}f} $\\pm$ {se:,.{decimals}f}"
 
-    rows = []
-    r = df.iloc[0]
-    rows.append(
-        [
-            "Pred lift (opt)",
-            fmt(r["avg pred_lift (opt)"], r["se pred_lift (opt)"]),
-            fmt(r["avg budget (opt)"], r["se budget (opt)"], 2),
-            f"{r['lift/$ (opt)']:.3f}",
-        ]
-    )
-    rows.append(
-        [
-            "Model lift (act)",
-            fmt(r["avg model_lift (act)"], r["se model_lift (act)"]),
-            fmt(r["avg budget (act)"], r["se budget (act)"], 2),
-            f"{r['lift/$ (act)']:.3f}",
-        ]
-    )
-    if pd.notna(r.get("avg observed")):
+    def fmt_pct(val: float) -> str:
+        if val is None or not pd.notna(val):
+            return "---"
+        return f"{float(val):,.1f}\\%"
+
+    rows: list[list[str]] = []
+    for _, r in summary_df.iterrows():
         rows.append(
             [
-                f"Observed ({r.get('target', 'target')})",
-                fmt(r["avg observed"], r["se observed"]),
-                "---",
-                "---",
+                str(r["scenario"]),
+                fmt(r["conversions"], r["conversions_se"]),
+                fmt(r["budget"], r["budget_se"], 2),
+                f"{r['conversions_per_dollar']:.3f}",
+                fmt_pct(r.get("improvement_conversions_pct")),
+                fmt_pct(r.get("improvement_conversions_per_dollar_pct")),
             ]
         )
 
-    out = pd.DataFrame(rows, columns=["Metric", "Lift / Observed", "Budget", "Lift/\\$"])
-    latex = out.to_latex(index=False, escape=False, column_format="lccc")
+    out = pd.DataFrame(
+        rows,
+        columns=[
+            "Scenario",
+            "Conversions",
+            "Budget",
+            "Conv/\\$",
+            "Imp. Conv.",
+            "Imp. Conv/\\$",
+        ],
+    )
+    latex = out.to_latex(index=False, escape=False, column_format="lccccc")
     latex = latex.replace(r"\hline", r"\toprule", 1)
     if latex.strip().endswith(r"\hline"):
         latex = latex.strip()[:-6] + r"\bottomrule"
 
-    imp = r.get("improvement pred vs act lift")
-    note = ""
-    if imp is not None and pd.notna(imp):
-        note = (
-            f"\\scriptsize Improvement (pred vs act lift): {100 * float(imp):,.1f}\\%."
-        )
+    target = summary_df["target"].iloc[0] if "target" in summary_df.columns else "target"
+    caption = (
+        f"Campaign backtest performance (mean $\\pm$ SE over days; target: {target})"
+    )
 
     return (
         "\\begin{table}[htbp]\n"
         "\\centering\n"
-        "\\caption{Campaign backtest performance (mean $\\pm$ SE over days)}\n"
+        f"\\caption{{{caption}}}\n"
         f"{latex}\n"
-        f"{note}\n"
         "\\end{table}\n"
     )
 

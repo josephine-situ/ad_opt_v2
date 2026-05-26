@@ -242,7 +242,7 @@ Use `--skip-gkp` / `--skip-candidates` when GKP set features are disabled or alr
 uv run python scripts/backtest_campaign.py --course sys_think --start 2025-10-01 --end 2025-12-31
 ```
 
-One MILP per day in range (train on `date < t`, optimize budget + keyword set, score vs actual). Optimization uses `optimizer_winner` / `optimizer_backend` from config (e.g. XGBoost + `tree_embed`); the model is refit on `date < t` each day. **`fit_response_models.py` is optional** if `optimizer_winner` is set—it supplies tuned hyperparameters when `model_manifest.json` exists. With `evaluation.use_ensemble: true`, backtest still runs a walk-forward tournament for ensemble weights unless you use `--static-model` and saved `holdout_metrics.json`.
+One MILP per day in range (train on `date < t`, optimize budget + keyword set, score vs actual). Optimization uses `optimizer_winner` / `optimizer_backend` from config (e.g. XGBoost + `tree_embed`); the model is refit on `date < t` each day. **`fit_response_models.py` is optional** if `optimizer_winner` is set—it supplies tuned hyperparameters when `model_manifest.json` exists. With `evaluation.use_ensemble: true`, backtest still runs a walk-forward tournament for ensemble weights unless you use `--static-model` and saved `holdout_metrics.json`. With `use_ensemble: false`, one evaluation model (default: `optimizer_winner`, e.g. XGBoost) is fit **once on the full modeling panel** (`prepare_modeling_data` frame), saved as `evaluation_{model}.joblib` under the backtest window dir, and used for every day's `plan_vs_actual.csv`. The MILP optimizer still refits walk-forward on `date < t` each day (`optimizer_*.joblib`).
 
 Optional flags: `--strategy daily` (explicit), `--static-model` (reuse first-day evaluation ensemble).
 
@@ -279,7 +279,7 @@ uv run python scripts/analyze_backtest_results.py --course sys_think --start 202
 Or pass `--analyze` to `backtest_campaign.py` after a local full-window run. Outputs:
 
 - `evaluation_results.csv` — daily totals (`pred_lift`, `actual_model_lift`, observed, budgets)
-- `backtest_summary.csv` — mean ± SE metrics and lift/$ 
+- `backtest_summary.csv` — Model / Actual rows with conversions, budget, conv/$, and improvement % 
 - `regional_breakdown.csv` — opt vs actual spend/lift shares by region
 - `backtest_summary.tex` — LaTeX performance table
 
@@ -309,9 +309,11 @@ Plan vs actual uses a **separate ensemble** (all `model_policy` candidates on av
 
 | Metric                | Definition                                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------------- |
-| **f(0)**              | Baseline: `evaluation.baseline_budget` (default 0) + modal keyword set per segment on train |
-| **pred_lift**         | f(plan) − f(0)                                                                              |
-| **actual_model_lift** | f(actual budget & set) − f(0), same ensemble                                                |
+| **f(0)**              | `evaluation.baseline_budget` (default 0) + **same keyword set** as the row being scored (plan set for Model, campaign set for Actual) |
+| **pred_lift**         | f(plan budget, plan set) − f(0 with plan set), clipped at 0                               |
+| **pred_lift_raw**     | Same, signed (saved in `plan_vs_actual.csv`)                                                |
+| **actual_model_lift** | f(actual **campaign budget** `daily_budget`, actual set) − f(0 with actual set); not `cost`; clipped |
+| **actual_model_lift_raw** | Signed market-row incremental (saved in `plan_vs_actual.csv`)                           |
 
 
 Primary comparison: `pred_lift` vs `actual_model_lift`. Observed totals are reference only.

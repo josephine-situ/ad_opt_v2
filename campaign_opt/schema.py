@@ -25,8 +25,8 @@ class ValidationConfig:
 
 @dataclass
 class EvaluationConfig:
-    """How plan vs actual is scored (ensemble incremental lift)."""
-    use_ensemble: bool = True
+    """How plan vs actual is scored (incremental lift vs same keyword set at baseline_budget)."""
+    use_ensemble: bool = True  # if False, fit optimizer_winner once on full modeling panel for plan_vs_actual
     baseline_budget: float = 0.0
     weight_by_cv_rmse: bool = True  # else equal-weight average
 

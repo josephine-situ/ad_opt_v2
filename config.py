@@ -197,7 +197,7 @@ COURSE_CONFIG: dict[str, CourseConfig] = {
             "2026-04-06",
             "2026-06-15",
         ],
-        "campaign_budget": 400.0,
+        "campaign_budget": 412.7,
         "current_campaign_start_date": "2026-04-28",
         "current_campaign_end_date": "2026-06-15",
         "regions": REGION_CONFIG["sys_think"],

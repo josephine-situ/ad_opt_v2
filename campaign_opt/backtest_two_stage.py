@@ -12,8 +12,11 @@ from campaign_opt.backtest import _cv_rmse_weights, _load_holdout_metrics, optim
 from campaign_opt.evaluation import (
     compare_plan_and_actual_week,
     fit_ensemble,
-    metrics_from_comparison,
+    fit_single_model_evaluation,
+    optimizer_winner_name,
+    plan_vs_actual_row_metrics,
     save_ensemble,
+    save_evaluation_model,
     week_planning_dates,
     week_starts_in_window,
 )
@@ -89,8 +92,19 @@ def run_two_stage_backtest(
     # --- Stage 2: weekly budget + set scoring ---
     week_starts = week_starts_in_window(start, end, freq=budget_cadence)
     weekly_rows: list[dict[str, Any]] = []
-    static_ensemble = None
+    static_eval_model = None
     static_metrics: dict[str, dict[str, float]] = _load_holdout_metrics(config)
+    eval_winner = optimizer_winner_name(config, opt_manifest)
+
+    if not config.evaluation.use_ensemble and eval_winner:
+        dmin = pd.to_datetime(df["date"]).min().date()
+        dmax = pd.to_datetime(df["date"]).max().date()
+        print(
+            f"Fitting evaluation model {eval_winner!r} on full panel: "
+            f"{len(df)} rows ({dmin} → {dmax})"
+        )
+        static_eval_model = fit_single_model_evaluation(df, config, opt_manifest, model_name=eval_winner)
+        save_evaluation_model(static_eval_model, out_dir / f"evaluation_{eval_winner}.joblib")
 
     for week_start in week_starts:
         week_start = pd.Timestamp(week_start).normalize()
@@ -134,58 +148,63 @@ def run_two_stage_backtest(
         plan["n_planning_days"] = len(week_dates)
         plan.to_csv(week_dir / "campaign_plan.csv", index=False)
 
+        plan_budget = pd.to_numeric(plan["daily_budget"], errors="coerce").fillna(0.0)
+        week_row: dict[str, Any] = {
+            "week_start": week_start.date().isoformat(),
+            "week_end": week_dates[-1].date().isoformat(),
+            "n_days": len(week_dates),
+            "winner": opt_manifest.get("winner"),
+            "backend": opt_manifest.get("backend"),
+            "n_segments": len(plan),
+            "plan_budget_total": float(plan_budget.sum()),
+            "n_segments_zero_budget": int((plan_budget <= 0).sum()),
+        }
+
+        eval_model = None
         if config.evaluation.use_ensemble:
-            if refit_each_week or static_ensemble is None:
+            if refit_each_week or static_eval_model is None:
                 weights = (
                     _cv_rmse_weights(metrics_table)
                     if config.evaluation.weight_by_cv_rmse and metrics_table
                     else None
                 )
                 print(f"  [{week_start.date()}] fitting ensemble on {len(train)} rows...")
-                ensemble = fit_ensemble(
+                eval_model = fit_ensemble(
                     train,
                     config,
                     member_weights=weights,
                     member_hyperparams=opt_manifest.get("best_hyperparams"),
                 )
-                save_ensemble(ensemble, week_dir / "ensemble_model.joblib")
-                static_ensemble = ensemble
+                save_ensemble(eval_model, week_dir / "ensemble_model.joblib")
+                static_eval_model = eval_model
             else:
-                ensemble = static_ensemble
+                eval_model = static_eval_model
+        elif eval_winner:
+            eval_model = static_eval_model
 
+        if eval_model is not None:
             weekly_comp, daily_comp = compare_plan_and_actual_week(
-                ensemble,
+                eval_model,
                 plan,
                 df,
-                train,
+                df,
                 config,
                 week_dates,
                 set_features,
             )
             if not weekly_comp.empty:
                 weekly_comp.to_csv(week_dir / "plan_vs_actual_weekly.csv", index=False)
+                week_row.update(plan_vs_actual_row_metrics(weekly_comp, config.target))
+                week_row["n_segments"] = len(weekly_comp)
             if not daily_comp.empty:
                 daily_comp.to_csv(week_dir / "plan_vs_actual_daily.csv", index=False)
+        elif not config.evaluation.use_ensemble:
+            print(
+                f"  [{week_start.date()}] skip plan_vs_actual — "
+                f"evaluation model {eval_winner!r} not configured"
+            )
 
-            if not weekly_comp.empty:
-                mets = metrics_from_comparison(weekly_comp, config.target)
-                weekly_rows.append(
-                    {
-                        "week_start": week_start.date().isoformat(),
-                        "week_end": week_dates[-1].date().isoformat(),
-                        "n_days": len(week_dates),
-                        "winner": opt_manifest.get("winner"),
-                        "backend": opt_manifest.get("backend"),
-                        "n_segments": len(weekly_comp),
-                        "pred_lift_total": float(weekly_comp["pred_lift"].sum()),
-                        "actual_model_lift_total": float(weekly_comp["actual_model_lift"].sum()),
-                        "observed_total": float(weekly_comp[f"observed_{config.target}"].sum())
-                        if f"observed_{config.target}" in weekly_comp.columns
-                        else None,
-                        **mets,
-                    }
-                )
-
+        weekly_rows.append(week_row)
         print(f"  [{week_start.date()}] done — week days={len(week_dates)}, segments={len(plan)}")
 
     summary = pd.DataFrame(weekly_rows)

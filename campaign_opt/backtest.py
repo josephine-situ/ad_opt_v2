@@ -11,11 +11,14 @@ import pandas as pd
 from campaign_opt.evaluation import (
     compare_plan_and_actual,
     fit_ensemble,
-    metrics_from_comparison,
+    fit_single_model_evaluation,
+    optimizer_winner_name,
+    plan_vs_actual_row_metrics,
     save_ensemble,
+    save_evaluation_model,
 )
 from campaign_opt.features import train_before_date
-from campaign_opt.modeling import run_tournament
+from campaign_opt.modeling import eval_pipeline_holdout, run_tournament
 from campaign_opt.optimize import run_optimizer
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.train_specs import get_train_spec
@@ -97,9 +100,9 @@ def run_daily_backtest(
 ) -> pd.DataFrame:
     """
     For each day t in [start, end]:
-      - Train on date < t
-      - Optimize budget + keyword set via ``run_optimizer`` (same manifest/backend as production)
-      - Optionally fit evaluation ensemble and compare plan vs actual
+      - Optimize on walk-forward train (date < t) via ``run_optimizer``
+      - Score plan vs actual with a full-panel evaluation model (``use_ensemble: false``)
+        or a walk-forward ensemble (``use_ensemble: true``)
     """
     out_dir = Path(out_dir)
     plans_dir = out_dir / "plans"
@@ -109,8 +112,28 @@ def run_daily_backtest(
 
     dates = pd.date_range(start, end, freq="D")
     daily_rows: list[dict[str, Any]] = []
-    static_ensemble = None
+    static_eval_model = None
     static_metrics: dict[str, dict[str, float]] = _load_holdout_metrics(config)
+    eval_winner = optimizer_winner_name(config, opt_manifest)
+    feature_cols = opt_manifest.get("feature_cols") or get_context_feature_columns(
+        config.context_features
+    )
+
+    if not config.evaluation.use_ensemble and eval_winner:
+        dmin = pd.to_datetime(df["date"]).min().date()
+        dmax = pd.to_datetime(df["date"]).max().date()
+        print(
+            f"Fitting evaluation model {eval_winner!r} on full panel: "
+            f"{len(df)} rows ({dmin} → {dmax})"
+        )
+        static_eval_model = fit_single_model_evaluation(
+            df,
+            config,
+            opt_manifest,
+            model_name=eval_winner,
+            feature_cols=feature_cols,
+        )
+        save_evaluation_model(static_eval_model, out_dir / f"evaluation_{eval_winner}.joblib")
 
     for opt_date in dates:
         opt_date = pd.Timestamp(opt_date)
@@ -147,65 +170,89 @@ def run_daily_backtest(
         plan["opt_date"] = opt_date.date().isoformat()
         plan.to_csv(day_dir / "campaign_plan.csv", index=False)
 
+        plan_budget = pd.to_numeric(plan["daily_budget"], errors="coerce").fillna(0.0)
+        day_row: dict[str, Any] = {
+            "opt_date": opt_date.date().isoformat(),
+            "winner": opt_manifest.get("winner"),
+            "backend": opt_manifest.get("backend"),
+            "n_segments": len(plan),
+            "plan_budget_total": float(plan_budget.sum()),
+            "n_segments_zero_budget": int((plan_budget <= 0).sum()),
+        }
+        eval_model = None
         if config.evaluation.use_ensemble:
-            if refit_each_day or static_ensemble is None:
+            if refit_each_day or static_eval_model is None:
                 weights = (
                     _cv_rmse_weights(metrics_table)
                     if config.evaluation.weight_by_cv_rmse and metrics_table
                     else None
                 )
                 print(f"  [{opt_date.date()}] fitting ensemble on {len(train)} rows...")
-                ensemble = fit_ensemble(
+                eval_model = fit_ensemble(
                     train,
                     config,
                     member_weights=weights,
                     member_hyperparams=opt_manifest.get("best_hyperparams"),
                 )
-                save_ensemble(ensemble, day_dir / "ensemble_model.joblib")
-                static_ensemble = ensemble
+                save_ensemble(eval_model, day_dir / "ensemble_model.joblib")
+                static_eval_model = eval_model
             else:
-                ensemble = static_ensemble
+                eval_model = static_eval_model
+        elif eval_winner:
+            eval_model = static_eval_model
 
+        if eval_model is not None:
+            if not config.evaluation.use_ensemble and eval_model.members:
+                ho_metrics = eval_pipeline_holdout(
+                    eval_model.members[0].pipeline, holdout, config, feature_cols
+                )
+                if ho_metrics:
+                    day_row.update(ho_metrics)
+                    print(
+                        f"  [{opt_date.date()}] eval holdout R²={ho_metrics['holdout_r2']:.4f} "
+                        f"RMSE={ho_metrics['holdout_rmse']:.4f} "
+                        f"(n={int(ho_metrics['n_holdout'])})"
+                    )
             comp = compare_plan_and_actual(
-                ensemble,
+                eval_model,
                 plan,
                 holdout,
-                train,
+                df,
                 config,
                 opt_date,
                 set_features,
             )
-            comp.to_csv(day_dir / "plan_vs_actual.csv", index=False)
-            mets = metrics_from_comparison(comp, config.target)
-            daily_rows.append(
-                {
-                    "opt_date": opt_date.date().isoformat(),
-                    "winner": opt_manifest.get("winner"),
-                    "backend": opt_manifest.get("backend"),
-                    "n_segments": len(comp),
-                    "pred_lift_total": float(comp["pred_lift"].sum()),
-                    "actual_model_lift_total": float(comp["actual_model_lift"].sum()),
-                    "observed_total": float(comp[f"observed_{config.target}"].sum())
-                    if f"observed_{config.target}" in comp.columns
-                    else None,
-                    **mets,
-                }
+            if not comp.empty:
+                comp.to_csv(day_dir / "plan_vs_actual.csv", index=False)
+                day_row.update(plan_vs_actual_row_metrics(comp, config.target))
+        elif not config.evaluation.use_ensemble:
+            print(
+                f"  [{opt_date.date()}] skip plan_vs_actual — "
+                f"evaluation model {eval_winner!r} not configured"
             )
-        print(f"  [{opt_date.date()}] done — segments={len(plan)}")
+
+        daily_rows.append(day_row)
+        budget_note = (
+            f"budget=${day_row['plan_budget_total']:.1f} "
+            f"({day_row['n_segments_zero_budget']}/{day_row['n_segments']} segments at $0)"
+        )
+        print(f"  [{opt_date.date()}] done — segments={len(plan)}, {budget_note}")
 
     summary = pd.DataFrame(daily_rows)
     summary.to_csv(out_dir / "daily_backtest_summary.csv", index=False)
+    summary_payload: dict[str, Any] = {
+        "start": str(start.date()),
+        "end": str(end.date()),
+        "n_days": len(summary),
+        "mean_rmse_model_lift": float(summary["rmse_pred_vs_actual_model_lift"].mean())
+        if "rmse_pred_vs_actual_model_lift" in summary.columns and len(summary)
+        else None,
+    }
+    if "holdout_r2" in summary.columns and len(summary):
+        summary_payload["mean_holdout_r2"] = float(summary["holdout_r2"].mean())
+        summary_payload["mean_holdout_rmse"] = float(summary["holdout_rmse"].mean())
+    if "plan_budget_total" in summary.columns and len(summary):
+        summary_payload["mean_plan_budget_total"] = float(summary["plan_budget_total"].mean())
     with open(out_dir / "daily_backtest_summary.json", "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "start": str(start.date()),
-                "end": str(end.date()),
-                "n_days": len(summary),
-                "mean_rmse_model_lift": float(summary["rmse_pred_vs_actual_model_lift"].mean())
-                if "rmse_pred_vs_actual_model_lift" in summary.columns and len(summary)
-                else None,
-            },
-            f,
-            indent=2,
-        )
+        json.dump(summary_payload, f, indent=2)
     return summary

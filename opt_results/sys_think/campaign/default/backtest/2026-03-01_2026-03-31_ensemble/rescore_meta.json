@@ -1,0 +1,5 @@
+{
+  "src": "opt_results\\sys_think\\campaign\\default\\backtest\\2026-03-01_2026-03-31",
+  "evaluation_use_ensemble": true,
+  "weight_by_cv_rmse": true
+}

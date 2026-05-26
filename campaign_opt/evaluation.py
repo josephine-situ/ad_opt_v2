@@ -46,11 +46,17 @@ class EnsembleModel:
             preds += member.weight * _predict_member_levels(member, rows, self.target, self.feature_cols)
         return np.clip(preds / total_w, 0, None)
 
-    def predict_incremental(self, decision_rows: pd.DataFrame, baseline_rows: pd.DataFrame) -> np.ndarray:
-        """f(decision) - f(0) per row; removes intercept/calendar level inflation."""
+    def predict_incremental_raw(
+        self, decision_rows: pd.DataFrame, baseline_rows: pd.DataFrame
+    ) -> np.ndarray:
+        """f(decision) - f(baseline) per row (signed; not clipped)."""
         f_dec = self.predict_levels(decision_rows)
         f_zero = self.predict_levels(baseline_rows)
-        return np.clip(f_dec - f_zero, 0, None)
+        return f_dec - f_zero
+
+    def predict_incremental(self, decision_rows: pd.DataFrame, baseline_rows: pd.DataFrame) -> np.ndarray:
+        """Clipped incremental lift (``max(raw, 0)``)."""
+        return np.clip(self.predict_incremental_raw(decision_rows, baseline_rows), 0, None)
 
 
 def _predict_member_levels(
@@ -154,6 +160,152 @@ def fit_ensemble(
     )
 
 
+def optimizer_winner_name(config: CampaignOptConfig, manifest: dict) -> str:
+    """Model used for optimization / single-model plan-vs-actual (``optimizer_winner`` overrides manifest)."""
+    return config.model_policy.optimizer_winner or str(manifest.get("winner") or "")
+
+
+def optimizer_model_path(output_dir: Path, winner_name: str) -> Path | None:
+    """Path to the refitted optimizer pipeline saved during ``run_optimizer``."""
+    output_dir = Path(output_dir)
+    for fname in (f"optimizer_{winner_name}.joblib" if winner_name else "", "winner_model.joblib"):
+        if not fname:
+            continue
+        path = output_dir / fname
+        if path.exists():
+            return path
+    return None
+
+
+def ensemble_from_pipeline(
+    pipeline: Any,
+    config: CampaignOptConfig,
+    model_name: str,
+    *,
+    feature_cols: list[str] | None = None,
+    hyperparams: dict[str, Any] | None = None,
+) -> EnsembleModel:
+    """Wrap one fitted sklearn pipeline as a one-member ensemble for incremental scoring."""
+    feature_cols = feature_cols or get_context_feature_columns(config.context_features)
+    spec = get_train_spec(model_name, hyperparams)
+    if spec is None:
+        raise ValueError(f"Unknown model for evaluation: {model_name!r}")
+    member = FittedMember(model_name, pipeline, spec, weight=1.0)
+    return EnsembleModel(
+        members=[member],
+        feature_cols=feature_cols,
+        target=config.target,
+        baseline_budget=float(config.evaluation.baseline_budget),
+    )
+
+
+def ensemble_from_optimizer_pipeline(
+    pipeline: Any,
+    config: CampaignOptConfig,
+    model_name: str,
+    manifest: dict,
+    *,
+    feature_cols: list[str] | None = None,
+) -> EnsembleModel:
+    """Wrap an already-fitted optimizer pipeline (e.g. loaded from ``optimizer_*.joblib``)."""
+    from campaign_opt.modeling import hyperparams_from_manifest
+
+    return ensemble_from_pipeline(
+        pipeline,
+        config,
+        model_name,
+        feature_cols=feature_cols,
+        hyperparams=hyperparams_from_manifest(manifest, model_name),
+    )
+
+
+def fit_single_model_evaluation(
+    fit_df: pd.DataFrame,
+    config: CampaignOptConfig,
+    manifest: dict,
+    *,
+    model_name: str | None = None,
+    feature_cols: list[str] | None = None,
+) -> EnsembleModel:
+    """
+    Fit one response model for plan-vs-actual scoring (default: ``optimizer_winner``).
+
+    Separate from the MILP optimizer (``optimizer_*.joblib``): the optimizer is refit
+    walk-forward on ``date < t`` each day; this model is typically fit **once** on the
+    full modeling panel passed into the backtest (all rows in ``fit_df``).
+    """
+    from campaign_opt.modeling import hyperparams_from_manifest
+
+    model_name = model_name or optimizer_winner_name(config, manifest)
+    feature_cols = feature_cols or manifest.get("feature_cols") or get_context_feature_columns(
+        config.context_features
+    )
+    hp = hyperparams_from_manifest(manifest, model_name)
+    spec = get_train_spec(model_name, hp)
+    if spec is None:
+        raise ValueError(f"Unknown evaluation model: {model_name!r}")
+    member = fit_member_on_train(spec, fit_df, config, feature_cols, hyperparams=hp)
+    for line in pipeline_feature_overview_lines(member.pipeline):
+        print(line)
+    return EnsembleModel(
+        members=[member],
+        feature_cols=feature_cols,
+        target=config.target,
+        baseline_budget=float(config.evaluation.baseline_budget),
+    )
+
+
+def save_evaluation_model(ensemble: EnsembleModel, path: Path, *, model_name: str = "") -> Path:
+    """Persist the single-member evaluation pipeline (not the optimizer artifact)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not ensemble.members:
+        raise RuntimeError("Evaluation model has no fitted members")
+    name = model_name or ensemble.members[0].name
+    if not path.name.startswith("evaluation_"):
+        path = path.parent / f"evaluation_{name}.joblib"
+    joblib.dump(ensemble.members[0].pipeline, path)
+    return path
+
+
+def plan_vs_actual_row_metrics(comp: pd.DataFrame, target: str) -> dict[str, Any]:
+    """Summary fields for backtest daily/weekly rows from a plan_vs_actual frame."""
+    if comp.empty:
+        return {}
+    plan_rows, market_rows = _split_plan_and_market_rows(comp)
+    mets = metrics_from_comparison(plan_rows, target)
+    obs_col = f"observed_{target}"
+    observed_total = None
+    if obs_col in comp.columns:
+        obs_src = market_rows if not market_rows.empty else plan_rows
+        observed_total = float(pd.to_numeric(obs_src[obs_col], errors="coerce").sum())
+    act_budget = None
+    if "actual_budget" in comp.columns:
+        budget_src = market_rows if not market_rows.empty else plan_rows
+        act_budget = float(pd.to_numeric(budget_src["actual_budget"], errors="coerce").sum())
+    elif not market_rows.empty and "daily_budget" in market_rows.columns:
+        act_budget = float(pd.to_numeric(market_rows["daily_budget"], errors="coerce").sum())
+    out: dict[str, Any] = {
+        "pred_lift_total": float(pd.to_numeric(plan_rows["pred_lift"], errors="coerce").sum()),
+        "actual_model_lift_total": float(
+            pd.to_numeric(market_rows["actual_model_lift"], errors="coerce").sum()
+        )
+        if not market_rows.empty
+        else float(pd.to_numeric(plan_rows["actual_model_lift"], errors="coerce").sum()),
+        "observed_total": observed_total,
+        **mets,
+    }
+    if "pred_lift_raw" in plan_rows.columns:
+        out["pred_lift_raw_total"] = float(pd.to_numeric(plan_rows["pred_lift_raw"], errors="coerce").sum())
+    if not market_rows.empty and "actual_model_lift_raw" in market_rows.columns:
+        out["actual_model_lift_raw_total"] = float(
+            pd.to_numeric(market_rows["actual_model_lift_raw"], errors="coerce").sum()
+        )
+    if act_budget is not None:
+        out["act_budget_total"] = act_budget
+    return out
+
+
 def baseline_keyword_sets(train: pd.DataFrame) -> pd.Series:
     """Reference keyword set per segment (modal on train) for f(0)."""
     return train.groupby("segment")["keyword_set_id"].agg(
@@ -170,17 +322,66 @@ def observed_by_segment(day_df: pd.DataFrame, target: str) -> pd.DataFrame:
     return day_df.groupby("segment", as_index=False).agg(**cols)
 
 
-def actual_decisions_by_segment(day_df: pd.DataFrame) -> pd.DataFrame:
-    """Budget + keyword set actually in market on that day."""
+def _ensure_region_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "region" in df.columns:
+        return df
+    out = df.copy()
+    if "segment" in out.columns:
+        out["region"] = out["segment"].astype(str).map(region_of_segment)
+    return out
+
+
+def _split_plan_and_market_rows(comp: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Plan rows (optimizer segments) vs market rows (panel campaigns)."""
+    if "row_kind" in comp.columns:
+        plan = comp[comp["row_kind"] == "plan"]
+        market = comp[comp["row_kind"] == "market"]
+        return plan, market
+    return comp, comp.iloc[0:0]
+
+
+def _require_campaign_budget_column(day_df: pd.DataFrame) -> None:
+    """Plan vs actual uses configured campaign caps, not observed ``cost``."""
     if day_df.empty:
-        return pd.DataFrame(columns=["segment", "daily_budget", "keyword_set_id"])
+        return
+    if "daily_budget" not in day_df.columns:
+        raise ValueError(
+            "Holdout panel must include daily_budget (configured campaign budget cap). "
+            "Observed cost is not used for plan-vs-actual scoring."
+        )
+
+
+def _aggregate_campaign_decisions(
+    day_df: pd.DataFrame,
+    group_cols: list[str],
+) -> pd.DataFrame:
+    """``daily_budget`` (campaign cap) + keyword set per panel campaign row."""
+    _require_campaign_budget_column(day_df)
+    budget = pd.to_numeric(day_df["daily_budget"], errors="coerce")
+    if budget.isna().all():
+        raise ValueError("daily_budget is all missing on holdout day; cannot score actual campaigns.")
     return (
-        day_df.groupby("segment", as_index=False)
+        day_df.groupby(group_cols, as_index=False)
         .agg(
             daily_budget=("daily_budget", "median"),
             keyword_set_id=("keyword_set_id", lambda s: s.mode().iloc[0] if len(s.mode()) else s.iloc[0]),
         )
     )
+
+
+def actual_decisions_by_segment(day_df: pd.DataFrame) -> pd.DataFrame:
+    """Campaign budget cap + keyword set per panel row (segment labels as in the modeling frame)."""
+    if day_df.empty:
+        return pd.DataFrame(columns=["segment", "daily_budget", "keyword_set_id"])
+    return _aggregate_campaign_decisions(day_df, ["segment"])
+
+
+def region_actual_lookup(day_df: pd.DataFrame) -> pd.DataFrame:
+    """Campaign budget cap + keyword set by region (one row per region per day)."""
+    if day_df.empty:
+        return pd.DataFrame(columns=["region", "daily_budget", "keyword_set_id"])
+    df = _ensure_region_column(day_df)
+    return _aggregate_campaign_decisions(df, ["region"])
 
 
 def build_segment_decision_rows(
@@ -200,6 +401,7 @@ def build_segment_decision_rows(
         cal = calendar_vector_for_date(planning_date, region, course)
         row: dict[str, Any] = {
             "segment": seg,
+            "region": region,
             "daily_budget": float(dec["daily_budget"]),
             "keyword_set_id": str(dec["keyword_set_id"]),
             **cal,
@@ -227,7 +429,7 @@ def build_baseline_rows(
     feature_cols: list[str],
     baseline_budget: float,
 ) -> pd.DataFrame:
-    """f(0): zero budget + modal reference keyword set per segment."""
+    """f(0): ``baseline_budget`` + modal reference keyword set per segment (train)."""
     base_dec = pd.DataFrame(
         {
             "segment": segments,
@@ -235,6 +437,22 @@ def build_baseline_rows(
             "keyword_set_id": [str(baseline_sets.get(s, baseline_sets.iloc[0])) for s in segments],
         }
     )
+    return build_segment_decision_rows(base_dec, planning_date, set_features, course, feature_cols)
+
+
+def build_baseline_rows_for_decisions(
+    decisions: pd.DataFrame,
+    planning_date: pd.Timestamp,
+    set_features: pd.DataFrame,
+    course: str,
+    feature_cols: list[str],
+    baseline_budget: float,
+) -> pd.DataFrame:
+    """f(0): ``baseline_budget`` with each row's ``keyword_set_id`` (plan or market campaign)."""
+    base_dec = decisions[["segment", "keyword_set_id"]].copy()
+    base_dec["segment"] = base_dec["segment"].astype(str)
+    base_dec["keyword_set_id"] = base_dec["keyword_set_id"].astype(str)
+    base_dec["daily_budget"] = float(baseline_budget)
     return build_segment_decision_rows(base_dec, planning_date, set_features, course, feature_cols)
 
 
@@ -248,47 +466,29 @@ def compare_plan_and_actual(
     set_features: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Score plan vs actual using the same ensemble:
-      pred_lift = f(plan) - f(0)
-      actual_model_lift = f(actual decisions) - f(0)
-    Plus observed levels for reference.
+    Score optimizer plan vs historical market campaigns on this day.
+
+    Uses the evaluation ensemble ``f`` (same model as plan-vs-actual scoring):
+      - ``pred_lift``: f(plan budget, plan keyword set) - f(baseline_budget, plan keyword set)
+      - ``actual_model_lift``: f(actual campaign budget, actual keyword set)
+        - f(baseline_budget, actual keyword set) on panel campaign rows
+
+    Actual budgets are ``daily_budget`` from the campaign-day panel (configured cap),
+    **not** observed ``cost``. Plan rows include region-level ``actual_budget`` for
+    reference. Market rows use ``row_kind='market'``.
     """
     target = config.target
-    actual_dec = actual_decisions_by_segment(day_df)
-    if actual_dec.empty:
+    market_dec = actual_decisions_by_segment(day_df)
+    if market_dec.empty:
         return pd.DataFrame()
-
-    baseline_sets = baseline_keyword_sets(train)
-    segments = sorted(plan["segment"].astype(str).unique())
 
     plan_dec = plan[["segment", "daily_budget", "keyword_set_id"]].copy()
     plan_dec["segment"] = plan_dec["segment"].astype(str)
     plan_dec["keyword_set_id"] = plan_dec["keyword_set_id"].astype(str)
     plan_dec["daily_budget"] = pd.to_numeric(plan_dec["daily_budget"], errors="coerce")
 
-    # Actual market decisions on this day (same segments as plan)
-    actual_dec = actual_dec.copy()
-    actual_dec["segment"] = actual_dec["segment"].astype(str)
-    actual_dec = actual_dec[actual_dec["segment"].isin(segments)]
-    for seg in segments:
-        if seg not in actual_dec["segment"].values:
-            actual_dec = pd.concat(
-                [
-                    actual_dec,
-                    pd.DataFrame(
-                        {
-                            "segment": [seg],
-                            "daily_budget": [ensemble.baseline_budget],
-                            "keyword_set_id": [str(baseline_sets.get(seg, baseline_sets.iloc[0]))],
-                        }
-                    ),
-                ],
-                ignore_index=True,
-            )
-
-    baseline_rows = build_baseline_rows(
-        segments,
-        baseline_sets,
+    plan_baseline_rows = build_baseline_rows_for_decisions(
+        plan_dec,
         planning_date,
         set_features,
         config.course,
@@ -298,24 +498,66 @@ def compare_plan_and_actual(
     plan_rows = build_segment_decision_rows(
         plan_dec, planning_date, set_features, config.course, ensemble.feature_cols
     )
-    actual_rows = build_segment_decision_rows(
-        actual_dec, planning_date, set_features, config.course, ensemble.feature_cols
-    )
 
     out = plan_dec.copy()
-    out["pred_lift"] = ensemble.predict_incremental(plan_rows, baseline_rows)
-    out["actual_model_lift"] = ensemble.predict_incremental(actual_rows, baseline_rows)
+    out["row_kind"] = "plan"
+    out["pred_lift_raw"] = ensemble.predict_incremental_raw(plan_rows, plan_baseline_rows)
+    out["pred_lift"] = np.clip(out["pred_lift_raw"], 0, None)
     out["f_plan_level"] = ensemble.predict_levels(plan_rows)
-    out["f_zero"] = ensemble.predict_levels(baseline_rows)
+    out["f_zero"] = ensemble.predict_levels(plan_baseline_rows)
+    out["actual_model_lift"] = np.nan
+    out["actual_model_lift_raw"] = np.nan
 
+    region_actual = region_actual_lookup(day_df)
+    if not region_actual.empty:
+        reg_budget = region_actual.set_index("region")["daily_budget"]
+        reg_kw = region_actual.set_index("region")["keyword_set_id"]
+        out["actual_budget"] = out["segment"].map(lambda s: reg_budget.get(region_of_segment(s), np.nan))
+        out["actual_keyword_set_id"] = out["segment"].map(
+            lambda s: reg_kw.get(region_of_segment(s), np.nan)
+        )
+
+    out["region"] = out["segment"].map(region_of_segment)
     obs = observed_by_segment(day_df, target)
-    out = out.merge(obs, on="segment", how="left")
-    out = out.merge(
-        actual_dec.rename(
-            columns={"daily_budget": "actual_budget", "keyword_set_id": "actual_keyword_set_id"}
-        ),
-        on="segment",
-        how="left",
+    if not obs.empty:
+        obs_cols = [c for c in obs.columns if c.startswith("observed_")]
+        obs_by_region = obs.assign(
+            region=obs["segment"].astype(str).map(region_of_segment)
+        ).groupby("region", as_index=False)[obs_cols].sum()
+        out = out.merge(obs_by_region, on="region", how="left")
+
+    market_dec = market_dec.copy()
+    market_dec["segment"] = market_dec["segment"].astype(str)
+    market_baseline_rows = build_baseline_rows_for_decisions(
+        market_dec,
+        planning_date,
+        set_features,
+        config.course,
+        ensemble.feature_cols,
+        ensemble.baseline_budget,
+    )
+    market_rows = build_segment_decision_rows(
+        market_dec, planning_date, set_features, config.course, ensemble.feature_cols
+    )
+    market_scored = market_dec.copy()
+    market_scored["row_kind"] = "market"
+    market_scored["pred_lift"] = np.nan
+    market_scored["pred_lift_raw"] = np.nan
+    market_scored["actual_model_lift_raw"] = ensemble.predict_incremental_raw(
+        market_rows, market_baseline_rows
+    )
+    market_scored["actual_model_lift"] = np.clip(market_scored["actual_model_lift_raw"], 0, None)
+    market_scored["f_plan_level"] = ensemble.predict_levels(market_rows)
+    market_scored["f_zero"] = ensemble.predict_levels(market_baseline_rows)
+    market_scored["campaign_budget"] = market_scored["daily_budget"]
+    market_scored["actual_budget"] = market_scored["daily_budget"]
+    market_scored["actual_keyword_set_id"] = market_scored["keyword_set_id"]
+    market_scored = market_scored.merge(obs, on="segment", how="left")
+
+    shared_cols = sorted(set(out.columns) | set(market_scored.columns))
+    out = pd.concat(
+        [out.reindex(columns=shared_cols), market_scored.reindex(columns=shared_cols)],
+        ignore_index=True,
     )
     return out
 

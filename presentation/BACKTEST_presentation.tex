@@ -1,0 +1,243 @@
+% System Thinking Ads — walk-forward backtest (Mar 2026)
+% Compile from this directory (artifacts go to build/):
+%   latexmk BACKTEST_presentation.tex
+\documentclass[11pt]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+
+\setbeamertemplate{footline}{%
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=\paperwidth,ht=2.5ex,dp=1.125ex,center]{author in head/foot}%
+      \usebeamerfont{footline}\insertframenumber/\inserttotalframenumber
+    \end{beamercolorbox}%
+  }%
+}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{microtype}
+
+\begin{document}
+
+\begin{frame}{Optimization formulation}
+  \small
+  \textbf{Segments} $s \in \mathcal{S}$: region $\times$ match type (6 active: USA, A, B $\times$ Broad, Phrase; Exact).
+  \textbf{Candidates} $\mathcal{K}_s$: historical + synthetic keyword sets for $s$ (see next slide).
+
+  \textbf{Decision variables:}
+  $x_s \geq 0$ daily budget;\;
+  $y_{s,k} \in \{0,1\}$ with $\sum_{k \in \mathcal{K}_s} y_{s,k} = 1$.
+
+  \textbf{Response} (XGBoost, \texttt{tree\_embed}; target \texttt{conv\_scaled\_clicks}; planning-day calendar fixed):
+  \[
+    \widehat{y}_{s,k}(x_s)
+      = \hat f_{\mathrm{XGB}}\!\bigl(x_s,\, \mathbf{z}^{\mathrm{cal}},\, \boldsymbol{\phi}_k\bigr),
+    \qquad
+    \boldsymbol{\phi}_k \text{: set-level semantic + GKP features.}
+  \]
+
+  \textbf{Problem (MILP):}
+  \[
+    \max_{\{x_s,\,y_{s,k}\}} \sum_{s,k} y_{s,k}\,\widehat{y}_{s,k}(x_s)
+      - \lambda \sum_s x_s
+    \quad \text{s.t.}\quad
+    \sum_s x_s \leq B,\;
+    x^{\min}_s \leq x_s \leq x^{\max}_s,
+  \]
+  \[
+    \sum_{s:\, r(s)=\mathrm{USA}} \!\!x_s
+    \geq
+    \sum_{s:\, r(s)=A} \!\!x_s
+    \geq
+    \sum_{s:\, r(s)=B} \!\!x_s,
+    \qquad
+    \sum_{k \in \mathcal{K}_s} y_{s,k} = 1 \;\;\forall s.
+  \]
+  {\scriptsize $\lambda{=}10^{-4}$ budget tiebreak; $B{=}412.7$/day (configured cap, constant Mar 2026).}
+  \normalsize
+\end{frame}
+
+\begin{frame}{Keyword set candidates}
+  \textbf{Pool $\mathcal{K}_s$} (\texttt{build\_keyword\_candidates.py}):
+  \begin{itemize}
+    \item \textbf{Historical} --- every \texttt{keyword\_set\_id} seen in segment (change history + panel).
+    \item \textbf{synthetic\_top} --- top-click / top-efficiency keywords from \texttt{kw-day-panel}, filtered to region and allowed match types.
+    \item \textbf{synthetic\_semantic} --- top keywords by course-anchor similarity; size $\approx$ median historical list length.
+    \item \textbf{synthetic\_dispersion} --- greedy subset maximizing embedding spread.
+    \item \textbf{synthetic\_composite} --- union of top + semantic + dispersion pools.
+  \end{itemize}
+
+  \vspace{0.35em}
+  \textbf{Lists \& features:} match-type columns (\texttt{broad}/\texttt{phrase}/\texttt{exact} keywords assigned by dominant clicks); GKP aggregates + embedding cohesion/dispersion/course similarity merged in \texttt{build\_gkp\_set\_features.py} $\rightarrow$ \texttt{keyword-set-features.csv}.
+
+  \vspace{0.25em}
+  {\footnotesize MILP picks \textbf{one set per segment} per day; optimizer refits XGB on \texttt{date}${<}t$, then solves with Gurobi.}
+\end{frame}
+
+\begin{frame}{Backtest at a glance}
+  \textbf{Window:} 2026-03-01 -- 2026-03-31 (31 days), \texttt{sys\_think} / \texttt{default}.\\
+  \textbf{Budget cap:} \$412.70/day (sum of segment \texttt{daily\_budget} from change history; constant all 31 days).\\
+  \textbf{objective:} \texttt{conv\_scaled\_clicks} (clicks $\times$ historical conv/click by segment).
+
+  \vspace{0.5em}
+  \textbf{Daily walk-forward:} for each $t$, train on \texttt{date} $< t$, solve MILP (budget + keyword set), score plan vs.\ panel actuals.
+
+  \vspace{0.5em}
+  \textbf{Evaluation:} walk-forward \textbf{ensemble} (ridge, power\_log, power\_level, RF, XGB; CV-RMSE weights) refit daily on \texttt{date}${<}t$ for \texttt{plan\_vs\_actual}. Optimizer: XGB refit daily (unchanged).
+\end{frame}
+
+\begin{frame}{Headline results}
+  \footnotesize
+  \centering
+  \begin{tabular}{lccc}
+    \toprule
+    & \textbf{Model (plan)} & \textbf{Actual (panel)} & \textbf{Observed} \\
+    \midrule
+    Mean daily lift$^\ast$ & $1.91 \pm 0.11$ & $3.62 \pm 0.09$ (raw) & --- \\
+    Mean daily budget & \$375 $\pm$ \$2 & \$413 & --- \\
+    Mean \texttt{conv\_scaled} total & --- & --- & $15.1$ \\
+  \bottomrule
+  \end{tabular}
+
+  \vspace{0.35em}
+  \raggedright
+  {\scriptsize $^\ast$Lift $= \hat f(\text{plan}) - \hat f(0)$ vs.\ $\hat f(\text{actual budget, actual set}) - \hat f(0)$ using the daily ensemble $\hat f$. All 31/31 days have positive raw actual lift (vs.\ 1/31 with single XGBoost scoring).}
+
+  \vspace{0.25em}
+  \normalsize
+  \textbf{Takeaway:} Plans stay $\sim$9\% below cap with positive plan lift, but \textbf{ensemble scores historical configs higher than the plan} (actual lift $>$ model lift). Observed levels ($\sim$15/day) remain far above predicted increments.
+\end{frame}
+
+\begin{frame}{Evaluation model fit}
+  \textbf{Scoring model:} CV-weighted ensemble of all \texttt{model\_policy} candidates; refit daily on \texttt{date} $< t$ (tournament for weights).\\
+  \textbf{Optimizer model:} XGBoost (\texttt{tree\_embed}), refit daily on \texttt{date} $< t$.
+
+  \vspace{0.4em}
+  \centering
+  \begin{tabular}{lc}
+    \toprule
+    Metric (ensemble scoring, Mar 2026) & Value \\
+    \midrule
+    Mean RMSE(pred lift vs.\ observed) & 5.55 \\
+    Segments at \$0 budget (mean) & 2 / 6 \\
+    Days with positive raw actual lift & 31 / 31 \\
+    \midrule
+    \multicolumn{2}{l}{\textit{Prior single-XGB scoring (same plans):}} \\
+    Mean actual lift (raw) & $-1.49 \pm 0.09$ \\
+    Days with positive raw actual lift & 1 / 31 \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.35em}
+  \raggedright
+  {\scriptsize Ensemble blends ridge/power marginals with tree models; reduces negative counterfactual lift at observed spend vs.\ XGB-only $\hat f$.}
+\end{frame}
+
+\begin{frame}{Model tournament metrics}
+  \footnotesize
+  \textbf{Setup:} target \texttt{conv\_scaled\_clicks}; 2{,}258 segment-days (train 2{,}099 / holdout 159, last 75 days); 3-fold time-series CV on train; hyperparameter tune per candidate.
+
+  \vspace{0.35em}
+  \centering
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Candidate} & \textbf{CV RMSE} & \textbf{CV $R^2$} & \textbf{Holdout RMSE} & \textbf{Holdout $R^2$} \\
+    \midrule
+    ridge & 2.80 & 0.01 & 2.68 & 0.12 \\
+    power\_log & 2.75 & 0.06 & 1.50 & 0.73 \\
+    \textbf{power\_level} & \textbf{2.64} & \textbf{0.10} & \textbf{1.82} & \textbf{0.60} \\
+    random\_forest & 2.83 & $-$0.16 & 2.51 & 0.23 \\
+    xgboost & 2.73 & $-$0.07 & 2.20 & 0.41 \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.35em}
+  \raggedright
+  \normalsize
+  \textbf{CV winner:} \texttt{power\_level} (lowest mean CV RMSE on levels).\\
+  \textbf{Backtest path:} \texttt{optimizer\_winner: xgboost} + \texttt{tree\_embed} for MILP; \texttt{evaluation.use\_ensemble: true} for \texttt{plan\_vs\_actual} (walk-forward daily).
+
+  {\scriptsize Source: \texttt{fit\_response\_models.py} $\rightarrow$ \texttt{holdout\_metrics.json}; rescored window \texttt{2026-03-01\_2026-03-31\_ensemble}.}
+\end{frame}
+
+\begin{frame}{What we built}
+  \begin{enumerate}
+    \item \textbf{Panel} --- \texttt{campaign-day-panel}: version-linked budgets, clicks, \texttt{all\_conv} per segment.
+    \item \textbf{Features} --- calendar; keyword-set embeddings; GKP aggregates.
+    \item \textbf{Response tournament} --- ridge, power (log/level), RF, XGB; time-series CV; level-scale RMSE.
+    \item \textbf{MILP} --- per-segment budget + keyword set; Gurobi \texttt{tree\_embed}.
+    \item \textbf{Backtest} --- daily \texttt{plan\_vs\_actual.csv} (ensemble scoring) $\rightarrow$ \texttt{backtest\_summary.csv}.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Modeling decisions}
+  \begin{itemize}
+    \item \textbf{Target:} \texttt{conv\_scaled\_clicks} not raw \texttt{all\_conv} --- conversions are regime-heavy; clicks more stable; scaling weights toward segment conv efficiency.
+    \item \textbf{Lever:} \texttt{daily\_budget} (configured cap), not cost.
+    \item \textbf{Validation:} time-series CV (3 folds, $\geq$50\% train fraction).
+    \item \textbf{Production path:} \texttt{optimizer\_winner: xgboost}; refit walk-forward each backtest day.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Backtest evaluation}
+  \textbf{Per day $t$:}
+  \texttt{pred\_lift}, \texttt{actual\_model\_lift}, \texttt{observed\_conv\_scaled\_clicks}.
+
+  \vspace{0.3em}
+  \footnotesize
+  \textbf{Keyword sets in optimized plans} (days selected / 31):
+  \centering
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    Segment & \texttt{keyword\_set\_id} \\
+    \midrule
+    A / Broad & \texttt{synthetic\_A\_Broad\_semantic\_2} (31) \\
+    A / Phrase; Exact & \texttt{ks\_0013} (31) \\
+    B / Broad & \texttt{synthetic\_B\_Broad\_semantic\_5} (31) \\
+    B / Phrase; Exact & \texttt{ks\_0019} (16), \texttt{synthetic\_B\_Phrase; Exact\_semantic\_12} (15) \\
+    USA / Broad & \texttt{synthetic\_USA\_Broad\_top\_15} (28), \texttt{...\_composite\_18} (3) \\
+    USA / Phrase; Exact & \texttt{...\_composite\_22} (17), \texttt{...\_dispersion\_21} (14) \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.25em}
+  \textbf{Regional lift shares:}
+  \begin{tabular}{lccc}
+    \toprule
+    & USA & A & B \\
+    \midrule
+    Model & 52\% & 31\% & 17\% \\
+    Actual & 39\% & 37\% & 24\% \\
+    Observed & 12\% & 34\% & 54\% \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Caveats}
+  \begin{itemize}
+    \item \textbf{Lift $\neq$ observed level:} predicted daily lifts $\mathcal{O}(1)$--$4$ vs.\ observed $\sim$15; scoring is counterfactual on $\hat f$, not realized outcomes.
+    \item \textbf{Scoring vs.\ optimizer mismatch:} MILP uses XGB; ensemble (ridge/power-heavy) can rank actual $>$ plan even when plans look good under XGB.
+    \item \textbf{Single-XGB artifact:} full-panel XGB scoring gave negative actual lift on 30/31 days; fixed by ensemble, not by changing plans.
+    \item \textbf{Set stability:} A/B Broad + A Phrase; Exact fixed all month; USA/B Phrase; Exact switch mid-window.
+    \item \textbf{Sparse budgets:} 2/6 segments routinely at \$0.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Next steps}
+  \begin{enumerate}
+    \item \textbf{Enable ensemble in config:} set \texttt{evaluation.use\_ensemble: true} for production monitor + backtest.
+    \item \textbf{Response form:} power / saturation instead of XGB for optimizer marginals (align with CV winner).
+    \item \textbf{Calibration:} level-fit so predicted lift matches observed scale.
+    \item \textbf{Targets:} A/B \texttt{clicks} vs.\ \texttt{conv\_scaled} vs.\ \texttt{all\_conv}.
+    \item \textbf{Two-stage backtest:} fixed sets for period + weekly budgets.
+    \item \textbf{GKP / Planner:} extend set features; audit $\mathcal{K}_s$.
+  \end{enumerate}
+\end{frame}
+
+\end{document}
