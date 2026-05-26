@@ -21,6 +21,22 @@ More on API pulls and HTML parsing: root `[README.md](../README.md)`.
 
 ---
 
+## Modeling considerations
+
+The default optimization target is `**clicks**`, not `**all_conv**`. This follows from how the panel is built and what we can identify from history.
+
+**Decision lever.** Response models use `**daily_budget`** (the configured cap from change history). `**cost**` is observed spend, not a controllable input, and is excluded from models and budget diagnostics.
+
+**Limited budget variation.** Within a `campaign_version`, budget is fixed. Budget only changes when the campaign is reconfigured (new version). That gives few within-cell budget levels — mostly when the same `(segment, keyword_set_id)` appears at multiple budgets across versions. Full models that pool all rows often show a **negative budget coefficient on conversions** because budget moves coincide with keyword-set and strategy changes (Lead Gen → Run 19 prospecting), not because higher caps reduce conversions.
+
+**Conversions are unstable over time.** `all_conv` levels and mix shifted substantially over the past two years (campaign type, match types, tracking). Time-series holdout and CV R² stay low for conversion models, and OOS forecasts are dominated by regime change rather than budget or set features.
+
+**Clicks are more stable and identifiable.** On identifiable `(segment, keyword_set_id)` cells, within-set budget slopes for clicks are typically **positive**. Clicks respond more directly to auction volume at a given cap, so they are a better proxy for the budget lever even when conversion efficiency moves.
+
+**Implication for config.** Set `target: clicks` for optimization and MILP objectives. Keep `all_conv` in `secondary_metrics` for reporting and diagnostics. Run `diagnose_budget_response.py` before trusting budget signs in fitted coefficients. Holdout R² on segment-day clicks (~0.3 for tree models) is expected to stay well below in-sample presentation benchmarks; prioritize correct budget direction and relative ranking over chasing high R².
+
+---
+
 ## 1. Install
 
 Requires [uv](https://docs.astral.sh/uv/). From the repo root:
@@ -49,9 +65,10 @@ Default experiment: `[opt_results/sys_think/campaign/default/campaign_config.jso
 
 Key fields:
 
-- `target` — `all_conv` or `clicks` (optimization objective)
+- `target` — optimization objective; default `**clicks**` (see [Modeling considerations](#modeling-considerations)). Supported values: `clicks`, `all_conv`, and `conv_scaled_clicks` (clicks scaled by historical conversion-per-click by `(region, match_types)` with global fallback for zero-click segments). Use `secondary_metrics` to track conversions alongside clicks.
 - `context_features` — calendar, keyword-set semantic/GKP columns
 - `constraints.regional_order` — e.g. USA ≥ A ≥ B spend
+- `constraints.budget_tiebreak_penalty` — optional (default `1e-8`); subtract `penalty × Σ daily_budget` from the MILP objective so equal predicted-target solutions prefer lower total spend
 - `model_policy.validation` — `time_series_cv` with `cv_folds`, `min_train_fraction` (e.g. `0.5` = each fold trains on at least half of train-panel days), `min_val_days`, or `time_holdout` for last-N-day reporting only
 - `evaluation` — `use_ensemble`, `baseline_budget`, `weight_by_cv_rmse` (plan vs actual scoring)
 
@@ -132,10 +149,10 @@ Produces set-level GKP aggregates and `data/<course>/processed/segment-keyword-c
 
 - **Segment** = `(region, match_types)` where `match_types` is the campaign-level configuration from change history (`Broad`, `Phrase; Exact`, `Exact`, or `Broad; Phrase; Exact`). The MILP picks one keyword set per segment, not separate lists per match type.
 - **Historical** candidates: every `keyword_set_id` observed in that segment.
-- **`synthetic_top`**: union of top-click and top-efficiency keywords from `kw-day-panel.csv`, filtered to the segment’s region and allowed match types.
-- **`synthetic_semantic`**: top keywords in the performance pool ranked by per-keyword course-anchor similarity (`embed_course_sim_mean` signal from EDA), sized to the segment’s median historical keyword count (override with `--set-size`).
-- **`synthetic_dispersion`**: greedy subset maximizing `embed_dispersion` (spread around the set centroid).
-- **`synthetic_composite`**: greedy subset maximizing `z(embed_course_sim_mean) + z(embed_dispersion)` within the pool (Model C-style).
+- `**synthetic_top`**: union of top-click and top-efficiency keywords from `kw-day-panel.csv`, filtered to the segment’s region and allowed match types.
+- `**synthetic_semantic**`: top keywords in the performance pool ranked by per-keyword course-anchor similarity (`embed_course_sim_mean` signal from EDA), sized to the segment’s median historical keyword count (override with `--set-size`).
+- `**synthetic_dispersion**`: greedy subset maximizing `embed_dispersion` (spread around the set centroid).
+- `**synthetic_composite**`: greedy subset maximizing `z(embed_course_sim_mean) + z(embed_dispersion)` within the pool (Model C-style).
 
 Disable variants with `--no-semantic-synthetic`, `--no-dispersion-synthetic`, or `--no-composite-synthetic`.
 
@@ -143,12 +160,30 @@ Keywords **do not** need to be identical across Broad / Phrase / Exact within a 
 
 Outputs:
 
-| File | Contents |
-|------|----------|
-| `segment-keyword-candidates.csv` | segment → `keyword_set_id`, `source` |
+
+| File                                 | Contents                                            |
+| ------------------------------------ | --------------------------------------------------- |
+| `segment-keyword-candidates.csv`     | segment → `keyword_set_id`, `source`                |
 | `campaign-keyword-sets-extended.csv` | keyword lists (+ match-type columns for synthetics) |
 
+
 Run **candidates first**, then **GKP/set features**, so `campaign-keyword-sets-extended.csv` exists before `build_keyword_set_feature_table()` merges synthetic sets into `keyword-set-features.csv`.
+
+**Budget diagnostics** (before trusting budget coefficients):
+
+```powershell
+uv run python scripts/diagnose_budget_response.py --course sys_think
+```
+
+Compares `all_conv` vs `clicks` (ridge + XGB) and within-`(segment, keyword_set_id)` **daily_budget** slopes. Outputs under `opt_results/<course>/campaign/<exp>/diagnostics/budget/`. Cost is not used in response models or these diagnostics.
+
+**Calendar ablation** (season vs month vs sin/cos month):
+
+```powershell
+uv run python scripts/diagnose_budget_response.py --course sys_think --calendar-ablation --ablation-target clicks
+```
+
+Writes `diagnostics/budget/calendar_ablation/calendar_ablation.csv` with CV RMSE and holdout R² per spec.
 
 ---
 
@@ -158,17 +193,19 @@ Run **candidates first**, then **GKP/set features**, so `campaign-keyword-sets-e
 uv run python scripts/fit_response_models.py --course sys_think
 ```
 
-Tournament (ridge, power, RF, XGB) with **level-scale** metrics; writes `model_manifest.json`, `winner_model.joblib`, `holdout_metrics.json`, and **`linear_coeffs.json`** under `opt_results/<course>/campaign/<exp>/`.
+Tournament (ridge, power, RF, XGB) with **level-scale** metrics; writes `model_manifest.json`, `winner_model.joblib`, `holdout_metrics.json`, and `**linear_coeffs.json`** under `opt_results/<course>/campaign/<exp>/`.
 
-**Ridge uses the same design as the linear MILP** (`segment + daily_budget + budget×segment + context_features` via `[linear_design.py](linear_design.py)`). Keyword-set selection in the MILP uses static context-feature coefficients (semantic, GKP, match-type) evaluated per candidate set — not `keyword_set_id` dummies. Saved debug matrices land in `features/`:
+**Ridge uses the same design as the linear MILP** (`region + match_type + budget×(region + match) + context_features` via `[linear_design.py](linear_design.py)`). Keyword-set selection in the MILP uses `**static_context_lift`** — per-set scores derived from static context-feature coefficients (semantic, GKP), not `keyword_set_id` dummies. Saved debug matrices land in `features/`:
 
-| File | Purpose |
-|------|---------|
-| `modeling_frame_train/holdout.csv` | Wide modeling frame |
+
+| File                                   | Purpose                            |
+| -------------------------------------- | ---------------------------------- |
+| `modeling_frame_train/holdout.csv`     | Wide modeling frame                |
 | `linear_milp_design_train/holdout.csv` | Aligned ridge / MILP design matrix |
-| `linear_milp_design_columns.json` | Column order for holdout reindex |
-| `context_design_train/holdout.csv` | Tree-model context OHE matrix |
-| `artifact_manifest.json` | Paths index |
+| `linear_milp_design_columns.json`      | Column order for holdout reindex   |
+| `context_design_train/holdout.csv`     | Tree-model context OHE matrix      |
+| `artifact_manifest.json`               | Paths index                        |
+
 
 **Model selection rules:**
 
@@ -185,7 +222,7 @@ Tournament (ridge, power, RF, XGB) with **level-scale** metrics; writes `model_m
 uv run python scripts/optimize_campaign.py --course sys_think --budget 400
 ```
 
-By default loads **`linear_coeffs.json`** from fit time; pass `--refit-coeffs` to re-fit on current train data.
+By default loads `**linear_coeffs.json**` from fit time; pass `--refit-coeffs` to re-fit on current train data.
 
 Or run steps **4–6** in one command after step 3 is complete (regenerates panel if missing):
 
@@ -205,13 +242,13 @@ Use `--skip-gkp` / `--skip-candidates` when GKP set features are disabled or alr
 uv run python scripts/backtest_campaign.py --course sys_think --start 2025-10-01 --end 2025-12-31
 ```
 
-One MILP per day in range (train on `date < t`, optimize budget + keyword set, score vs actual). This is the default; existing configs and invocations behave unchanged.
+One MILP per day in range (train on `date < t`, optimize budget + keyword set, score vs actual). Optimization uses `optimizer_winner` / `optimizer_backend` from config (e.g. XGBoost + `tree_embed`); the model is refit on `date < t` each day. **`fit_response_models.py` is optional** if `optimizer_winner` is set—it supplies tuned hyperparameters when `model_manifest.json` exists. With `evaluation.use_ensemble: true`, backtest still runs a walk-forward tournament for ensemble weights unless you use `--static-model` and saved `holdout_metrics.json`.
 
-Optional flags: `--strategy daily` (explicit), `--static-model` (reuse first-day tournament/ensemble).
+Optional flags: `--strategy daily` (explicit), `--static-model` (reuse first-day evaluation ensemble).
 
 ### Two-stage mode (fixed keyword sets + weekly budgets)
 
-Operational backtest: keyword sets fixed once for the period (sum of daily predictions over `[start, end]` with budgets at historical median), then budgets re-optimized each week using the **same daily response model** — objective = sum of Mon–Sun daily predictions with constant `daily_budget` within the week.
+Operational backtest: keyword sets fixed once for the period (multi-day linear MILP over `[start, end]`), then budgets re-optimized each week with those sets fixed. Multi-day MILP uses the **linear** backend; daily production optimization uses the configured backend (e.g. `tree_embed`).
 
 ```powershell
 uv run python scripts/backtest_campaign.py --course sys_think --start 2025-10-01 --end 2025-12-31 --strategy two_stage
@@ -230,6 +267,38 @@ Config block (optional; defaults to daily if omitted):
 ```
 
 Outputs under `backtest/<start>_<end>/`: `fixed_keyword_sets.json`, `weekly_backtest_summary.csv`, `plans/YYYYMMDD/` per week (`plan_vs_actual_weekly.csv`, optional `plan_vs_actual_daily.csv`).
+
+### Summarize performance
+
+After a backtest window finishes, compile daily evaluation rows and write summary tables (CSV + LaTeX):
+
+```powershell
+uv run python scripts/analyze_backtest_results.py --course sys_think --start 2025-10-06 --end 2025-10-12
+```
+
+Or pass `--analyze` to `backtest_campaign.py` after a local full-window run. Outputs:
+
+- `evaluation_results.csv` — daily totals (`pred_lift`, `actual_model_lift`, observed, budgets)
+- `backtest_summary.csv` — mean ± SE metrics and lift/$ 
+- `regional_breakdown.csv` — opt vs actual spend/lift shares by region
+- `backtest_summary.tex` — LaTeX performance table
+
+### Slurm (cluster)
+
+One array task per day (`--day`); the last task runs analysis for each course:
+
+```bash
+EXP_NAME=default COURSES="sys_think" START_DAY=2025-10-01 END_DAY=2026-02-10 \
+  sbatch --array=0-132%4 submit_backtest.sh
+```
+
+Rerun missing days (auto-detect from `plans/YYYYMMDD/campaign_plan.csv`):
+
+```bash
+sbatch submit_backtest_missing.sh
+```
+
+Environment overrides: `EXP_NAME`, `COURSES`, `START_DAY`, `END_DAY`, `STRATEGY` (`daily` or `two_stage`), `EXTRA_ARGS`, `PY` (default `uv run python`).
 
 ---
 
@@ -266,6 +335,8 @@ For each segment `s`:
 
 Backends differ in how per-segment predicted `target` is expressed in Gurobi (`linear`, `piecewise_linear`, exact `tree_embed` via `[backends/tree_embedding.py](backends/tree_embedding.py)`).
 
+**Objective:** maximize `Σ_s f_s(plan)` minus a tiny budget tie-break (`constraints.budget_tiebreak_penalty`, default `1e-8`, times summed daily budgets). The penalty is small enough not to change the primary optimum when predicted lift differs, but it prefers lower total spend when multiple plans tie on predicted target.
+
 ---
 
 ## Outputs
@@ -275,9 +346,24 @@ Under `opt_results/<course>/campaign/<exp_name>/`:
 - `model_manifest.json`, `winner_model.joblib`, `holdout_metrics.json`
 - `features/` — saved modeling frames and design matrices (see §5)
 - `campaign_plan.csv`, `linear_coeffs.json`, `solver_status.json`
+
+`campaign_plan.csv` columns:
+
+
+| Column                | Meaning                                                                                                                                                                                  |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `milp_pred`           | Level prediction from the solver embedding at the optimum: `f(plan)` (Gurobi value of `pred_vars[segment]`; what the MILP maximizes, up to the budget tie-break)                       |
+| `pred_over_base`      | Incremental lift `f(plan) - f(0)` in solver space; `f(0)` uses the **same chosen keyword set** with `daily_budget = 0`                                                                   |
+| `external_model_pred` | Tree-embed only: independent sklearn `pipeline.predict` level `f(plan)` on the solved plan (sanity check vs `milp_pred`; warns if `|milp_pred - external_model_pred| > 0.01`)           |
+| `n_planning_days`     | Number of calendar days whose predictions are summed in the MILP objective (1 for single-day optimize; 7 for weekly two-stage budget solve)                                              |
+
+`milp_pred` and `external_model_pred` are **level** predictions. Use `pred_over_base` for incremental lift aligned with backtest `pred_lift` (same keyword set, zero budget baseline). Linear/piecewise runs leave `external_model_pred` empty.
+
+
 - `ensemble_model.joblib` (after `fit_evaluation_ensemble.py` or backtest with `use_ensemble`)
 - Backtest (daily): `backtest/<start>_<end>/plans/YYYYMMDD/`, `plan_vs_actual.csv`, `daily_backtest_summary.csv`
 - Backtest (two-stage): `fixed_keyword_sets.json`, `weekly_backtest_summary.csv`, weekly `plans/YYYYMMDD/`
+- Backtest analysis: `evaluation_results.csv`, `backtest_summary.csv`, `regional_breakdown.csv`, `backtest_summary.tex`
 
 ---
 
@@ -295,6 +381,7 @@ Under `opt_results/<course>/campaign/<exp_name>/`:
 | `[linear_design.py](linear_design.py)`                         | Shared MILP-linear design + aligned ridge                |
 | `[feature_artifacts.py](feature_artifacts.py)`                 | Persist modeling / design matrices at fit time           |
 | `[optimize.py](optimize.py)`                                   | Dispatch solver backend from manifest                    |
+| `[backtest_analysis.py](backtest_analysis.py)`                 | Compile plan vs actual + summary / LaTeX tables          |
 | `[backtest.py](backtest.py)`                                   | Walk-forward daily backtest loop                         |
 | `[backtest_two_stage.py](backtest_two_stage.py)`               | Fixed keyword sets + weekly budget backtest              |
 | `[backends/milp_core.py](backends/milp_core.py)`               | Shared Gurobi MILP                                       |
