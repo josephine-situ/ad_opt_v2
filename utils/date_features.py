@@ -61,6 +61,19 @@ def calculate_days_to_next(d: pd.Timestamp, course_start_dts: list[str] | None =
     return float(min(diffs)) if diffs else np.nan
 
 
+def add_month_cycle_features(dates: pd.Series) -> pd.DataFrame:
+    """Smooth annual cycle (2 harmonics) to reduce month-dummy overfit risk."""
+    month = dates.dt.month.astype(float)
+    angle = 2.0 * np.pi * (month - 1.0) / 12.0
+    return pd.DataFrame(
+        {
+            "month_sin": np.sin(angle),
+            "month_cos": np.cos(angle),
+        },
+        index=dates.index,
+    )
+
+
 def add_calendar_features(
     df: pd.DataFrame,
     *,
@@ -73,6 +86,10 @@ def add_calendar_features(
     out["day_of_week"] = out[date_col].dt.day_name()
     out["is_weekend"] = (out[date_col].dt.weekday >= 5).astype(int)
     out["season"] = out[date_col].dt.month.map(season_from_month)
+    out["month"] = out[date_col].dt.strftime("%b")
+    cycle = add_month_cycle_features(out[date_col])
+    out["month_sin"] = cycle["month_sin"]
+    out["month_cos"] = cycle["month_cos"]
 
     years = sorted({int(y) for y in out[date_col].dt.year.unique()})
     country_codes = [region_to_country_code(r) for r in out[region_col].unique()]
@@ -102,16 +119,22 @@ def calendar_vector_for_date(
     planning_date: pd.Timestamp,
     region: str,
     course: str,
+    *,
+    calendar_cols: list[str] | None = None,
 ) -> dict[str, object]:
     row = pd.DataFrame(
         [{"date": planning_date, "region": region}],
     )
     enriched = add_calendar_features(row, course=course)
-    cols = [
+    default_cols = [
         "day_of_week",
         "season",
+        "month",
+        "month_sin",
+        "month_cos",
         "is_weekend",
         "is_public_holiday",
         "days_to_next_course_start",
     ]
-    return {c: enriched.iloc[0][c] for c in cols}
+    use_cols = calendar_cols or default_cols
+    return {c: enriched.iloc[0][c] for c in use_cols if c in enriched.columns}
