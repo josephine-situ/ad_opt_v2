@@ -33,7 +33,7 @@
     "regional_order": ["USA", "A", "B"],
     "excluded_regions": ["C"],
     "allowed_match_types": ["Broad", "Phrase; Exact"],
-    "budget_tiebreak_penalty": 1e-6
+    "budget_tiebreak_penalty": 1e-4
   },
   "model_policy": {
     "candidates": ["ridge", "power_log", "power_level", "random_forest", "xgboost"],

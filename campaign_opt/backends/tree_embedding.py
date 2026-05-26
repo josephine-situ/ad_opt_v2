@@ -126,26 +126,14 @@ def _tighten_allowed_leaf_nodes(
     budget_hi: float,
 ) -> dict[int, set[int]]:
     """
-    When several leaves survive static pruning, keep only those the booster uses at
-  midpoint budget (intersected with the lo/mid/hi probe set).
+    Return leaves the booster may use on [budget_lo, budget_hi].
+
+    ``allowed`` already unions leaf ids from probes at lo, mid, and hi budgets.
+    Do not intersect further to mid-budget leaves only — that drops leaves active
+    at budget_lo and makes the MILP infeasible or inconsistent with ``predict()``.
     """
-    mid_budget = (float(budget_lo) + float(budget_hi)) / 2.0
-    mid_nodes = _booster_leaf_nodes_at_budgets(
-        pipeline,
-        x_raw_row,
-        target,
-        feature_cols,
-        mid_budget,
-        mid_budget,
-    )
-    tightened: dict[int, set[int]] = {}
-    for tree_idx, nodes in allowed.items():
-        if len(nodes) <= 1:
-            tightened[tree_idx] = nodes
-            continue
-        narrowed = nodes & mid_nodes.get(tree_idx, set())
-        tightened[tree_idx] = narrowed if narrowed else nodes
-    return tightened
+    _ = (pipeline, x_raw_row, target, feature_cols, budget_lo, budget_hi)
+    return allowed
 
 
 def get_tree_path_sets(pipeline) -> tuple[list[list[TreePath]], float, str]:

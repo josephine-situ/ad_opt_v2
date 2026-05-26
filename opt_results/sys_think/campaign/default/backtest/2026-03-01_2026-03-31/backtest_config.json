@@ -1,0 +1,11 @@
+{
+  "course": "sys_think",
+  "exp_name": "default",
+  "start_day": "2026-03-01",
+  "end_day": "2026-03-31",
+  "strategy": "daily",
+  "budget_cadence": "W-MON",
+  "target": "conv_scaled_clicks",
+  "total_budget": 400.0,
+  "static_model": false
+}
