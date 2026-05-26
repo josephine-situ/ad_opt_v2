@@ -75,24 +75,3 @@ def format_top_shap_effects(effects: dict[str, float], *, top_n: int = 6) -> str
     pairs = sorted(effects.items(), key=lambda x: abs(x[1]), reverse=True)[:top_n]
     short = lambda n: n if len(n) <= 36 else n[:35] + "…"
     return ", ".join(f"{short(k)}={v:+.3g}" for k, v in pairs)
-
-
-def shap_overview_lines(
-    pipeline: Any,
-    df: pd.DataFrame,
-    target: str,
-    feature_cols: list[str],
-    *,
-    top_n: int = 6,
-    max_samples: int = 512,
-) -> list[str]:
-    effects = compute_mean_shap_effects(
-        pipeline,
-        df,
-        target,
-        feature_cols,
-        max_samples=max_samples,
-    )
-    if not effects:
-        return []
-    return [f"    top shap (mean): {format_top_shap_effects(effects, top_n=top_n)}"]

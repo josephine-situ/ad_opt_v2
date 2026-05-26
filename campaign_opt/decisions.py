@@ -91,24 +91,6 @@ def region_of_segment(segment: str) -> str:
     return segment.split(" / ")[0].strip()
 
 
-def median_budgets_by_segment(panel: pd.DataFrame, segments: list[str]) -> dict[str, float]:
-    """Historical median daily budget per segment (for stage-1 set selection)."""
-    out: dict[str, float] = {}
-    for seg in segments:
-        sub = panel[panel["segment"] == seg]["daily_budget"].dropna()
-        out[seg] = float(sub.median()) if len(sub) else 50.0
-    return out
-
-
-def scale_budgets_to_cap(budgets: dict[str, float], total_budget: float) -> dict[str, float]:
-    """Scale segment budgets proportionally so their sum does not exceed total_budget."""
-    total = sum(budgets.values())
-    if total <= total_budget or total <= 0:
-        return dict(budgets)
-    scale = total_budget / total
-    return {seg: val * scale for seg, val in budgets.items()}
-
-
 def segment_conversion_rates(
     panel: pd.DataFrame,
     segments: list[str],

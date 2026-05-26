@@ -160,52 +160,6 @@ def build_cell_fixed_effects_design(
     )
 
 
-def build_version_fixed_effects_design(
-    df: pd.DataFrame,
-    config: CampaignOptConfig,
-    *,
-    include_calendar: bool = True,
-    columns: list[str] | None = None,
-) -> IdentifiedBudgetDesign | None:
-    """
-    y ~ campaign_version_fe + daily_budget [+ calendar]
-
-  Note: often collinear because each version usually maps to one budget level.
-    Prefer ``build_cell_fixed_effects_design`` for this panel.
-    """
-    if "campaign_version" not in df.columns:
-        return None
-
-    target = config.target
-    sub = df.dropna(subset=[target, "daily_budget", "campaign_version"]).copy()
-    n_total = len(sub)
-    y = sub[target].astype(float).values
-    ver_dummies = pd.get_dummies(sub["campaign_version"].astype(str), prefix="ver", dtype=float)
-    X_parts: list[pd.DataFrame] = [ver_dummies, sub[["daily_budget"]].astype(float)]
-
-    if include_calendar:
-        cal_cols = [c for c in calendar_context_columns(config) if c in sub.columns]
-        cal_block = _encode_context_columns(sub, cal_cols)
-        if not cal_block.empty:
-            X_parts.append(cal_block)
-
-    X = pd.concat(X_parts, axis=1).fillna(0.0)
-    if columns is not None:
-        X = X.reindex(columns=columns, fill_value=0.0)
-
-    return IdentifiedBudgetDesign(
-        X=X,
-        y=y,
-        sub=sub,
-        x_columns=list(X.columns),
-        design="version_fe_budget_calendar",
-        n_rows_total=n_total,
-        n_rows_used=len(sub),
-        n_cells=int(ver_dummies.shape[1]),
-        n_identifiable_cells=int(sub.groupby("campaign_version")["daily_budget"].nunique().gt(1).sum()),
-    )
-
-
 def pooled_within_cell_budget_slopes(
     df: pd.DataFrame,
     target: str,

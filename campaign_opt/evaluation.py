@@ -182,48 +182,6 @@ def optimizer_model_path(output_dir: Path, winner_name: str) -> Path | None:
     return None
 
 
-def ensemble_from_pipeline(
-    pipeline: Any,
-    config: CampaignOptConfig,
-    model_name: str,
-    *,
-    feature_cols: list[str] | None = None,
-    hyperparams: dict[str, Any] | None = None,
-) -> EnsembleModel:
-    """Wrap one fitted sklearn pipeline as a one-member ensemble for incremental scoring."""
-    feature_cols = feature_cols or get_context_feature_columns(config.context_features)
-    spec = get_train_spec(model_name, hyperparams)
-    if spec is None:
-        raise ValueError(f"Unknown model for evaluation: {model_name!r}")
-    member = FittedMember(model_name, pipeline, spec, weight=1.0)
-    return EnsembleModel(
-        members=[member],
-        feature_cols=feature_cols,
-        target=config.target,
-        baseline_budget=float(config.evaluation.baseline_budget),
-    )
-
-
-def ensemble_from_optimizer_pipeline(
-    pipeline: Any,
-    config: CampaignOptConfig,
-    model_name: str,
-    manifest: dict,
-    *,
-    feature_cols: list[str] | None = None,
-) -> EnsembleModel:
-    """Wrap an already-fitted optimizer pipeline (e.g. loaded from ``optimizer_*.joblib``)."""
-    from campaign_opt.modeling import hyperparams_from_manifest
-
-    return ensemble_from_pipeline(
-        pipeline,
-        config,
-        model_name,
-        feature_cols=feature_cols,
-        hyperparams=hyperparams_from_manifest(manifest, model_name),
-    )
-
-
 def fit_single_model_evaluation(
     fit_df: pd.DataFrame,
     config: CampaignOptConfig,
@@ -455,26 +413,6 @@ def build_segment_decision_rows(
         if col not in out.columns:
             out[col] = np.nan
     return out
-
-
-def build_baseline_rows(
-    segments: list[str],
-    baseline_sets: pd.Series,
-    planning_date: pd.Timestamp,
-    set_features: pd.DataFrame,
-    course: str,
-    feature_cols: list[str],
-    baseline_budget: float,
-) -> pd.DataFrame:
-    """f(0): ``baseline_budget`` + modal reference keyword set per segment (train)."""
-    base_dec = pd.DataFrame(
-        {
-            "segment": segments,
-            "daily_budget": baseline_budget,
-            "keyword_set_id": [str(baseline_sets.get(s, baseline_sets.iloc[0])) for s in segments],
-        }
-    )
-    return build_segment_decision_rows(base_dec, planning_date, set_features, course, feature_cols)
 
 
 def build_baseline_rows_for_decisions(
