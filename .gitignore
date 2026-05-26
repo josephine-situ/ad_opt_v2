@@ -7,7 +7,20 @@ venv/
 google-ads*.yaml
 google-ads*.json
 logs/
+.vscode/
 TODO.md
+
+# Regenerated experiment outputs (keep campaign_config.json and backtest/)
+opt_results/**/diagnostics/
+opt_results/**/features/
+opt_results/**/holdout_metrics.json
+opt_results/**/model_manifest.json
+opt_results/**/winner_model.joblib
+opt_results/**/ensemble_model.joblib
+opt_results/**/linear_coeffs.json
+opt_results/**/campaign_plan.csv
+opt_results/**/solver_status.json
+opt_results/**/keyword_set_plan.csv
 
 # LaTeX presentation (see presentation/.latexmkrc)
 presentation/build/
