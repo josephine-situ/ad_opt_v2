@@ -2,7 +2,7 @@
 
 Config-driven **campaign-level** optimization: daily budget per `(region, match_types)` segment plus discrete **keyword set** choice.
 
-Run steps **1–6** in order to produce a campaign plan. Steps **7–8** are optional validation and production monitoring.
+Run steps **1–7** in order to produce a campaign plan. Steps **8–9** are optional validation and production monitoring.
 
 ```mermaid
 flowchart TD
@@ -70,7 +70,7 @@ Key fields:
 - `constraints.regional_order` — e.g. USA ≥ A ≥ B spend
 - `constraints.budget_tiebreak_penalty` — optional (default `1e-8`); subtract `penalty × Σ daily_budget` from the MILP objective so equal predicted-target solutions prefer lower total spend
 - `model_policy.validation` — `time_series_cv` with `cv_folds`, `min_train_fraction` (e.g. `0.5` = each fold trains on at least half of train-panel days), `min_val_days`, or `time_holdout` for last-N-day reporting only
-- `evaluation` — `use_ensemble`, `baseline_budget`, `weight_by_cv_rmse` (plan vs actual scoring)
+- `evaluation` — `use_ensemble`, `baseline_budget`, `weight_by_cv_rmse` (plan vs actual scoring; same `fit_evaluation_model` in backtest and production)
 
 Copy or edit this file per course/experiment under `opt_results/<course>/campaign/<exp_name>/`.
 
@@ -216,15 +216,23 @@ Tournament (ridge, power, RF, XGB) with **level-scale** metrics; writes `model_m
 
 ---
 
-## 6. Optimize (Gurobi MILP)
+## 6. Fit evaluation ensemble (plan vs actual scoring)
+
+```powershell
+uv run python scripts/fit_evaluation_ensemble.py --course sys_think
+```
+
+Fits the 5-member ensemble on the **full modeling panel** with CV-RMSE weights from `holdout_metrics.json` (same as backtest). Writes `ensemble_model.joblib` and `ensemble_meta.json`.
+
+## 7. Optimize (Gurobi MILP)
 
 ```powershell
 uv run python scripts/optimize_campaign.py --course sys_think --budget 400
 ```
 
-By default loads `**linear_coeffs.json**` from fit time; pass `--refit-coeffs` to re-fit on current train data.
+Walk-forward train (`date < planning_date`), **3-fold time-series CV** hyperparameter tuning, then MILP with `optimizer_winner` (default `ensemble_ridge_xgb` / `tree_embed`). Optional `--planning-date YYYY-MM-DD` (default: latest panel date).
 
-Or run steps **4–6** in one command after step 3 is complete (regenerates panel if missing):
+Or run steps **4–7** in one command after step 3 is complete (regenerates panel if missing):
 
 ```powershell
 uv run python scripts/run_campaign_pipeline.py --course sys_think
@@ -234,7 +242,7 @@ Use `--skip-gkp` / `--skip-candidates` when GKP set features are disabled or alr
 
 ---
 
-## 7. Walk-forward backtest (optional)
+## 8. Walk-forward backtest (optional)
 
 ### Daily mode (default)
 
@@ -302,9 +310,9 @@ Environment overrides: `EXP_NAME`, `COURSES`, `START_DAY`, `END_DAY`, `STRATEGY`
 
 ---
 
-## 8. Production monitor & evaluation ensemble (optional)
+## 9. Production monitor (optional)
 
-Plan vs actual uses a **separate ensemble** (all `model_policy` candidates on available train data), not the MILP winner:
+Plan vs actual uses the **evaluation ensemble** (5 tournament members, CV-RMSE weights from `holdout_metrics.json`), not the MILP optimizer model:
 
 
 | Metric                | Definition                                                                                  |
@@ -322,8 +330,10 @@ Primary comparison: `pred_lift` vs `actual_model_lift`. Observed totals are refe
 # Fit ensemble on full history (saved for monitor)
 uv run python scripts/fit_evaluation_ensemble.py --course sys_think
 
-# Compare latest plan to actuals (uses saved ensemble or refits on pre-eval train)
+# Compare latest plan to actuals (loads ensemble_model.joblib or fits via fit_evaluation_model)
 uv run python scripts/monitor_campaign_production.py --course sys_think --lag 1
+# Force refit after new panel data:
+uv run python scripts/monitor_campaign_production.py --course sys_think --lag 1 --refit-ensemble
 ```
 
 ---
@@ -337,7 +347,9 @@ For each segment `s`:
 
 Backends differ in how per-segment predicted `target` is expressed in Gurobi (`linear`, `piecewise_linear`, exact `tree_embed` via `[backends/tree_embedding.py](backends/tree_embedding.py)`).
 
-**Objective:** maximize `Σ_s f_s(plan)` minus a tiny budget tie-break (`constraints.budget_tiebreak_penalty`, default `1e-8`, times summed daily budgets). The penalty is small enough not to change the primary optimum when predicted lift differs, but it prefers lower total spend when multiple plans tie on predicted target.
+**Objective:** maximize `Σ_s [f_s(plan) − f_s(baseline)]` (incremental lift at `evaluation.baseline_budget`, same keyword set) minus a tiny budget tie-break (`constraints.budget_tiebreak_penalty`, default `1e-8`, times summed daily budgets). The penalty is small enough not to change the primary optimum when predicted lift differs, but it prefers lower total spend when multiple plans tie on predicted lift.
+
+For `ensemble_ridge_xgb`, each candidate baseline `f_k(baseline)` is `EnsembleModel.predict_levels` on the same `build_segment_decision_rows` features used in backtest scoring (not a separate analytic formula).
 
 ---
 
