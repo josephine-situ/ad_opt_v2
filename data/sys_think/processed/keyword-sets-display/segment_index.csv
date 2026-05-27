@@ -1,0 +1,39 @@
+segment,keyword_set_id,source,display_file
+A / Broad,ks_0001,historical,ks_0001.csv
+B / Broad,ks_0002,historical,ks_0002.csv
+A / Phrase; Exact,ks_0005,historical,ks_0005.csv
+A / Phrase; Exact,ks_0006,historical,ks_0006.csv
+A / Phrase; Exact,ks_0013,historical,ks_0013.csv
+A / Phrase; Exact,ks_0014,historical,ks_0014.csv
+A / Phrase; Exact,ks_0015,historical,ks_0015.csv
+B / Phrase; Exact,ks_0007,historical,ks_0007.csv
+B / Phrase; Exact,ks_0008,historical,ks_0008.csv
+B / Phrase; Exact,ks_0017,historical,ks_0017.csv
+B / Phrase; Exact,ks_0018,historical,ks_0018.csv
+B / Phrase; Exact,ks_0019,historical,ks_0019.csv
+USA / Broad,ks_0009,historical,ks_0009.csv
+USA / Phrase; Exact,ks_0010,historical,ks_0010.csv
+USA / Phrase; Exact,ks_0023,historical,ks_0023.csv
+USA / Phrase; Exact,ks_0024,historical,ks_0024.csv
+USA / Phrase; Exact,ks_0025,historical,ks_0025.csv
+A / Broad,synthetic_A_Broad_top_conv_1,synthetic_top_conv,synthetic_A_Broad_top_conv_1.csv
+A / Broad,synthetic_A_Broad_allowlist_2,synthetic_allowlist,synthetic_A_Broad_allowlist_2.csv
+A / Broad,synthetic_A_Broad_semantic_3,synthetic_semantic,synthetic_A_Broad_semantic_3.csv
+A / Broad,synthetic_A_Broad_dispersion_4,synthetic_dispersion,synthetic_A_Broad_dispersion_4.csv
+A / Broad,synthetic_A_Broad_composite_5,synthetic_composite,synthetic_A_Broad_composite_5.csv
+B / Broad,synthetic_B_Broad_top_conv_6,synthetic_top_conv,synthetic_B_Broad_top_conv_6.csv
+B / Broad,synthetic_B_Broad_allowlist_7,synthetic_allowlist,synthetic_B_Broad_allowlist_7.csv
+B / Broad,synthetic_B_Broad_semantic_8,synthetic_semantic,synthetic_B_Broad_semantic_8.csv
+B / Broad,synthetic_B_Broad_dispersion_9,synthetic_dispersion,synthetic_B_Broad_dispersion_9.csv
+B / Broad,synthetic_B_Broad_composite_10,synthetic_composite,synthetic_B_Broad_composite_10.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_11,synthetic_top_conv,synthetic_A_Phrase; Exact_top_conv_11.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_12,synthetic_allowlist,synthetic_A_Phrase; Exact_allowlist_12.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_13,synthetic_top_conv,synthetic_B_Phrase; Exact_top_conv_13.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_14,synthetic_allowlist,synthetic_B_Phrase; Exact_allowlist_14.csv
+USA / Broad,synthetic_USA_Broad_top_conv_15,synthetic_top_conv,synthetic_USA_Broad_top_conv_15.csv
+USA / Broad,synthetic_USA_Broad_allowlist_16,synthetic_allowlist,synthetic_USA_Broad_allowlist_16.csv
+USA / Broad,synthetic_USA_Broad_semantic_17,synthetic_semantic,synthetic_USA_Broad_semantic_17.csv
+USA / Broad,synthetic_USA_Broad_dispersion_18,synthetic_dispersion,synthetic_USA_Broad_dispersion_18.csv
+USA / Broad,synthetic_USA_Broad_composite_19,synthetic_composite,synthetic_USA_Broad_composite_19.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_20,synthetic_top_conv,synthetic_USA_Phrase; Exact_top_conv_20.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_21,synthetic_allowlist,synthetic_USA_Phrase; Exact_allowlist_21.csv

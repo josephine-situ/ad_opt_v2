@@ -73,12 +73,12 @@ def enrollment_keyword_allowlist_path(course: str) -> Path | None:
     return matches[-1] if matches else None
 
 
-def load_enrollment_keyword_allowlist(course: str) -> set[str] | None:
+def load_enrollment_keyword_allowlist_ordered(course: str) -> list[str] | None:
     """
-    Keywords from ``*Keywords*Enrollments*.xlsx`` in ``data/<course>/gkp/``.
+    Keywords from ``*Keywords*Enrollments*.xlsx`` in priority order.
 
-    Uses the first column (keyword text); enrollment counts are ignored.
-    Returns ``None`` when no allowlist file exists for the course.
+    When a numeric enrollment column is present, sorts by enrollment descending;
+    otherwise preserves spreadsheet row order. Returns ``None`` when no file exists.
     """
     path = enrollment_keyword_allowlist_path(course)
     if path is None:
@@ -86,16 +86,45 @@ def load_enrollment_keyword_allowlist(course: str) -> set[str] | None:
 
     rows = _read_xlsx_first_sheet(path)
     if not rows:
-        return set()
+        return []
 
-    keywords: set[str] = set()
+    entries: list[tuple[str, float]] = []
     for row in rows[1:]:
         if not row or not str(row[0]).strip():
             continue
         kw = normalize_keyword(row[0])
-        if kw:
-            keywords.add(kw)
-    return keywords
+        if not kw:
+            continue
+        enroll = 0.0
+        if len(row) > 1 and str(row[1]).strip():
+            try:
+                enroll = float(str(row[1]).replace(",", ""))
+            except ValueError:
+                enroll = 0.0
+        entries.append((kw, enroll))
+
+    if any(enroll > 0 for _, enroll in entries):
+        entries.sort(key=lambda item: (-item[1], item[0]))
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for kw, _ in entries:
+        if kw not in seen:
+            seen.add(kw)
+            ordered.append(kw)
+    return ordered
+
+
+def load_enrollment_keyword_allowlist(course: str) -> set[str] | None:
+    """
+    Keywords from ``*Keywords*Enrollments*.xlsx`` in ``data/<course>/gkp/``.
+
+    Returns ``None`` when no allowlist file exists for the course.
+    """
+    ordered = load_enrollment_keyword_allowlist_ordered(course)
+    if ordered is None:
+        return None
+    return set(ordered)
 
 
 def _split_keyword_field(raw: object) -> list[str]:
@@ -106,6 +135,57 @@ def _split_keyword_field(raw: object) -> list[str]:
 
 def _join_keyword_field(keywords: list[str]) -> str:
     return "; ".join(sorted({k for k in keywords if k}))
+
+
+def enrollment_allowlist_keywords(
+    allowlist: set[str],
+    kw_day: pd.DataFrame,
+    segment_row: pd.Series,
+    *,
+    allowlist_order: list[str] | None = None,
+) -> list[str]:
+    """
+    Full enrollment allowlist as a keyword list for one segment.
+
+    Uses panel spelling when a keyword appears in the segment's region / match types;
+    otherwise the normalized allowlist text.
+    """
+    if not allowlist:
+        return []
+
+    region = segment_row.get("region")
+    match_types = str(segment_row.get("match_types", ""))
+    allowed_mt = {
+        m.strip().title()
+        for m in match_types.replace(";", " ").split()
+        if m.strip()
+    }
+
+    canonical: dict[str, str] = {}
+    if not kw_day.empty and pd.notna(region):
+        sub = kw_day[kw_day["region"] == region]
+        if allowed_mt and "match_type" in sub.columns:
+            sub = sub[sub["match_type"].isin(allowed_mt)]
+        if not sub.empty and "keyword" in sub.columns:
+            for kw in sub["keyword"].dropna().astype(str):
+                key = normalize_keyword(kw)
+                if key in allowlist:
+                    canonical[key] = kw.strip()
+
+    keys_in_order: list[str] = []
+    seen_keys: set[str] = set()
+    for key in allowlist_order or sorted(allowlist):
+        if key in allowlist and key not in seen_keys:
+            seen_keys.add(key)
+            keys_in_order.append(key)
+    for key in sorted(allowlist):
+        if key not in seen_keys:
+            seen_keys.add(key)
+            keys_in_order.append(key)
+
+    for key in keys_in_order:
+        canonical.setdefault(key, key)
+    return [canonical[k] for k in keys_in_order]
 
 
 def filter_keyword_list(keywords: list[str], allowlist: set[str]) -> list[str]:

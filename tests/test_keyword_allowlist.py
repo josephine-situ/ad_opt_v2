@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from utils.keyword_allowlist import (
+    enrollment_allowlist_keywords,
     filter_keyword_list,
     filter_keyword_sets_dataframe,
     load_enrollment_keyword_allowlist,
@@ -48,6 +49,30 @@ def test_filter_keyword_sets_dataframe_drops_empty_sets():
     assert list(filtered["keyword_set_id"]) == ["ks_a"]
     assert "systems thinking course" in filtered.iloc[0]["broad_keywords"]
     assert "other" not in filtered.iloc[0]["broad_keywords"]
+
+
+def test_enrollment_allowlist_keywords_uses_panel_spelling():
+    allowlist = {"mit systems thinking", "systems thinking course"}
+    kw_day = pd.DataFrame(
+        [
+            {"region": "B", "match_type": "Broad", "keyword": "MIT systems thinking"},
+            {"region": "USA", "match_type": "Broad", "keyword": "other"},
+        ]
+    )
+    row = pd.Series({"region": "B", "match_types": "Broad"})
+    out = enrollment_allowlist_keywords(allowlist, kw_day, row)
+    assert out == ["MIT systems thinking", "systems thinking course"]
+
+
+def test_enrollment_allowlist_keywords_respects_priority_order():
+    allowlist = {"mit systems thinking", "systems thinking course", "other kw"}
+    kw_day = pd.DataFrame()
+    row = pd.Series({"region": "B", "match_types": "Broad"})
+    order = ["systems thinking course", "mit systems thinking", "other kw"]
+    out = enrollment_allowlist_keywords(
+        allowlist, kw_day, row, allowlist_order=order
+    )
+    assert out == ["systems thinking course", "mit systems thinking", "other kw"]
 
 
 def test_load_enrollment_keyword_allowlist_sys_think():
