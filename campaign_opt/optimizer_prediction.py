@@ -25,15 +25,17 @@ def apply_observed_budget_floor(
 
     ``budget_atol`` (default 1 cent) aligns with Gurobi feasibility tolerance so
     ``13.529999999999998`` is not treated as below a min of ``13.53``.
+    An additional 1e-6 absorbs Gurobi's FeasibilityTol on the budget variable.
     """
     out = np.asarray(levels, dtype=float).copy()
     budgets = np.asarray(budgets, dtype=float)
     segments = np.asarray(segments, dtype=str)
     atol = max(float(budget_atol), 0.0)
+    _GUROBI_FEAS_TOL = 1e-6
     for i in range(len(out)):
         seg = str(segments[i])
         bmin = float(min_by_segment.get(seg, min_by_segment.get(str(seg), 0.0)))
-        if budgets[i] + atol < bmin:
+        if budgets[i] + atol + _GUROBI_FEAS_TOL < bmin:
             out[i] = 0.0
     return np.clip(out, 0, None)
 
