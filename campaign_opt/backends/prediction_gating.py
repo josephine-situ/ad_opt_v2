@@ -118,6 +118,7 @@ def gate_level_expr(
     level_ub: float,
     budget_big_m: float,
     name_prefix: str,
+    budget_atol: float = 0.01,
 ) -> Any:
     """
     McCormick envelope: gated level is 0 when ``x_var < budget_min``, else ``raw_expr``.
@@ -128,9 +129,14 @@ def gate_level_expr(
         return raw_expr
     ub = max(float(level_ub), 1e-6)
     m_b = max(float(budget_big_m), 1.0)
+    atol = max(float(budget_atol), 0.0)
     active = model.addVar(vtype=GRB.BINARY, name=f"{name_prefix}_active")
     gated = model.addVar(lb=0.0, ub=ub, name=f"{name_prefix}_gated")
-    model.addConstr(x_var >= float(budget_min) - m_b * (1 - active), name=f"{name_prefix}_act")
+    # Match sklearn floor: active when budget >= budget_min - atol (cent tolerance).
+    model.addConstr(
+        x_var >= float(budget_min) - atol - m_b * (1 - active),
+        name=f"{name_prefix}_act",
+    )
     model.addConstr(gated <= ub * active, name=f"{name_prefix}_g_ub1")
     model.addConstr(gated <= raw_expr, name=f"{name_prefix}_g_ub2")
     model.addConstr(gated >= raw_expr - ub * (1 - active), name=f"{name_prefix}_g_lb")
@@ -184,5 +190,6 @@ def gate_pred_vars_if_enabled(
             level_ub=level_ub,
             budget_big_m=m_b,
             name_prefix=f"gate_{safe}",
+            budget_atol=float(config.evaluation.budget_floor_atol),
         )
     return mins

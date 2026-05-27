@@ -64,7 +64,8 @@
     "weight_by_cv_rmse": true,
     "objective": "levels",
     "apply_observed_budget_floor": true,
-    "milp_external_level_tol": 0.01
+    "milp_external_level_tol": 0.01,
+    "budget_floor_atol": 0.01
   },
   "debug_write_lp": false,
   "piecewise_budget_knots": 8

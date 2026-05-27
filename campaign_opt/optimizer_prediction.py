@@ -17,15 +17,23 @@ def apply_observed_budget_floor(
     budgets: np.ndarray,
     segments: np.ndarray,
     min_by_segment: dict[str, float],
+    *,
+    budget_atol: float = 0.01,
 ) -> np.ndarray:
-    """Zero levels where ``budget < min_by_segment[segment]``."""
+    """
+    Zero levels when ``budget + budget_atol < min_by_segment[segment]``.
+
+    ``budget_atol`` (default 1 cent) aligns with Gurobi feasibility tolerance so
+    ``13.529999999999998`` is not treated as below a min of ``13.53``.
+    """
     out = np.asarray(levels, dtype=float).copy()
     budgets = np.asarray(budgets, dtype=float)
     segments = np.asarray(segments, dtype=str)
+    atol = max(float(budget_atol), 0.0)
     for i in range(len(out)):
         seg = str(segments[i])
         bmin = float(min_by_segment.get(seg, min_by_segment.get(str(seg), 0.0)))
-        if budgets[i] < bmin:
+        if budgets[i] + atol < bmin:
             out[i] = 0.0
     return np.clip(out, 0, None)
 
@@ -63,6 +71,7 @@ def predict_levels_optimizer(
         rows["daily_budget"].to_numpy(),
         rows["segment"].to_numpy(),
         mins,
+        budget_atol=float(config.evaluation.budget_floor_atol),
     )
 
 

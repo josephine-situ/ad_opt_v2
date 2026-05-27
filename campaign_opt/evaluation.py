@@ -671,17 +671,20 @@ def add_optimizer_plan_columns(
 
     raw_dec = model.predict_levels(decision_rows)
     raw_zero = model.predict_levels(baseline_rows)
+    floor_atol = float(config.evaluation.budget_floor_atol)
     pred_dec = apply_observed_budget_floor(
         raw_dec,
         plan_dec["daily_budget"].to_numpy(),
         plan_dec["segment"].to_numpy(),
         min_budget_by_seg,
+        budget_atol=floor_atol,
     )
     pred_zero = apply_observed_budget_floor(
         raw_zero,
         baseline_rows["daily_budget"].to_numpy(),
         baseline_rows["segment"].to_numpy(),
         min_budget_by_seg,
+        budget_atol=floor_atol,
     )
     ext = pd.DataFrame(
         {

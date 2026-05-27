@@ -43,6 +43,18 @@ def test_apply_observed_budget_floor_numpy():
     assert out[2] == 0.0
 
 
+def test_budget_floor_atol_treats_gurobi_cent_slop_as_active():
+    """13.529999999999998 vs min 13.53: strict < floors; atol=0.01 does not."""
+    levels = np.array([0.72])
+    budgets = np.array([13.529999999999998])
+    segments = np.array(["A / Broad"])
+    mins = {"A / Broad": 13.53}
+    strict = apply_observed_budget_floor(levels, budgets, segments, mins, budget_atol=0.0)
+    assert strict[0] == 0.0
+    loose = apply_observed_budget_floor(levels, budgets, segments, mins, budget_atol=0.01)
+    assert loose[0] == pytest.approx(0.72)
+
+
 def test_gate_level_expr_at_boundary():
     for budget, expect in ((25.0, 0.0), (35.0, 10.0 + 2.0 * 35.0)):
         model = gp.Model("gate_test")
