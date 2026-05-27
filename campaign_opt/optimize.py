@@ -15,8 +15,10 @@ from campaign_opt.backends.tree_embed import (
 )
 from campaign_opt.coefficients import export_linear_solver_coeffs
 from campaign_opt.modeling import is_ensemble_candidate, refit_optimizer_model
+from campaign_opt.evaluation import add_optimizer_plan_columns
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.train_specs import get_train_spec
+from utils.campaign_features import build_keyword_set_feature_table
 
 _LINEAR_BACKENDS = frozenset({"linear", "piecewise_linear"})
 
@@ -120,8 +122,28 @@ def run_optimizer(
 
     plan_date = pd.Timestamp(planning_date) if planning_date is not None else pd.Timestamp(dates[0])
 
+    def _finalize_plan(plan: pd.DataFrame, embed_path: Path | None = None) -> pd.DataFrame:
+        if not config.evaluation.apply_observed_budget_floor:
+            return plan
+        model_path = embed_path
+        if model_path is None and backend in _LINEAR_BACKENDS:
+            winner = require_optimizer_winner(config)
+            candidate = output_dir / f"optimizer_{winner}.joblib"
+            if candidate.exists():
+                model_path = candidate
+        if model_path is None or not Path(model_path).exists():
+            return plan
+        pipeline = joblib.load(model_path)
+        set_features = build_keyword_set_feature_table(config.course)
+        plan = add_optimizer_plan_columns(
+            plan, panel, pipeline, config, plan_date, set_features
+        )
+        if write_outputs:
+            plan.to_csv(output_dir / "campaign_plan.csv", index=False)
+        return plan
+
     if backend == "linear":
-        return solve_linear_campaign_milp(
+        plan = solve_linear_campaign_milp(
             config=config,
             coeffs=coeffs,
             candidates=candidates,
@@ -131,8 +153,9 @@ def run_optimizer(
             write_outputs=write_outputs,
             **milp_kwargs,
         )
+        return _finalize_plan(plan)
     if backend == "piecewise_linear":
-        return solve_piecewise_campaign_milp(
+        plan = solve_piecewise_campaign_milp(
             config=config,
             coeffs=coeffs,
             candidates=candidates,
@@ -142,11 +165,12 @@ def run_optimizer(
             write_outputs=write_outputs,
             **milp_kwargs,
         )
+        return _finalize_plan(plan)
     if backend == "tree_embed":
         embed_path = _fit_and_save_embed_model(
             config, manifest, train, output_dir, tune=tune_optimizer
         )
-        return solve_tree_embed_campaign_milp(
+        plan = solve_tree_embed_campaign_milp(
             config,
             embed_path,
             train,
@@ -159,11 +183,12 @@ def run_optimizer(
             fixed_keyword_sets=fixed_keyword_sets,
             fixed_budgets=fixed_budgets,
         )
+        return _finalize_plan(plan, embed_path)
     if backend == "ridge_xgb_embed":
         embed_path = _fit_and_save_embed_model(
             config, manifest, train, output_dir, tune=tune_optimizer
         )
-        return solve_ridge_xgb_embed_campaign_milp(
+        plan = solve_ridge_xgb_embed_campaign_milp(
             config,
             embed_path,
             train,
@@ -176,4 +201,5 @@ def run_optimizer(
             fixed_keyword_sets=fixed_keyword_sets,
             fixed_budgets=fixed_budgets,
         )
+        return _finalize_plan(plan, embed_path)
     raise ValueError(f"Unknown backend: {backend}")

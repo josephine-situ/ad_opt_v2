@@ -14,6 +14,8 @@ from campaign_opt.evaluation import (
     build_segment_decision_rows,
     fit_ensemble,
 )
+from campaign_opt.decisions import observed_min_daily_budget
+from campaign_opt.optimizer_prediction import predict_levels_optimizer
 from campaign_opt.schema import CampaignOptConfig, EvaluationConfig, ModelPolicy, ValidationConfig
 
 
@@ -80,3 +82,37 @@ def test_incremental_zero_budget_baseline(tiny_config, synthetic_course, monkeyp
     lift = ensemble.predict_incremental(dec_rows, baseline_rows)
     assert np.allclose(lift, np.clip(raw, 0, None))
     assert len(lift) == len(segments)
+
+
+def test_gated_baseline_zero_when_below_observed_min(tiny_config, synthetic_course, monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(root)
+    from tests.conftest import copy_synthetic_to_repo
+
+    copy_synthetic_to_repo(synthetic_course, root)
+    from campaign_opt.features import prepare_modeling_data
+
+    tiny_config.evaluation.apply_observed_budget_floor = True
+    df = prepare_modeling_data(tiny_config)
+    ensemble = fit_ensemble(df, tiny_config)
+    panel = df.copy()
+    seg = str(df["segment"].iloc[0])
+    bmin = observed_min_daily_budget(panel, [seg])[seg]
+    if bmin <= 0:
+        pytest.skip("synthetic panel has no positive observed min for gating test")
+
+    set_feats = pd.DataFrame(
+        {"keyword_set_id": df["keyword_set_id"].unique(), "embed_cohesion": 0.5}
+    )
+    planning_date = pd.Timestamp(df["date"].max())
+    kid = df.groupby("segment")["keyword_set_id"].first().loc[seg]
+    dec = pd.DataFrame(
+        {"segment": [seg], "daily_budget": [0.0], "keyword_set_id": [kid]}
+    )
+    rows = build_segment_decision_rows(
+        dec, planning_date, set_feats, tiny_config.course, ensemble.feature_cols
+    )
+    raw = ensemble.predict_levels(rows)
+    gated = predict_levels_optimizer(ensemble, rows, panel, tiny_config)
+    assert float(raw[0]) >= 0
+    assert float(gated[0]) == 0.0

@@ -10,6 +10,26 @@ from typing import Any
 import pandas as pd
 
 
+def observed_min_daily_budget(
+    panel: pd.DataFrame,
+    segments: list[str],
+) -> dict[str, float]:
+    """
+    Smallest historical ``daily_budget`` per segment (configured cap).
+
+    Used to zero optimizer predictions below observed spend levels. Empty
+    segment history returns ``0.0`` (no floor).
+    """
+    mins: dict[str, float] = {}
+    for seg in segments:
+        sub = panel[panel["segment"] == seg]["daily_budget"].dropna()
+        if sub.empty:
+            mins[seg] = 0.0
+        else:
+            mins[seg] = float(sub.min())
+    return mins
+
+
 def historical_budget_bounds(
     panel: pd.DataFrame,
     segments: list[str],

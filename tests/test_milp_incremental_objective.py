@@ -79,3 +79,26 @@ def test_linear_milp_objective_is_incremental_lift(tmp_path: Path):
     assert lift_total == pytest.approx(status["obj_val"], rel=1e-5)
     assert level_total > lift_total + 50.0
     assert lift_total == pytest.approx(101.0, rel=1e-3)
+
+
+def test_linear_milp_objective_is_levels(tmp_path: Path):
+    config, candidates, panel, coeffs = _two_segment_linear_problem()
+    config.evaluation.objective = "levels"
+    predictor = make_linear_segment_predictor(coeffs)
+    plan = solve_campaign_milp(
+        config,
+        candidates,
+        panel,
+        predictor,
+        total_budget=20.0,
+        output_dir=tmp_path,
+        model_name="campaign_linear_levels",
+        time_limit=30,
+        write_outputs=True,
+        solver_coeffs=coeffs,
+    )
+    status = json.loads((tmp_path / "solver_status.json").read_text(encoding="utf-8"))
+    level_total = float(pd.to_numeric(plan["milp_pred"], errors="coerce").sum())
+    lift_total = float(pd.to_numeric(plan["pred_over_base"], errors="coerce").sum())
+    assert level_total == pytest.approx(status["obj_val"], rel=1e-5)
+    assert level_total > lift_total

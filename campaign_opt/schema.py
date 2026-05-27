@@ -29,6 +29,9 @@ class EvaluationConfig:
     use_ensemble: bool = True  # if True, multi-member ensemble; if False, optimizer_winner — both fit on full panel
     baseline_budget: float = 0.0
     weight_by_cv_rmse: bool = True  # else equal-weight average
+    objective: str = "incremental"  # "levels" | "incremental" — MILP maximizes total level or lift
+    apply_observed_budget_floor: bool = False  # zero preds when budget < min observed cap (optimizer paths only)
+    max_level_ub: float | None = None  # optional cap on McCormick level_ub per segment
 
 
 @dataclass

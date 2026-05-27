@@ -134,6 +134,7 @@ def run_daily_backtest(
             config,
             opt_date,
             set_features,
+            scoring_panel=train,
         )
         comp.to_csv(day_dir / "plan_vs_actual.csv", index=False)
         day_row.update(plan_vs_actual_row_metrics(comp, config.target))

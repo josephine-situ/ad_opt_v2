@@ -61,7 +61,9 @@
   "evaluation": {
     "use_ensemble": true,
     "baseline_budget": 0,
-    "weight_by_cv_rmse": true
+    "weight_by_cv_rmse": true,
+    "objective": "levels",
+    "apply_observed_budget_floor": true
   },
   "debug_write_lp": false,
   "piecewise_budget_knots": 8

@@ -12,6 +12,10 @@ import numpy as np
 import pandas as pd
 from gurobipy import GRB
 
+from campaign_opt.backends.prediction_gating import (
+    apply_gated_baseline_levels,
+    gate_pred_vars_if_enabled,
+)
 from campaign_opt.decisions import (
     build_segment_list,
     candidates_by_segment,
@@ -343,6 +347,15 @@ def _baseline_budget(config: CampaignOptConfig) -> float:
     return float(config.evaluation.baseline_budget)
 
 
+def _milp_objective_mode(config: CampaignOptConfig) -> str:
+    mode = str(config.evaluation.objective or "incremental").strip().lower()
+    if mode not in ("levels", "incremental"):
+        raise ValueError(
+            f"evaluation.objective must be 'levels' or 'incremental', got {config.evaluation.objective!r}"
+        )
+    return mode
+
+
 def _piecewise_budget_level_at(pw_seg: dict[str, list[float]], budget: float) -> float:
     weights = _sos2_weights_at_x(pw_seg["knots"], budget)
     vals = pw_seg["values"]
@@ -462,9 +475,12 @@ def solve_campaign_milp(
     Each backend only supplies how predicted target is built per segment
     (linear budget slope, piecewise budget curve, embedded trees, etc.).
 
-    The objective maximizes incremental lift
-    ``sum_s f_s(plan) - sum_{s,k} y_sk * f_k(baseline_budget)`` (same keyword set at
-  ``evaluation.baseline_budget``), minus an optional budget tie-break.
+    The objective is ``evaluation.objective``:
+    - ``levels``: maximize ``sum_s f_s(plan)`` (total predicted target)
+    - ``incremental``: maximize lift ``sum_s f_s(plan) - sum_{s,k} y_sk * f_k(baseline_budget)``
+
+    When ``apply_observed_budget_floor`` is true, each ``f_s`` is zero below the
+    segment's minimum observed ``daily_budget``. Minus an optional budget tie-break.
 
     Pass ``model``, ``x_vars``, and ``y_vars`` when a backend adds constraints
     (e.g. exact tree embedding) before the objective is set.
@@ -523,36 +539,69 @@ def solve_campaign_milp(
         for seg in segments:
             pred_vars[seg] = segment_predictor(seg, x_vars[seg], y_vars, k_map)
 
+    n_planning_days = len(segment_predictors_by_date) if segment_predictors_by_date else 1
+    min_budgets = gate_pred_vars_if_enabled(
+        model,
+        config,
+        pred_vars,
+        x_vars,
+        segments,
+        k_map,
+        bounds,
+        panel,
+        solver_coeffs=solver_coeffs,
+        n_planning_days=n_planning_days,
+        calendar_offsets=planning_calendar_offsets,
+    )
+
     model.addConstr(gp.quicksum(x_vars[s] for s in segments) <= total_budget, name="total_budget")
     _add_regional_order_constraints(model, config, segments, x_vars)
 
-    n_planning_days = len(segment_predictors_by_date) if segment_predictors_by_date else 1
     baseline_budget = _baseline_budget(config)
-    if baseline_level_by_key is None:
+    objective_mode = _milp_objective_mode(config)
+    if baseline_level_by_key is None and (
+        objective_mode == "incremental" or solver_coeffs is not None
+    ):
         if solver_coeffs is None:
+            if objective_mode == "incremental":
+                raise ValueError(
+                    "incremental MILP objective requires baseline_level_by_key or solver_coeffs"
+                )
+        else:
+            baseline_level_by_key = baseline_levels_from_coeffs(
+                solver_coeffs,
+                segments,
+                k_map,
+                baseline_budget,
+                n_planning_days=n_planning_days,
+                calendar_offsets=planning_calendar_offsets,
+            )
+
+    if baseline_level_by_key is not None and config.evaluation.apply_observed_budget_floor:
+        baseline_level_by_key = apply_gated_baseline_levels(
+            baseline_level_by_key, baseline_budget, min_budgets
+        )
+
+    level_sum = gp.quicksum(pred_vars[s] for s in segments)
+    if objective_mode == "levels":
+        objective_expr = level_sum
+    else:
+        if baseline_level_by_key is None:
             raise ValueError(
                 "incremental MILP objective requires baseline_level_by_key or solver_coeffs"
             )
-        baseline_level_by_key = baseline_levels_from_coeffs(
-            solver_coeffs,
-            segments,
-            k_map,
-            baseline_budget,
-            n_planning_days=n_planning_days,
-            calendar_offsets=planning_calendar_offsets,
+        objective_expr = _incremental_objective_expr(
+            pred_vars, y_vars, segments, k_map, baseline_level_by_key
         )
 
-    pred_lift = _incremental_objective_expr(
-        pred_vars, y_vars, segments, k_map, baseline_level_by_key
-    )
     penalty = _budget_tiebreak_penalty(config)
     if penalty > 0:
         model.setObjective(
-            pred_lift - penalty * gp.quicksum(x_vars[s] for s in segments),
+            objective_expr - penalty * gp.quicksum(x_vars[s] for s in segments),
             GRB.MAXIMIZE,
         )
     else:
-        model.setObjective(pred_lift, GRB.MAXIMIZE)
+        model.setObjective(objective_expr, GRB.MAXIMIZE)
     model.optimize()
 
     if model.Status not in (GRB.OPTIMAL, GRB.SUBOPTIMAL, GRB.TIME_LIMIT):

@@ -70,7 +70,7 @@ Key fields:
 - `constraints.regional_order` — e.g. USA ≥ A ≥ B spend
 - `constraints.budget_tiebreak_penalty` — optional (default `1e-8`); subtract `penalty × Σ daily_budget` from the MILP objective so equal predicted-target solutions prefer lower total spend
 - `model_policy.validation` — `time_series_cv` with `cv_folds`, `min_train_fraction` (e.g. `0.5` = each fold trains on at least half of train-panel days), `min_val_days`, or `time_holdout` for last-N-day reporting only
-- `evaluation` — `use_ensemble`, `baseline_budget`, `weight_by_cv_rmse` (plan vs actual scoring; same `fit_evaluation_model` in backtest and production)
+- `evaluation` — `use_ensemble`, `baseline_budget`, `weight_by_cv_rmse`, `objective` (`levels` or `incremental`), `apply_observed_budget_floor` (zero optimizer preds when budget &lt; min historical cap; does not change holdout R²), optional `max_level_ub` (McCormick cap for tree backends)
 
 Copy or edit this file per course/experiment under `opt_results/<course>/campaign/<exp_name>/`.
 
@@ -347,7 +347,13 @@ For each segment `s`:
 
 Backends differ in how per-segment predicted `target` is expressed in Gurobi (`linear`, `piecewise_linear`, exact `tree_embed` via `[backends/tree_embedding.py](backends/tree_embedding.py)`).
 
-**Objective:** maximize `Σ_s [f_s(plan) − f_s(baseline)]` (incremental lift at `evaluation.baseline_budget`, same keyword set) minus a tiny budget tie-break (`constraints.budget_tiebreak_penalty`, default `1e-8`, times summed daily budgets). The penalty is small enough not to change the primary optimum when predicted lift differs, but it prefers lower total spend when multiple plans tie on predicted lift.
+**Objective:** controlled by `evaluation.objective`:
+- `levels` (default for `conv_scaled_clicks` configs): maximize `Σ_s f_s(plan)` minus budget tie-break.
+- `incremental`: maximize `Σ_s [f_s(plan) − f_s(baseline)]` at `evaluation.baseline_budget` (same keyword set).
+
+When `evaluation.apply_observed_budget_floor` is true, each `f_s` is gated to **0** below the segment's minimum observed `daily_budget` in the training panel (McCormick constraints in `milp_core` only; tree leaf embedding unchanged). Plan-vs-actual and `external_model_pred` use the same numpy floor via `optimizer_prediction.py`. Holdout model fit / R² stay on ungated sklearn predictions.
+
+Subtract `constraints.budget_tiebreak_penalty` (default `1e-8`) × Σ daily budgets to break ties toward lower spend.
 
 For `ensemble_ridge_xgb`, each candidate baseline `f_k(baseline)` is `EnsembleModel.predict_levels` on the same `build_segment_decision_rows` features used in backtest scoring (not a separate analytic formula).
 
@@ -368,7 +374,7 @@ Under `opt_results/<course>/campaign/<exp_name>/`:
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `milp_pred`           | Level prediction from the solver embedding at the optimum: `f(plan)` (Gurobi value of `pred_vars[segment]`; what the MILP maximizes, up to the budget tie-break)                       |
 | `pred_over_base`      | Incremental lift `f(plan) - f(0)` in solver space; `f(0)` uses the **same chosen keyword set** with `daily_budget = 0`                                                                   |
-| `external_model_pred` | Tree-embed only: independent sklearn `pipeline.predict` level `f(plan)` on the solved plan (sanity check vs `milp_pred`; warns if `|milp_pred - external_model_pred| > 0.01`)           |
+| `external_model_pred` | After solve: gated sklearn level `f(plan)` when `apply_observed_budget_floor` (else tree-embed raw check); warns if `|milp_pred - external_model_pred| > 0.05` |
 | `n_planning_days`     | Number of calendar days whose predictions are summed in the MILP objective (1 for single-day optimize; 7 for weekly two-stage budget solve)                                              |
 
 `milp_pred` and `external_model_pred` are **level** predictions. Use `pred_over_base` for incremental lift aligned with backtest `pred_lift` (same keyword set, zero budget baseline). Linear/piecewise runs leave `external_model_pred` empty.

@@ -578,6 +578,104 @@ def build_baseline_rows_for_decisions(
     return build_segment_decision_rows(base_dec, planning_date, set_features, course, feature_cols)
 
 
+def _predict_levels_for_scoring(
+    model: EnsembleModel | Any,
+    rows: pd.DataFrame,
+    panel: pd.DataFrame,
+    config: CampaignOptConfig,
+) -> np.ndarray:
+    if config.evaluation.apply_observed_budget_floor:
+        from campaign_opt.optimizer_prediction import predict_levels_optimizer
+
+        return predict_levels_optimizer(model, rows, panel, config)
+    return model.predict_levels(rows)
+
+
+def _predict_incremental_raw_for_scoring(
+    model: EnsembleModel | Any,
+    decision_rows: pd.DataFrame,
+    baseline_rows: pd.DataFrame,
+    panel: pd.DataFrame,
+    config: CampaignOptConfig,
+) -> np.ndarray:
+    if config.evaluation.apply_observed_budget_floor:
+        from campaign_opt.optimizer_prediction import predict_incremental_optimizer
+
+        return predict_incremental_optimizer(model, decision_rows, baseline_rows, panel, config)
+    return model.predict_incremental_raw(decision_rows, baseline_rows)
+
+
+def add_optimizer_plan_columns(
+    plan: pd.DataFrame,
+    panel: pd.DataFrame,
+    model: Any,
+    config: CampaignOptConfig,
+    planning_date: pd.Timestamp,
+    set_features: pd.DataFrame,
+    *,
+    level_tol: float = 0.05,
+) -> pd.DataFrame:
+    """
+    Attach gated ``external_model_pred`` / ``pred_over_base`` and warn on MILP mismatch.
+
+    Called after MILP solve (e.g. from ``run_optimizer``); does not modify tree embedding.
+    """
+    if not config.evaluation.apply_observed_budget_floor:
+        return plan
+    if plan.empty:
+        return plan
+
+    feature_cols = (
+        model.feature_cols if isinstance(model, EnsembleModel) else get_context_feature_columns(config.context_features)
+    )
+    target = config.target
+    plan_dec = plan[["segment", "daily_budget", "keyword_set_id"]].copy()
+    plan_dec["segment"] = plan_dec["segment"].astype(str)
+    plan_dec["keyword_set_id"] = plan_dec["keyword_set_id"].astype(str)
+    plan_dec["daily_budget"] = pd.to_numeric(plan_dec["daily_budget"], errors="coerce")
+
+    decision_rows = build_segment_decision_rows(
+        plan_dec, planning_date, set_features, config.course, feature_cols
+    )
+    baseline_rows = build_baseline_rows_for_decisions(
+        plan_dec,
+        planning_date,
+        set_features,
+        config.course,
+        feature_cols,
+        float(config.evaluation.baseline_budget),
+    )
+    if target not in decision_rows.columns:
+        decision_rows[target] = 0.0
+    if target not in baseline_rows.columns:
+        baseline_rows[target] = 0.0
+
+    pred_dec = _predict_levels_for_scoring(model, decision_rows, panel, config)
+    pred_zero = _predict_levels_for_scoring(model, baseline_rows, panel, config)
+    ext = pd.DataFrame(
+        {
+            "segment": plan_dec["segment"].tolist(),
+            "external_model_pred": pred_dec,
+            "pred_over_base": pred_dec - pred_zero,
+        }
+    )
+    out = plan.drop(columns=["external_model_pred", "pred_over_base"], errors="ignore")
+    out = out.merge(ext, on="segment", how="left")
+
+    if "milp_pred" in out.columns:
+        milp = pd.to_numeric(out["milp_pred"], errors="coerce")
+        ext_lev = pd.to_numeric(out["external_model_pred"], errors="coerce")
+        mask = milp.notna() & ext_lev.notna()
+        if mask.any():
+            max_diff = float((milp.loc[mask] - ext_lev.loc[mask]).abs().max())
+            if max_diff > level_tol:
+                print(
+                    f"[Warn] MILP vs gated external model prediction mismatch: "
+                    f"max|milp_pred - external_model_pred| = {max_diff:.6g} > {level_tol}"
+                )
+    return out
+
+
 def compare_plan_and_actual(
     ensemble: EnsembleModel,
     plan: pd.DataFrame,
@@ -588,6 +686,7 @@ def compare_plan_and_actual(
     set_features: pd.DataFrame,
     *,
     market_ensemble: EnsembleModel | None = None,
+    scoring_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Score optimizer plan vs historical market campaigns on this day.
@@ -604,6 +703,7 @@ def compare_plan_and_actual(
     reference. Market rows use ``row_kind='market'``.
     """
     target = config.target
+    panel = scoring_panel if scoring_panel is not None else train
     market_model = market_ensemble or ensemble
     market_dec = actual_decisions_by_segment(day_df)
     if market_dec.empty:
@@ -628,10 +728,12 @@ def compare_plan_and_actual(
 
     out = plan_dec.copy()
     out["row_kind"] = "plan"
-    out["pred_lift_raw"] = ensemble.predict_incremental_raw(plan_rows, plan_baseline_rows)
+    out["pred_lift_raw"] = _predict_incremental_raw_for_scoring(
+        ensemble, plan_rows, plan_baseline_rows, panel, config
+    )
     out["pred_lift"] = np.clip(out["pred_lift_raw"], 0, None)
-    out["f_plan_level"] = ensemble.predict_levels(plan_rows)
-    out["f_zero"] = ensemble.predict_levels(plan_baseline_rows)
+    out["f_plan_level"] = _predict_levels_for_scoring(ensemble, plan_rows, panel, config)
+    out["f_zero"] = _predict_levels_for_scoring(ensemble, plan_baseline_rows, panel, config)
     out["actual_model_lift"] = np.nan
     out["actual_model_lift_raw"] = np.nan
 
@@ -670,12 +772,16 @@ def compare_plan_and_actual(
     market_scored["row_kind"] = "market"
     market_scored["pred_lift"] = np.nan
     market_scored["pred_lift_raw"] = np.nan
-    market_scored["actual_model_lift_raw"] = market_model.predict_incremental_raw(
-        market_rows, market_baseline_rows
+    market_scored["actual_model_lift_raw"] = _predict_incremental_raw_for_scoring(
+        market_model, market_rows, market_baseline_rows, panel, config
     )
     market_scored["actual_model_lift"] = np.clip(market_scored["actual_model_lift_raw"], 0, None)
-    market_scored["f_plan_level"] = market_model.predict_levels(market_rows)
-    market_scored["f_zero"] = market_model.predict_levels(market_baseline_rows)
+    market_scored["f_plan_level"] = _predict_levels_for_scoring(
+        market_model, market_rows, panel, config
+    )
+    market_scored["f_zero"] = _predict_levels_for_scoring(
+        market_model, market_baseline_rows, panel, config
+    )
     market_scored["campaign_budget"] = market_scored["daily_budget"]
     market_scored["actual_budget"] = market_scored["daily_budget"]
     market_scored["actual_keyword_set_id"] = market_scored["keyword_set_id"]
