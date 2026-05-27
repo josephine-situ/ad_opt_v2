@@ -22,6 +22,33 @@ from campaign_opt.schema import CampaignOptConfig
 from utils.campaign_features import build_keyword_set_feature_table
 
 
+def _load_fixed_keyword_sets(out_dir: Path) -> dict[str, str]:
+    """Load segment → keyword_set_id from a prior stage-1 run."""
+    json_path = out_dir / "fixed_keyword_sets.json"
+    if json_path.is_file():
+        with open(json_path, encoding="utf-8") as f:
+            raw = json.load(f)
+        fixed = {str(k): str(v) for k, v in raw.items() if v}
+        if fixed:
+            return fixed
+
+    plan_path = out_dir / "stage1_keyword_sets" / "keyword_set_plan.csv"
+    if plan_path.is_file():
+        set_plan = pd.read_csv(plan_path)
+        fixed = {
+            str(row["segment"]): str(row["keyword_set_id"])
+            for _, row in set_plan.iterrows()
+            if pd.notna(row.get("keyword_set_id"))
+        }
+        if fixed:
+            return fixed
+
+    raise FileNotFoundError(
+        f"No prior stage-1 keyword sets found under {out_dir}. "
+        "Run without --skip-stage1 first, or provide fixed_keyword_sets.json."
+    )
+
+
 def run_two_stage_backtest(
     config: CampaignOptConfig,
     df: pd.DataFrame,
@@ -33,6 +60,7 @@ def run_two_stage_backtest(
     total_budget: float,
     out_dir: Path,
     use_actual_budget: bool = False,
+    skip_stage1: bool = False,
 ) -> pd.DataFrame:
     """
     Stage 1: Multi-day ridge+xgb MILP over all days in [start, end].
@@ -73,41 +101,51 @@ def run_two_stage_backtest(
     # ─── Stage 1: keyword-set selection over full window ───────────────────
     stage1_dir = out_dir / "stage1_keyword_sets"
     stage1_dir.mkdir(parents=True, exist_ok=True)
-    train0 = train_before_date(df, start)
-    if len(train0) < min_train:
-        raise RuntimeError(
-            f"Insufficient train rows before {start.date()}: {len(train0)} < {min_train}"
-        )
 
-    print(
-        f"  [stage1] Multi-day keyword-set optimize "
-        f"(window {start.date()} → {end.date()}, {len(dates)} days)"
-    )
-    set_plan = run_optimizer(
-        config,
-        opt_manifest,
-        train0,
-        candidates,
-        panel,
-        total_budget=stage1_budget,
-        output_dir=stage1_dir,
-        planning_dates=list(dates),
-        write_outputs=True,
-        tune_optimizer=True,
-    )
-    fixed_keyword_sets = {
-        str(row["segment"]): str(row["keyword_set_id"])
-        for _, row in set_plan.iterrows()
-        if pd.notna(row.get("keyword_set_id"))
-    }
-    if not fixed_keyword_sets:
-        raise RuntimeError("Stage 1 produced no keyword_set_id assignments")
-    with open(out_dir / "fixed_keyword_sets.json", "w", encoding="utf-8") as f:
-        json.dump(fixed_keyword_sets, f, indent=2)
-    set_plan.to_csv(stage1_dir / "keyword_set_plan.csv", index=False)
-    print(
-        f"  [stage1] Done — {len(fixed_keyword_sets)} segments assigned keyword sets"
-    )
+    if skip_stage1:
+        fixed_keyword_sets = _load_fixed_keyword_sets(out_dir)
+        src = out_dir / "fixed_keyword_sets.json"
+        if not src.is_file():
+            src = out_dir / "stage1_keyword_sets" / "keyword_set_plan.csv"
+        print(
+            f"  [stage1] Skipped — reusing {len(fixed_keyword_sets)} keyword sets from {src}"
+        )
+    else:
+        train0 = train_before_date(df, start)
+        if len(train0) < min_train:
+            raise RuntimeError(
+                f"Insufficient train rows before {start.date()}: {len(train0)} < {min_train}"
+            )
+
+        print(
+            f"  [stage1] Multi-day keyword-set optimize "
+            f"(window {start.date()} → {end.date()}, {len(dates)} days)"
+        )
+        set_plan = run_optimizer(
+            config,
+            opt_manifest,
+            train0,
+            candidates,
+            panel,
+            total_budget=stage1_budget,
+            output_dir=stage1_dir,
+            planning_dates=list(dates),
+            write_outputs=True,
+            tune_optimizer=True,
+        )
+        fixed_keyword_sets = {
+            str(row["segment"]): str(row["keyword_set_id"])
+            for _, row in set_plan.iterrows()
+            if pd.notna(row.get("keyword_set_id"))
+        }
+        if not fixed_keyword_sets:
+            raise RuntimeError("Stage 1 produced no keyword_set_id assignments")
+        with open(out_dir / "fixed_keyword_sets.json", "w", encoding="utf-8") as f:
+            json.dump(fixed_keyword_sets, f, indent=2)
+        set_plan.to_csv(stage1_dir / "keyword_set_plan.csv", index=False)
+        print(
+            f"  [stage1] Done — {len(fixed_keyword_sets)} segments assigned keyword sets"
+        )
 
     # ─── Stage 2: daily budget optimization (keyword sets fixed) ───────────
     daily_rows: list[dict[str, Any]] = []

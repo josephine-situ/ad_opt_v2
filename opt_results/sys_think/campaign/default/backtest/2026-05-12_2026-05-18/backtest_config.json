@@ -1,0 +1,14 @@
+{
+  "course": "sys_think",
+  "exp_name": "default",
+  "start_day": "2026-05-12",
+  "end_day": "2026-05-18",
+  "strategy": "two_stage",
+  "budget_cadence": "W-MON",
+  "target": "conv_scaled_clicks",
+  "budget_mode": "fixed",
+  "optimizer_winner": "ensemble_ridge_xgb",
+  "optimizer_backend": "auto",
+  "skip_stage1": true,
+  "total_budget": 412.7
+}

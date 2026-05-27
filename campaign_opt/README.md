@@ -151,6 +151,7 @@ Produces set-level GKP aggregates and `data/<course>/processed/segment-keyword-c
 - **Historical** candidates: every `keyword_set_id` observed in that segment.
 - `**synthetic_top_conv**`: union of top `all_conv` and conversion-efficiency keywords from `kw-day-panel.csv` (positive `all_conv` only, allowlist-restricted when present). If fewer than `top_n` converters exist, pads with the next highest-priority enrollment allowlist keywords (by enrollment count in the GKP file, else sheet order). Match-type columns use dominant `all_conv` per keyword. Semantic/dispersion/composite pools also use this pool.
 - `**synthetic_allowlist**`: all keywords from `*Keywords*Enrollments*.xlsx` (one set per segment; match types assigned from the panel when possible). Only emitted when that file exists.
+- Multiple `top_n` caps: `--top-n-values 10,20,40` adds `synthetic_top_conv_n10`, `_n20`, `_n40`, `synthetic_allowlist_n10`, etc. (and matching semantic/dispersion/composite variants) per segment. Allowlist sets use the first N keywords by enrollment priority from the GKP file.
 - `**synthetic_semantic**`: top keywords in the performance pool ranked by per-keyword course-anchor similarity (`embed_course_sim_mean` signal from EDA), sized to the segment’s median historical keyword count (override with `--set-size`).
 - `**synthetic_dispersion**`: greedy subset maximizing `embed_dispersion` (spread around the set centroid).
 - `**synthetic_composite**`: greedy subset maximizing `z(embed_course_sim_mean) + z(embed_dispersion)` within the pool (Model C-style).

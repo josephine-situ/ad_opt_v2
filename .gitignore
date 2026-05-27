@@ -8,6 +8,14 @@ google-ads*.yaml
 google-ads*.json
 logs/
 .vscode/
+
+# Local scratch / validation (repo root and opt_results)
+._test_tmp_backtest/
+_diag_embed/
+_milp_incr_tmp/
+_ridge_xgb_val_tmp/
+backtest_verify.log
+opt_results/**/_assert_check/
 TODO.md
 
 # Regenerated experiment outputs (keep campaign_config.json and backtest/)

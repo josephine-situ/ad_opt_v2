@@ -593,6 +593,7 @@ def _diagnose_milp_vs_sklearn_at_solved_budgets(
     config: CampaignOptConfig,
     planning_date: pd.Timestamp,
     set_features: pd.DataFrame,
+    panel: pd.DataFrame,
     *,
     w_ridge: float,
     w_xgb: float,
@@ -626,6 +627,19 @@ def _diagnose_milp_vs_sklearn_at_solved_budgets(
         )[0])
 
         blend_embed = w_ridge * ridge_embed + w_xgb * sk_xgb_embed
+        from campaign_opt.decisions import observed_min_daily_budget
+        from campaign_opt.optimizer_prediction import apply_observed_budget_floor
+
+        mins = observed_min_daily_budget(panel, [seg])
+        floor_blend = float(
+            apply_observed_budget_floor(
+                np.array([blend_embed]),
+                np.array([budget]),
+                np.array([seg]),
+                mins,
+                budget_atol=float(config.evaluation.budget_floor_atol),
+            )[0]
+        )
 
         # Validation-path: ensemble prediction at solved budget
         dec = pd.DataFrame([{"segment": seg, "keyword_set_id": kid, "daily_budget": budget}])
@@ -644,15 +658,16 @@ def _diagnose_milp_vs_sklearn_at_solved_budgets(
         embed_vs_val = abs(blend_embed - ensemble_pred)
         xgb_diff = abs(sk_xgb_embed - sk_xgb_val)
         ridge_diff = abs(ridge_embed - ridge_val)
-        milp_vs_embed = abs(milp_pred - blend_embed)
+        milp_vs_floor = abs(milp_pred - floor_blend)
 
-        if embed_vs_val > 0.01 or milp_vs_embed > 0.01:
+        if embed_vs_val > 0.01 or milp_vs_floor > 0.01:
             print(
                 f"[Diag] {seg} kid={kid} budget={budget:.2f}\n"
-                f"  milp_pred={milp_pred:.6f}  blend_embed={blend_embed:.6f}  ensemble_val={ensemble_pred:.6f}\n"
+                f"  milp_pred={milp_pred:.6f}  blend_embed={blend_embed:.6f}  "
+                f"floor_blend={floor_blend:.6f}  ensemble_val={ensemble_pred:.6f}\n"
                 f"  xgb: embed={sk_xgb_embed:.6f} val={sk_xgb_val:.6f} diff={xgb_diff:.6g}\n"
                 f"  ridge: embed={ridge_embed:.6f} val={ridge_val:.6f} diff={ridge_diff:.6g}\n"
-                f"  milp_vs_embed_blend={milp_vs_embed:.6g}  embed_vs_validation={embed_vs_val:.6g}"
+                f"  milp_vs_floor_blend={milp_vs_floor:.6g}  embed_vs_validation={embed_vs_val:.6g}"
             )
 
 
@@ -881,7 +896,7 @@ def solve_ridge_xgb_embed_campaign_milp(
     # Post-solve: re-probe embedding at actual solved budgets to localize discrepancy.
     _diagnose_milp_vs_sklearn_at_solved_budgets(
         plan, pipeline, embed_rows, keys, ridge_artifact, xgb_member.pipeline,
-        bounds, config, planning_date, set_features,
+        bounds, config, planning_date, set_features, panel,
         w_ridge=w_ridge, w_xgb=w_xgb,
     )
     # pred_over_base from Gurobi can differ slightly from sklearn on tree embed; use ensemble lift.
@@ -916,16 +931,12 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
     """
     Multi-day ridge+XGB embed MILP: shared keyword set selection, per-day budgets.
 
-    Mirrors :func:`solve_ridge_xgb_embed_campaign_milp` (single-day) exactly in terms
-    of prediction gating, level_ub bounds, regional ordering, baseline levels, and
-    budget tie-break — but with per-day budget variables and a summed objective.
+    Multi-day variant of :func:`solve_ridge_xgb_embed_campaign_milp`: shared keyword-set
+    binaries, per-day budgets, regional order, and observed-budget floor on predictions
+    (after keyword-set indicators; same semantics as single-day ``solve_campaign_milp``).
     Used as Stage 1 of the two-stage backtest.
     """
-    from campaign_opt.backends.prediction_gating import (
-        budget_big_m_from_bounds,
-        gate_level_expr,
-    )
-    from campaign_opt.decisions import observed_min_daily_budget, parse_regional_order
+    from campaign_opt.decisions import parse_regional_order
 
     pipeline = joblib.load(model_path)
     if not isinstance(pipeline, EnsembleModel):
@@ -1120,23 +1131,28 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
                     )
             seg_day_preds[(seg, t)] = seg_pred
 
-    # --- Prediction gating: zero prediction when budget < observed min ---
-    min_budgets = observed_min_daily_budget(panel, segments)
+    # Observed-budget floor on the selected segment-day prediction (ridge+XGB above floor).
     if config.evaluation.apply_observed_budget_floor:
-        for seg in segments:
-            bmin = min_budgets.get(seg, 0.0)
-            if bmin <= 0.0:
-                continue
-            lo, hi = bounds[seg]
-            level_ub = level_ub_overrides.get(seg, 1.0)
-            m_b = budget_big_m_from_bounds(lo, hi)
-            safe = seg.replace(" ", "_").replace("/", "_")
-            budget_atol = float(config.evaluation.budget_floor_atol)
-            for t in range(n_days):
-                raw_expr = seg_day_preds[(seg, t)]
-                gated = gate_level_expr(
+        from campaign_opt.backends.prediction_gating import (
+            budget_big_m_from_bounds,
+            gate_level_expr,
+        )
+        from campaign_opt.decisions import observed_min_daily_budget
+
+        min_budgets = observed_min_daily_budget(panel, segments)
+        budget_atol = float(config.evaluation.budget_floor_atol)
+        for t in range(n_days):
+            for seg in segments:
+                bmin = float(min_budgets.get(seg, 0.0))
+                if bmin <= 0.0:
+                    continue
+                lo, hi = bounds[seg]
+                level_ub = float(level_ub_overrides.get(seg, 1.0))
+                m_b = budget_big_m_from_bounds(lo, hi)
+                safe = str(seg).replace(" ", "_").replace("/", "_")
+                seg_day_preds[(seg, t)] = gate_level_expr(
                     model,
-                    raw_expr,
+                    seg_day_preds[(seg, t)],
                     x_day_vars[(seg, t)],
                     budget_min=bmin,
                     level_ub=level_ub,
@@ -1144,7 +1160,6 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
                     name_prefix=f"gate_{safe}_d{t}",
                     budget_atol=budget_atol,
                 )
-                seg_day_preds[(seg, t)] = gated
 
     # --- Objective ---
     objective_mode = str(config.evaluation.objective or "incremental").strip().lower()
@@ -1153,13 +1168,24 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
     )
 
     if objective_mode == "incremental":
+        baseline_for_obj = baseline_level_by_key
+        if config.evaluation.apply_observed_budget_floor:
+            from campaign_opt.backends.prediction_gating import (
+                apply_gated_baseline_levels,
+            )
+            from campaign_opt.decisions import observed_min_daily_budget
+
+            min_budgets = observed_min_daily_budget(panel, segments)
+            baseline_for_obj = apply_gated_baseline_levels(
+                baseline_level_by_key, baseline_budget, min_budgets
+            )
         baseline_terms = []
         for seg in segments:
             for k in k_map.get(seg, []):
                 key = (seg, str(k))
                 if key not in y_vars:
                     continue
-                f0 = float(baseline_level_by_key.get(key, 0.0))
+                f0 = float(baseline_for_obj.get(key, 0.0))
                 baseline_terms.append(f0 * y_vars[key])
         if baseline_terms:
             objective_expr = level_sum - gp.quicksum(baseline_terms)

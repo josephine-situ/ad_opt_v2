@@ -1,0 +1,8 @@
+{
+  "A / Broad": "synthetic_A_Broad_allowlist_2",
+  "A / Phrase; Exact": "synthetic_A_Phrase; Exact_allowlist_6",
+  "B / Broad": "synthetic_B_Broad_allowlist_4",
+  "B / Phrase; Exact": "synthetic_B_Phrase; Exact_allowlist_8",
+  "USA / Broad": "synthetic_USA_Broad_allowlist_12",
+  "USA / Phrase; Exact": "synthetic_USA_Phrase; Exact_allowlist_14"
+}

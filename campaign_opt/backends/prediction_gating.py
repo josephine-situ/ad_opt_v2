@@ -119,11 +119,16 @@ def gate_level_expr(
     budget_big_m: float,
     name_prefix: str,
     budget_atol: float = 0.01,
+    selection_var: Any | None = None,
 ) -> Any:
     """
-    McCormick envelope: gated level is 0 when ``x_var < budget_min``, else ``raw_expr``.
+    Observed-budget floor for MILP levels (matches ``apply_observed_budget_floor``).
 
-    When ``budget_min <= 0``, returns ``raw_expr`` unchanged.
+    * ``x_var + atol < budget_min`` → gated level is 0 (spend 0 is feasible via ``x=0``).
+    * Otherwise → gated level equals ``raw_expr`` (ridge+XGB blend), which may be negative;
+      the solver should reduce ``x`` when the gated level hurts the objective.
+
+    This does **not** clamp positive predictions; it only zeros below the historical min cap.
     """
     if float(budget_min) <= 0.0:
         return raw_expr
@@ -131,15 +136,20 @@ def gate_level_expr(
     m_b = max(float(budget_big_m), 1.0)
     atol = max(float(budget_atol), 0.0)
     active = model.addVar(vtype=GRB.BINARY, name=f"{name_prefix}_active")
-    gated = model.addVar(lb=0.0, ub=ub, name=f"{name_prefix}_gated")
-    # Match sklearn floor: active when budget >= budget_min - atol (cent tolerance).
+    # Symmetric bounds so active=1 can represent negative tree/ridge blends above the floor.
+    gated = model.addVar(lb=-ub, ub=ub, name=f"{name_prefix}_gated")
+    if selection_var is not None:
+        model.addConstr(active <= selection_var, name=f"{name_prefix}_sel")
     model.addConstr(
         x_var >= float(budget_min) - atol - m_b * (1 - active),
         name=f"{name_prefix}_act",
     )
-    model.addConstr(gated <= ub * active, name=f"{name_prefix}_g_ub1")
-    model.addConstr(gated <= raw_expr, name=f"{name_prefix}_g_ub2")
-    model.addConstr(gated >= raw_expr - ub * (1 - active), name=f"{name_prefix}_g_lb")
+    model.addGenConstrIndicator(
+        active, 1, gated - raw_expr, GRB.EQUAL, 0.0, name=f"{name_prefix}_on"
+    )
+    model.addGenConstrIndicator(
+        active, 0, gated, GRB.EQUAL, 0.0, name=f"{name_prefix}_off"
+    )
     return gated
 
 

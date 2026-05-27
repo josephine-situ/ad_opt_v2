@@ -23,21 +23,20 @@ def apply_observed_budget_floor(
     """
     Zero levels when ``budget + budget_atol < min_by_segment[segment]``.
 
+    Does not clip negative levels above the floor; the optimizer may spend 0 instead.
     ``budget_atol`` (default 1 cent) aligns with Gurobi feasibility tolerance so
     ``13.529999999999998`` is not treated as below a min of ``13.53``.
-    An additional 1e-6 absorbs Gurobi's FeasibilityTol on the budget variable.
     """
     out = np.asarray(levels, dtype=float).copy()
     budgets = np.asarray(budgets, dtype=float)
     segments = np.asarray(segments, dtype=str)
     atol = max(float(budget_atol), 0.0)
-    _GUROBI_FEAS_TOL = 1e-6
     for i in range(len(out)):
         seg = str(segments[i])
         bmin = float(min_by_segment.get(seg, min_by_segment.get(str(seg), 0.0)))
-        if budgets[i] + atol + _GUROBI_FEAS_TOL < bmin:
+        if budgets[i] + atol < bmin:
             out[i] = 0.0
-    return np.clip(out, 0, None)
+    return out
 
 
 def predict_levels_optimizer(
@@ -55,7 +54,7 @@ def predict_levels_optimizer(
         target = config.target
         feature_cols = model.feature_cols if hasattr(model, "feature_cols") else []
         X, _ = _prep_xy(rows, target, feature_cols)
-        return np.clip(np.asarray(model.predict(X), dtype=float), 0, None)
+        return np.asarray(model.predict(X), dtype=float)
 
     segments = rows["segment"].astype(str).unique().tolist()
     mins = observed_min_daily_budget(panel, segments)

@@ -1,7 +1,17 @@
 {
+  "strategy": "two_stage",
   "start": "2026-05-12",
   "end": "2026-05-25",
   "n_days": 14,
+  "fixed_keyword_sets": {
+    "A / Broad": "synthetic_A_Broad_composite_n40_15",
+    "A / Phrase; Exact": "synthetic_A_Phrase; Exact_allowlist_n40_34",
+    "B / Broad": "synthetic_B_Broad_composite_n40_29",
+    "B / Phrase; Exact": "synthetic_B_Phrase; Exact_allowlist_n40_40",
+    "USA / Broad": "synthetic_USA_Broad_composite_n40_53",
+    "USA / Phrase; Exact": "synthetic_USA_Phrase; Exact_allowlist_n40_58"
+  },
+  "budget_mode": "fixed",
   "mean_rmse_model_lift": null,
-  "mean_plan_budget_total": 367.27000000000004
+  "mean_plan_budget_total": 412.6999999999989
 }

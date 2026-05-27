@@ -104,6 +104,12 @@ def main() -> None:
         default=None,
         help="Override model_policy.optimizer_winner for the MILP optimizer",
     )
+    parser.add_argument(
+        "--skip-stage1",
+        action="store_true",
+        help="For two_stage: skip keyword-set selection; load fixed_keyword_sets.json "
+        "from the backtest output dir (from a prior run)",
+    )
     args = parser.parse_args()
 
     config_path = Path(args.config) if args.config else default_config_path(args.course, args.exp_name)
@@ -114,6 +120,8 @@ def main() -> None:
         config.model_policy.optimizer_winner = args.optimizer_winner
     strategy = args.strategy or config.backtest.strategy
     budget_cadence = args.budget_cadence or config.backtest.budget_cadence
+    if args.skip_stage1 and strategy != "two_stage":
+        parser.error("--skip-stage1 requires --strategy two_stage")
 
     start = pd.Timestamp(args.day or args.start)
     end = pd.Timestamp(args.day or args.end)
@@ -138,6 +146,7 @@ def main() -> None:
             "budget_mode": "actual" if args.use_actual_budget else "fixed",
             "optimizer_winner": config.model_policy.optimizer_winner,
             "optimizer_backend": config.model_policy.optimizer_backend,
+            "skip_stage1": args.skip_stage1,
             "total_budget": args.budget
             or float(COURSE_CONFIG.get(config.course, {}).get("campaign_budget", 400.0)),
         },
@@ -164,6 +173,7 @@ def main() -> None:
             total_budget=total_budget,
             out_dir=out_dir,
             use_actual_budget=args.use_actual_budget,
+            skip_stage1=args.skip_stage1,
         )
         print(f"Finished {len(summary)} days. Summary: {out_dir / 'daily_backtest_summary.csv'}")
     else:
