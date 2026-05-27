@@ -47,11 +47,13 @@ Default config: `opt_results/sys_think/campaign/default/campaign_config.json`
 
 ```powershell
 uv run python scripts/run_campaign_pipeline.py --course sys_think
-uv run python scripts/backtest_campaign.py --course sys_think --start 2026-05-12 --end 2026-05-25 --analyze
+uv run python scripts/backtest_campaign.py --course sys_think --start 2026-05-12 --end 2026-05-25 --strategy two_stage --analyze
 uv run python scripts/analyze_backtest_results.py --course sys_think --start 2026-05-12 --end 2026-05-25
 ```
 
 Per-day plan folders and fitted `.joblib` files under `opt_results/.../backtest/` are regeneratable and not tracked in git.
+
+On a cluster, run one `backtest_campaign.py` job per day with `--day YYYY-MM-DD`, then `analyze_backtest_results.py` after the window completes (see [`campaign_opt/README.md`](campaign_opt/README.md)).
 
 ## Presentations
 
