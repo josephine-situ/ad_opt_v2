@@ -1,4 +1,4 @@
-"""Two-stage walk-forward backtest: fix keyword sets for period, re-optimize budgets weekly."""
+"""Two-stage walk-forward backtest: fix keyword sets for full window, re-optimize budgets daily."""
 
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ from typing import Any
 import pandas as pd
 
 from campaign_opt.backtest import optimizer_manifest_for_backtest
+from campaign_opt.decisions import actual_campaign_budget_total, parse_excluded_regions
 from campaign_opt.evaluation import (
-    compare_plan_and_actual_week,
+    compare_plan_and_actual,
     fit_evaluation_model,
     plan_vs_actual_row_metrics,
-    week_planning_dates,
-    week_starts_in_window,
 )
 from campaign_opt.features import train_before_date
+from campaign_opt.modeling import eval_pipeline_holdout
 from campaign_opt.optimize import require_optimizer_winner, run_optimizer
 from campaign_opt.schema import CampaignOptConfig
 from utils.campaign_features import build_keyword_set_feature_table
@@ -32,12 +32,20 @@ def run_two_stage_backtest(
     end: pd.Timestamp,
     total_budget: float,
     out_dir: Path,
-    budget_cadence: str = "W-MON",
+    use_actual_budget: bool = False,
 ) -> pd.DataFrame:
     """
-    Stage 1: pick keyword set per segment at ``start`` (optimizer with walk-forward train).
-    Stage 2: each week, walk-forward train + linear multi-day MILP for budgets (sets fixed).
-    Evaluation uses one full-panel model for all scoring.
+    Stage 1: Multi-day ridge+xgb MILP over all days in [start, end].
+             Picks ONE keyword set per segment for the whole window.
+             Budgets can vary per day.  Model trained on data before ``start``.
+
+    Stage 2: Fix keyword sets from Stage 1.  Each day t in [start, end],
+             retrain ridge+xgb on data available up to day t, then single-day
+             MILP to optimize that day's budget allocation.
+
+    When ``use_actual_budget=True``, each day's budget constraint is the actual
+    configured daily budget from the panel (matching the daily backtest behaviour).
+    Stage 1 uses the budget for the first day as its per-day cap.
     """
     out_dir = Path(out_dir)
     plans_dir = out_dir / "plans"
@@ -45,12 +53,24 @@ def run_two_stage_backtest(
     set_features = build_keyword_set_feature_table(config.course)
     opt_manifest = optimizer_manifest_for_backtest(config)
     eval_model = fit_evaluation_model(config, df, opt_manifest, out_dir)
+    feature_cols = opt_manifest["feature_cols"]
 
     start = pd.Timestamp(start).normalize()
     end = pd.Timestamp(end).normalize()
     min_train = config.model_policy.validation.min_train_rows
+    dates = pd.date_range(start, end, freq="D")
+    excluded_regions = parse_excluded_regions(config.constraints)
 
-    # --- Stage 1: period keyword-set selection ---
+    # Resolve per-day budget cap (Stage 1 uses the fixed total_budget for its
+    # per-day constraint since the multi-day MILP already allows different budgets
+    # per day within that cap).
+    stage1_budget = total_budget
+    if use_actual_budget:
+        stage1_budget = actual_campaign_budget_total(
+            panel, dates[0], excluded_regions=excluded_regions
+        )
+
+    # ─── Stage 1: keyword-set selection over full window ───────────────────
     stage1_dir = out_dir / "stage1_keyword_sets"
     stage1_dir.mkdir(parents=True, exist_ok=True)
     train0 = train_before_date(df, start)
@@ -60,8 +80,8 @@ def run_two_stage_backtest(
         )
 
     print(
-        f"  [stage1] keyword-set optimize at {start.date()} "
-        f"(window {start.date()} → {end.date()})"
+        f"  [stage1] Multi-day keyword-set optimize "
+        f"(window {start.date()} → {end.date()}, {len(dates)} days)"
     )
     set_plan = run_optimizer(
         config,
@@ -69,9 +89,9 @@ def run_two_stage_backtest(
         train0,
         candidates,
         panel,
-        total_budget=total_budget,
+        total_budget=stage1_budget,
         output_dir=stage1_dir,
-        planning_date=start,
+        planning_dates=list(dates),
         write_outputs=True,
         tune_optimizer=True,
     )
@@ -85,30 +105,34 @@ def run_two_stage_backtest(
     with open(out_dir / "fixed_keyword_sets.json", "w", encoding="utf-8") as f:
         json.dump(fixed_keyword_sets, f, indent=2)
     set_plan.to_csv(stage1_dir / "keyword_set_plan.csv", index=False)
+    print(
+        f"  [stage1] Done — {len(fixed_keyword_sets)} segments assigned keyword sets"
+    )
 
-    # --- Stage 2: weekly budget (linear multi-day MILP; sets fixed) ---
-    week_starts = week_starts_in_window(start, end, freq=budget_cadence)
-    weekly_rows: list[dict[str, Any]] = []
+    # ─── Stage 2: daily budget optimization (keyword sets fixed) ───────────
+    daily_rows: list[dict[str, Any]] = []
 
-    for week_start in week_starts:
-        week_start = pd.Timestamp(week_start).normalize()
-        week_dates = week_planning_dates(week_start, start, end)
-        if not week_dates:
-            raise RuntimeError(f"No planning dates in week starting {week_start.date()}")
-
-        train = train_before_date(df, week_start)
+    for opt_date in dates:
+        opt_date = pd.Timestamp(opt_date)
+        train = train_before_date(df, opt_date)
         if len(train) < min_train:
             raise RuntimeError(
-                f"Insufficient train rows before week {week_start.date()}: "
+                f"Insufficient train rows before {opt_date.date()}: "
                 f"{len(train)} < {min_train}"
             )
 
-        week_dir = plans_dir / week_start.strftime("%Y%m%d")
-        week_dir.mkdir(parents=True, exist_ok=True)
+        day_dir = plans_dir / opt_date.strftime("%Y%m%d")
+        day_dir.mkdir(parents=True, exist_ok=True)
 
-        holdout = df[df["date"].isin(week_dates)]
+        holdout = df[df["date"] == opt_date]
         if holdout.empty:
-            raise RuntimeError(f"No modeling-panel rows in week starting {week_start.date()}")
+            raise RuntimeError(f"No modeling-panel rows on {opt_date.date()}")
+
+        day_budget = (
+            actual_campaign_budget_total(panel, opt_date, excluded_regions=excluded_regions)
+            if use_actual_budget
+            else total_budget
+        )
 
         plan = run_optimizer(
             config,
@@ -116,64 +140,72 @@ def run_two_stage_backtest(
             train,
             candidates,
             panel,
-            total_budget=total_budget,
-            output_dir=week_dir,
-            planning_dates=week_dates,
+            total_budget=day_budget,
+            output_dir=day_dir,
+            planning_date=opt_date,
             fixed_keyword_sets=fixed_keyword_sets,
             write_outputs=True,
             tune_optimizer=False,
         )
-        plan["week_start"] = week_start.date().isoformat()
-        plan["week_end"] = week_dates[-1].date().isoformat()
-        plan["n_planning_days"] = len(week_dates)
-        plan.to_csv(week_dir / "campaign_plan.csv", index=False)
+        plan["opt_date"] = opt_date.date().isoformat()
+        plan.to_csv(day_dir / "campaign_plan.csv", index=False)
 
         plan_budget = pd.to_numeric(plan["daily_budget"], errors="coerce").fillna(0.0)
-        week_row: dict[str, Any] = {
-            "week_start": week_start.date().isoformat(),
-            "week_end": week_dates[-1].date().isoformat(),
-            "n_days": len(week_dates),
+        day_row: dict[str, Any] = {
+            "opt_date": opt_date.date().isoformat(),
             "optimizer_winner": require_optimizer_winner(config),
             "n_segments": len(plan),
+            "total_budget": day_budget,
             "plan_budget_total": float(plan_budget.sum()),
             "n_segments_zero_budget": int((plan_budget <= 0).sum()),
         }
 
-        weekly_comp, daily_comp = compare_plan_and_actual_week(
+        if not config.evaluation.use_ensemble and eval_model.members:
+            ho_metrics = eval_pipeline_holdout(
+                eval_model.members[0].pipeline, holdout, config, feature_cols
+            )
+            if ho_metrics:
+                day_row.update(ho_metrics)
+
+        comp = compare_plan_and_actual(
             eval_model,
             plan,
-            df,
+            holdout,
             df,
             config,
-            week_dates,
+            opt_date,
             set_features,
+            scoring_panel=train,
         )
-        if weekly_comp.empty:
-            raise RuntimeError(f"No weekly plan_vs_actual rows for week {week_start.date()}")
-        weekly_comp.to_csv(week_dir / "plan_vs_actual_weekly.csv", index=False)
-        week_row.update(plan_vs_actual_row_metrics(weekly_comp, config.target))
-        week_row["n_segments"] = len(weekly_comp)
-        if not daily_comp.empty:
-            daily_comp.to_csv(week_dir / "plan_vs_actual_daily.csv", index=False)
+        comp.to_csv(day_dir / "plan_vs_actual.csv", index=False)
+        day_row.update(plan_vs_actual_row_metrics(comp, config.target))
 
-        weekly_rows.append(week_row)
-        print(f"  [{week_start.date()}] done — week days={len(week_dates)}, segments={len(plan)}")
-
-    summary = pd.DataFrame(weekly_rows)
-    summary.to_csv(out_dir / "weekly_backtest_summary.csv", index=False)
-    with open(out_dir / "weekly_backtest_summary.json", "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "strategy": "two_stage",
-                "start": str(start.date()),
-                "end": str(end.date()),
-                "n_weeks": len(summary),
-                "fixed_keyword_sets": fixed_keyword_sets,
-                "mean_rmse_model_lift": float(summary["rmse_pred_vs_actual_model_lift"].mean())
-                if "rmse_pred_vs_actual_model_lift" in summary.columns and len(summary)
-                else None,
-            },
-            f,
-            indent=2,
+        daily_rows.append(day_row)
+        budget_note = (
+            f"budget=${day_row['plan_budget_total']:.1f} "
+            f"(cap=${day_budget:.1f}, "
+            f"{day_row['n_segments_zero_budget']}/{day_row['n_segments']} segments at $0)"
         )
+        print(f"  [stage2 {opt_date.date()}] done — segments={len(plan)}, {budget_note}")
+
+    summary = pd.DataFrame(daily_rows)
+    summary.to_csv(out_dir / "daily_backtest_summary.csv", index=False)
+    summary_payload: dict[str, Any] = {
+        "strategy": "two_stage",
+        "start": str(start.date()),
+        "end": str(end.date()),
+        "n_days": len(summary),
+        "fixed_keyword_sets": fixed_keyword_sets,
+        "budget_mode": "actual" if use_actual_budget else "fixed",
+        "mean_rmse_model_lift": float(summary["rmse_pred_vs_actual_model_lift"].mean())
+        if "rmse_pred_vs_actual_model_lift" in summary.columns and len(summary)
+        else None,
+    }
+    if "holdout_r2" in summary.columns and len(summary):
+        summary_payload["mean_holdout_r2"] = float(summary["holdout_r2"].mean())
+        summary_payload["mean_holdout_rmse"] = float(summary["holdout_rmse"].mean())
+    if "plan_budget_total" in summary.columns and len(summary):
+        summary_payload["mean_plan_budget_total"] = float(summary["plan_budget_total"].mean())
+    with open(out_dir / "daily_backtest_summary.json", "w", encoding="utf-8") as f:
+        json.dump(summary_payload, f, indent=2)
     return summary

@@ -11,6 +11,7 @@ from campaign_opt.backends.linear import solve_linear_campaign_milp
 from campaign_opt.backends.piecewise_linear import solve_piecewise_campaign_milp
 from campaign_opt.backends.tree_embed import (
     solve_ridge_xgb_embed_campaign_milp,
+    solve_ridge_xgb_embed_multiday_campaign_milp,
     solve_tree_embed_campaign_milp,
 )
 from campaign_opt.coefficients import export_linear_solver_coeffs
@@ -98,11 +99,12 @@ def run_optimizer(
     if dates is None and planning_date is not None:
         dates = [pd.Timestamp(planning_date)]
     multi_day = dates is not None and len(dates) > 1
+    _MULTIDAY_BACKENDS = _LINEAR_BACKENDS | frozenset({"ridge_xgb_embed"})
     if multi_day or fixed_budgets is not None:
-        if backend not in _LINEAR_BACKENDS:
+        if backend not in _MULTIDAY_BACKENDS:
             raise ValueError(
                 f"backend {backend!r} does not support multi-day or fixed-budget optimization; "
-                "use strategy two_stage or a linear backend."
+                "use strategy two_stage or a linear/ridge_xgb_embed backend."
             )
 
     if planning_date is None and (dates is None or len(dates) == 0):
@@ -194,6 +196,25 @@ def run_optimizer(
         embed_path = _fit_and_save_embed_model(
             config, manifest, train, output_dir, tune=tune_optimizer
         )
+        if multi_day:
+            if fixed_budgets:
+                raise ValueError(
+                    "fixed_budgets is not supported with multi-day ridge_xgb_embed; "
+                    "per-day budgets are optimized jointly in the MILP."
+                )
+            plan = solve_ridge_xgb_embed_multiday_campaign_milp(
+                config,
+                embed_path,
+                train,
+                candidates,
+                panel,
+                total_budget=total_budget,
+                output_dir=output_dir,
+                planning_dates=dates,
+                write_outputs=write_outputs,
+                fixed_keyword_sets=fixed_keyword_sets,
+            )
+            return _finalize_plan(plan, embed_path)
         plan = solve_ridge_xgb_embed_campaign_milp(
             config,
             embed_path,
