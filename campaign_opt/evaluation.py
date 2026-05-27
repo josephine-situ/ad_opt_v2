@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_squared_error, r2_score
 
-from campaign_opt.decisions import region_of_segment
+from campaign_opt.decisions import build_segment_list, observed_min_daily_budget, region_of_segment
 from campaign_opt.modeling import (
     _build_preprocessor,
     _cv_rmse_member_weights,
@@ -613,10 +613,19 @@ def add_optimizer_plan_columns(
     planning_date: pd.Timestamp,
     set_features: pd.DataFrame,
     *,
-    level_tol: float = 0.05,
+    candidates: pd.DataFrame | None = None,
+    level_tol: float | None = None,
 ) -> pd.DataFrame:
     """
     Attach gated ``external_model_pred`` / ``pred_over_base`` and warn on MILP mismatch.
+
+    ``milp_pred`` is the per-segment value that enters the MILP objective (already gated:
+    contribution is 0 when ``daily_budget`` is below the segment's minimum observed
+    ``daily_budget`` on ``panel``, same rule as ``solve_campaign_milp``).
+
+    ``external_model_pred`` is the same quantity from sklearn: raw ensemble level at the
+    plan row, then the **identical** floor using ``observed_min_daily_budget`` (same
+    segment universe as the MILP when ``candidates`` is passed).
 
     Called after MILP solve (e.g. from ``run_optimizer``); does not modify tree embedding.
     """
@@ -650,8 +659,30 @@ def add_optimizer_plan_columns(
     if target not in baseline_rows.columns:
         baseline_rows[target] = 0.0
 
-    pred_dec = _predict_levels_for_scoring(model, decision_rows, panel, config)
-    pred_zero = _predict_levels_for_scoring(model, baseline_rows, panel, config)
+    from campaign_opt.optimizer_prediction import apply_observed_budget_floor
+
+    # Same floor map as milp_core.gate_pred_vars_if_enabled when candidates match MILP input.
+    floor_segments = (
+        build_segment_list(candidates)
+        if candidates is not None and not candidates.empty
+        else sorted(plan_dec["segment"].astype(str).unique().tolist())
+    )
+    min_budget_by_seg = observed_min_daily_budget(panel, floor_segments)
+
+    raw_dec = model.predict_levels(decision_rows)
+    raw_zero = model.predict_levels(baseline_rows)
+    pred_dec = apply_observed_budget_floor(
+        raw_dec,
+        plan_dec["daily_budget"].to_numpy(),
+        plan_dec["segment"].to_numpy(),
+        min_budget_by_seg,
+    )
+    pred_zero = apply_observed_budget_floor(
+        raw_zero,
+        baseline_rows["daily_budget"].to_numpy(),
+        baseline_rows["segment"].to_numpy(),
+        min_budget_by_seg,
+    )
     ext = pd.DataFrame(
         {
             "segment": plan_dec["segment"].tolist(),
@@ -663,15 +694,19 @@ def add_optimizer_plan_columns(
     out = out.merge(ext, on="segment", how="left")
 
     if "milp_pred" in out.columns:
+        tol = float(
+            config.evaluation.milp_external_level_tol if level_tol is None else level_tol
+        )
         milp = pd.to_numeric(out["milp_pred"], errors="coerce")
         ext_lev = pd.to_numeric(out["external_model_pred"], errors="coerce")
         mask = milp.notna() & ext_lev.notna()
         if mask.any():
             max_diff = float((milp.loc[mask] - ext_lev.loc[mask]).abs().max())
-            if max_diff > level_tol:
+            if max_diff > tol:
                 print(
-                    f"[Warn] MILP vs gated external model prediction mismatch: "
-                    f"max|milp_pred - external_model_pred| = {max_diff:.6g} > {level_tol}"
+                    "[Warn] MILP objective term vs gated sklearn level mismatch "
+                    "(per-segment level summed in objective; 0 below min observed budget): "
+                    f"max|milp_pred - external_model_pred| = {max_diff:.6g} > {tol}"
                 )
     return out
 

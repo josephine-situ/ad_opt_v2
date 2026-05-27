@@ -32,6 +32,7 @@ class EvaluationConfig:
     objective: str = "incremental"  # "levels" | "incremental" — MILP maximizes total level or lift
     apply_observed_budget_floor: bool = False  # zero preds when budget < min observed cap (optimizer paths only)
     max_level_ub: float | None = None  # optional cap on McCormick level_ub per segment
+    milp_external_level_tol: float = 0.01  # warn when |milp_pred - gated sklearn level| exceeds this
 
 
 @dataclass

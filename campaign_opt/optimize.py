@@ -136,7 +136,13 @@ def run_optimizer(
         pipeline = joblib.load(model_path)
         set_features = build_keyword_set_feature_table(config.course)
         plan = add_optimizer_plan_columns(
-            plan, panel, pipeline, config, plan_date, set_features
+            plan,
+            panel,
+            pipeline,
+            config,
+            plan_date,
+            set_features,
+            candidates=candidates,
         )
         if write_outputs:
             plan.to_csv(output_dir / "campaign_plan.csv", index=False)
