@@ -37,23 +37,3 @@ KW_KEYWORD_ALL_CONV_QUERY = f"""
     AND metrics.all_conversions > 0
     ORDER BY segments.date, campaign.name, ad_group_criterion.keyword.text
 """
-
-AUTO_APPLIED_RECOMMENDATIONS_QUERY = """
-    SELECT
-        change_event.resource_name,
-        change_event.change_date_time,
-        change_event.change_resource_name,
-        change_event.change_resource_type,
-        change_event.resource_change_operation,
-        change_event.changed_fields,
-        change_event.client_type,
-        change_event.user_email,
-        change_event.campaign,
-        change_event.ad_group
-    FROM change_event
-    WHERE change_event.change_date_time >= '{start_datetime}'
-    AND change_event.change_date_time <= '{end_datetime}'
-    AND change_event.user_email = 'Recommendations Auto-Apply'
-    ORDER BY change_event.change_date_time DESC
-    LIMIT 10000
-"""
