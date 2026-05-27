@@ -6,5 +6,8 @@
   "strategy": "daily",
   "budget_cadence": "W-MON",
   "target": "conv_scaled_clicks",
+  "budget_mode": "actual",
+  "optimizer_winner": "ensemble_ridge_xgb",
+  "optimizer_backend": "auto",
   "total_budget": 412.7
 }

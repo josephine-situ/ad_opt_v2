@@ -33,7 +33,12 @@ def _keywords_from_panel(
     segment_row: pd.Series,
     *,
     top_n: int = 30,
+    volume_col: str = "clicks",
 ) -> list[str]:
+    """Top keywords by volume and volume/cost efficiency for the segment panel slice."""
+    if volume_col not in kw_day.columns:
+        return []
+
     region = segment_row["region"]
     allowed = set(_parse_segment_match_types(segment_row["match_types"]))
     sub = kw_day[kw_day["region"] == region].copy()
@@ -44,21 +49,27 @@ def _keywords_from_panel(
 
     agg = (
         sub.groupby("keyword")
-        .agg(clicks=("clicks", "sum"), cost=("cost", "sum"))
+        .agg(volume=(volume_col, "sum"), cost=("cost", "sum"))
         .reset_index()
     )
-    agg["efficiency"] = agg["clicks"] / agg["cost"].clip(lower=0.01)
-    top_click = set(agg.nlargest(top_n, "clicks")["keyword"].tolist())
+    agg = agg[agg["volume"] > 0]
+    if agg.empty:
+        return []
+
+    agg["efficiency"] = agg["volume"] / agg["cost"].clip(lower=0.01)
+    top_vol = set(agg.nlargest(top_n, "volume")["keyword"].tolist())
     top_eff = set(agg.nlargest(top_n, "efficiency")["keyword"].tolist())
-    return sorted(top_click | top_eff)
+    return sorted(top_vol | top_eff)
 
 
 def _assign_keywords_by_match_type(
     kw_day: pd.DataFrame,
     keywords: list[str],
     segment_row: pd.Series,
+    *,
+    rank_col: str = "clicks",
 ) -> dict[str, str]:
-    """Split a flat keyword list into broad/phrase/exact columns using panel clicks."""
+    """Split a flat keyword list into broad/phrase/exact columns using panel rank_col."""
     region = segment_row["region"]
     allowed = _parse_segment_match_types(segment_row["match_types"])
     kw_lower = {k.lower(): k for k in keywords}
@@ -68,14 +79,14 @@ def _assign_keywords_by_match_type(
         sub = sub[sub["match_type"].isin(allowed)]
 
     by_mt: dict[str, list[str]] = {mt: [] for mt in allowed}
-    if not sub.empty and kw_lower:
+    if not sub.empty and kw_lower and rank_col in sub.columns:
         agg = (
             sub[sub["keyword"].str.lower().isin(kw_lower.keys())]
             .groupby(["keyword", "match_type"], as_index=False)
-            .agg(clicks=("clicks", "sum"))
+            .agg(rank_metric=(rank_col, "sum"))
         )
         for kw, grp in agg.groupby("keyword"):
-            best_mt = grp.loc[grp["clicks"].idxmax(), "match_type"]
+            best_mt = grp.loc[grp["rank_metric"].idxmax(), "match_type"]
             canon = kw_lower.get(str(kw).lower(), str(kw))
             if best_mt in by_mt:
                 by_mt[best_mt].append(canon)
@@ -310,13 +321,16 @@ def _append_synthetic_set(
     source: str,
     kw_day: pd.DataFrame,
     positive_col: str,
+    match_type_rank_col: str = "clicks",
 ) -> None:
     if not keywords:
         return
     pos = "; ".join(sorted(keywords))
     record: dict = {"keyword_set_id": new_id, positive_col: pos}
     if not kw_day.empty:
-        record.update(_assign_keywords_by_match_type(kw_day, keywords, row))
+        record.update(
+            _assign_keywords_by_match_type(kw_day, keywords, row, rank_col=match_type_rank_col)
+        )
     synthetic_sets.append(record)
     synth_cand.append(
         {
@@ -348,7 +362,8 @@ def build_segment_candidates(
         extended_sets: keyword_set_id, positive_keywords (+ match-type columns when known)
 
     Synthetic sources:
-        synthetic_top — union of top-click and top-efficiency keywords from kw-day-panel
+        synthetic_top — union of top-click and top click-efficiency keywords from kw-day-panel
+        synthetic_top_conv — union of top all_conv and top conversion-efficiency keywords
         synthetic_semantic — top keywords by per-keyword course-anchor similarity
         synthetic_dispersion — greedy set maximizing embed_dispersion
         synthetic_composite — greedy set maximizing z(course_sim_mean) + z(dispersion)
@@ -413,8 +428,33 @@ def build_segment_candidates(
                     source="synthetic_top",
                     kw_day=kw_day,
                     positive_col=positive_col,
+                    match_type_rank_col="clicks",
                 )
                 seen_variants.add(frozenset(k.lower() for k in pool))
+
+                pool_conv = _keywords_from_panel(kw_day, row, top_n=top_n, volume_col="all_conv")
+                if pool_conv:
+                    synth_idx += 1
+                    new_id, synth_idx = _next_synthetic_id(
+                        segment,
+                        "top_conv",
+                        synthetic_prefix=synthetic_prefix,
+                        synth_idx=synth_idx,
+                        existing_ids=existing_ids,
+                    )
+                    _append_synthetic_set(
+                        synthetic_sets=synthetic_sets,
+                        synth_cand=synth_cand,
+                        segment=segment,
+                        row=row,
+                        new_id=new_id,
+                        keywords=pool_conv,
+                        source="synthetic_top_conv",
+                        kw_day=kw_day,
+                        positive_col=positive_col,
+                        match_type_rank_col="all_conv",
+                    )
+                    seen_variants.add(frozenset(k.lower() for k in pool_conv))
 
             if need_embeddings:
                 emb_map, anchors = _ensure_embeddings(
