@@ -43,9 +43,12 @@
     \boldsymbol{\phi}_k \text{: set-level semantic + GKP features.}
   \]
 
+  \textbf{Incremental lift} at baseline budget $b_0$ (\texttt{evaluation.baseline\_budget}${=}0$):
+  $\Delta_{s,k}(x_s)=\widehat{F}_{s,k}(x_s)-\widehat{F}_{s,k}(b_0)$ for the chosen list $\boldsymbol{\phi}_k$.
+
   \textbf{Problem (MILP):}
   \[
-    \max_{\{x_s,\,y_{s,k}\}} \sum_{s,k} y_{s,k}\,\widehat{y}_{s,k}(x_s)
+    \max_{\{x_s,\,y_{s,k}\}} \sum_{s,k} y_{s,k}\,\Delta_{s,k}(x_s)
       - \lambda \sum_s x_s
     \quad \text{s.t.}\quad
     \sum_s x_s \leq B,\;
@@ -159,14 +162,39 @@
     \item \textbf{Optimize:} train on date $< t$ $\rightarrow$ CV-tune $\rightarrow$ fit ridge+XGB
       blend $\rightarrow$ solve MILP $\rightarrow$ plan (budgets + keyword lists).
     \item \textbf{Score:} with the \textbf{fixed} evaluation ensemble, compute
-      \textbf{plan lift} $\hat f(\text{plan}) - \hat f(\$0,\text{same list})$ and
-      \textbf{actual lift} $\hat f(\text{panel budget},\text{panel list}) - \hat f(\$0,\text{panel list})$.
+      \textbf{plan lift} $\hat f(\text{plan budget},\text{plan set}) - \hat f(0,\text{plan set})$ and
+      \textbf{actual lift} $\hat f(\text{panel budget},\text{panel set}) - \hat f(0,\text{panel set})$.
     \item \textbf{Observe:} sum realized scaled clicks from the panel on day $t$.
   \end{enumerate}
 
   \vspace{0.25em}
-  \textbf{Month rollup:} mean daily plan vs.\ actual model lift, budget shares by region,
+  \textbf{Month rollup:} mean daily plan vs.\ actual model lift (raw totals), budget shares by region,
   keyword-list choices, RMSE of predicted lift vs.\ observed levels.
+  \normalsize
+\end{frame}
+
+\begin{frame}[fragile]{Reproducing this run}
+  \footnotesize
+  \textbf{Config:} \texttt{opt\_results/sys\_think/campaign/default/campaign\_config.json}
+  (\texttt{optimizer\_winner: ensemble\_ridge\_xgb}, \texttt{evaluation.baseline\_budget}${=}0$).
+
+  \vspace{0.25em}
+  \textbf{1.\ Response tournament + evaluation ensemble} (ridge uses scaled MILP design):
+  \begin{verbatim}
+uv run python scripts/fit_response_models.py \
+  --course sys_think --exp-name default
+  \end{verbatim}
+  Writes \texttt{holdout\_metrics.json}, \texttt{ensemble\_model.joblib}.
+
+  \vspace{0.2em}
+  \textbf{2.\ March walk-forward backtest + analysis:}
+  \begin{verbatim}
+uv run python scripts/backtest_campaign.py \
+  --course sys_think --exp-name default \
+  --start 2026-03-01 --end 2026-03-31 --analyze
+  \end{verbatim}
+  Outputs under \texttt{backtest/2026-03-01\_2026-03-31/}
+  (\texttt{backtest\_summary.csv}, \texttt{regional\_breakdown.csv}, \texttt{plans/}).
   \normalsize
 \end{frame}
 
@@ -185,13 +213,15 @@
   \end{align*}
   \textbf{Lift:}
   $\mathrm{lift}=\max\bigl(\hat f(x_s^{\mathrm{dec}},\mathbf{z})-\hat f(0,\mathbf{z}),\,0\bigr)$
-  (counterfactual at \$0 budget; same $\mathbf{z}$ for plan vs.\ actual).
+  (counterfactual at \$0 budget with the \textbf{same} keyword-set features $\mathbf{z}$:
+  plan set for plan, panel set for actual).
 
   \vspace{0.15em}
   \begin{itemize}
     \item \textbf{ridge} (MILP-linear design):
-      $y=\alpha_s+\beta_s x_s+\mathbf{z}^\top\boldsymbol{\gamma}+\varepsilon$;
-      $\alpha_s,\beta_s$ from region + match flags + $x_s\times$(region, match) + $\mathbf{z}$.
+      $y=\alpha_s+\beta_s x_s+\mathbf{z}^\top\boldsymbol{\gamma}+\varepsilon$ on a
+      \textbf{scaled} design matrix ($x_s$ and numeric $\mathbf{z}$ standardized at fit);
+      Gurobi uses per-candidate affine levels from \texttt{predict\_design\_frame}.
     \item \textbf{power\_log}: $\log(1{+}y)=\alpha_s+\beta_s\log x_s+\mathbf{z}^\top\boldsymbol{\gamma}+\varepsilon$;
       predict $\hat y=\mathrm{expm1}(\cdot)$ (elasticity in log--log space).
     \item \textbf{power\_level}: $y=\alpha_s+\beta_s\log x_s+\mathbf{z}^\top\boldsymbol{\gamma}+\varepsilon$
@@ -230,7 +260,7 @@
     \toprule
     & ridge & p.\_log & p.\_level & RF & XGB \\
     \midrule
-    \textbf{5-member eval.} $w_m$ & 0.20 & 0.20 & 0.21 & 0.19 & 0.20 \\
+    \textbf{5-member eval.} $w_m$ & 0.19 & 0.20 & 0.21 & 0.20 & 0.20 \\
     \midrule
     \multicolumn{6}{@{}l@{}}{\textbf{Optimizer} \texttt{ensemble\_ridge\_xgb}: equal $w{=}0.50$ each (daily refit, CV-tuned $\alpha$/trees)} \\
     \multicolumn{6}{@{}l@{}}{\textbf{Tournament static} ridge+xgb: $w_{\mathrm{ridge}}{=}0.49$, $w_{\mathrm{XGB}}{=}0.51$ (inverse CV-RMSE)} \\
@@ -250,19 +280,22 @@
     \toprule
     & \textbf{Model (plan)} & \textbf{Actual (panel)} & \textbf{Observed} \\
     \midrule
-    Mean daily lift$^\ast$ & $4.33 \pm 0.07$ & $2.09 \pm 0.03$ (raw) & --- \\
+    Mean daily lift$^\ast$ & $3.89 \pm 0.10$ & $1.38 \pm 0.04$ (raw) & --- \\
     Mean daily budget & \$413 & \$413 & --- \\
-    Mean \texttt{conv\_scaled} total & --- & --- & $15.1 \pm 0.5$ \\
+    Mean \texttt{conv\_scaled} total & --- & --- & $15.1 \pm 0.4$ \\
   \bottomrule
   \end{tabular}
 
   \vspace{0.35em}
   \raggedright
-  {\scriptsize $^\ast$Lift $= \hat f(\text{plan}) - \hat f(0)$ vs.\ $\hat f(\text{actual budget, actual set}) - \hat f(0)$ using the evaluation ensemble $\hat f$. All 31/31 days have positive raw actual lift. Source: \texttt{backtest/2026-03-01\_2026-03-31}.}
+  {\scriptsize $^\ast$Raw lift (fixed 5-member $\hat f$, not realized conversions):
+  plan $= \hat f(\text{plan budget}, \text{plan set}) - \hat f(0, \text{plan set})$;
+  actual $= \hat f(\text{panel budget}, \text{panel set}) - \hat f(0, \text{panel set})$.
+  All 31/31 days have positive raw actual lift. Source: \texttt{backtest/2026-03-01\_2026-03-31}.}
 
   \vspace{0.25em}
   \normalsize
-  \textbf{Takeaway:} Plans hit the \$413/day cap with predicted plan lift $\sim$4.3/day; \textbf{ensemble scores actual configs lower} ($\sim$2.1/day). Observed levels ($\sim$15/day) remain far above predicted increments.
+  \textbf{Takeaway:} Plans hit the \$413/day cap with predicted plan lift $\sim$3.9/day; \textbf{ensemble scores historical configs lower} ($\sim$1.4/day raw lift). Observed panel totals ($\sim$15/day) are far above predicted increments.
 \end{frame}
 
 \begin{frame}{Regional breakdown}
@@ -277,7 +310,7 @@
     \toprule
     Scenario & USA & A & B \\
     \midrule
-    Model (optimizer plan) & 66\% & 24\% & 9\% \\
+    Model (optimizer plan) & 47\% & 43\% & 10\% \\
     Actual (panel campaigns) & 48\% & 37\% & 15\% \\
     \bottomrule
   \end{tabular}
@@ -288,8 +321,8 @@
     \toprule
     Scenario & USA & A & B \\
     \midrule
-    Model (plan) & 46\% & 29\% & 26\% \\
-    Actual (panel) & 25\% & 38\% & 37\% \\
+    Model (plan) & 38\% & 38\% & 24\% \\
+    Actual (panel) & 13\% & 43\% & 44\% \\
     \bottomrule
   \end{tabular}
 
@@ -305,7 +338,7 @@
 
   \vspace{0.3em}
   \raggedright
-  {\scriptsize $^\dagger$Lift $= \hat f(\text{budget}, \text{set}) - \hat f(0, \text{set})$ from the evaluation ensemble; not realized conversions.
+  {\scriptsize $^\dagger$Shares of raw daily lift totals (\texttt{pred\_lift\_raw} / \texttt{actual\_model\_lift\_raw}) from the evaluation ensemble; not realized conversions.
   Source: \texttt{regional\_breakdown.csv} in \texttt{backtest/2026-03-01\_2026-03-31}.}
 \end{frame}
 
@@ -320,19 +353,19 @@
     Metric (ensemble scoring, Mar 2026) & Value \\
     \midrule
     \multicolumn{2}{l}{\textit{Tournament holdout (levels, 159 days):}} \\
-    Ensemble holdout RMSE / $R^2$ / MAE & 1.56 / 0.70 / 1.25 \\
-    \texttt{ensemble\_ridge\_xgb} holdout RMSE / $R^2$ & 1.83 / 0.59 \\
+    Ensemble holdout RMSE / $R^2$ / MAE & 1.47 / 0.74 / 1.20 \\
+    \texttt{ensemble\_ridge\_xgb} holdout RMSE / $R^2$ & 1.50 / 0.72 \\
     \midrule
-    Mean RMSE(pred lift vs.\ observed level) & 5.26 \\
-    Segments at \$0 budget (mean) & 1.5 / 6 \\
+    Mean RMSE(pred lift vs.\ observed level) & 5.25 \\
+    Segments at \$0 budget (mean) & 0.5 / 6 \\
     Days with positive raw actual lift & 31 / 31 \\
-    Model lift improvement vs.\ actual & $+107\%$ \\
+    Model lift improvement vs.\ actual & $+182\%$ \\
     \bottomrule
   \end{tabular}
 
   \vspace{0.35em}
   \raggedright
-  {\scriptsize Lift compares $\hat f$ at plan vs.\ panel budgets (same lists); RMSE is pred lift vs.\ observed \texttt{conv\_scaled} totals.}
+  {\scriptsize Raw lift uses $\hat f(0,\text{plan set})$ vs.\ $\hat f(0,\text{panel set})$ baselines; RMSE is pred lift vs.\ observed \texttt{conv\_scaled} totals.}
 \end{frame}
 
 \begin{frame}{Model tournament metrics}
@@ -348,14 +381,14 @@
     \toprule
     Candidate & CV-RMSE & CV-$R^2$ & Ho-RMSE & Ho-$R^2$ \\
     \midrule
-    ridge & 2.80 & 0.01 & 2.68 & 0.12 \\
+    ridge & 2.88 & $-$0.08 & 1.56 & 0.70 \\
     power\_log & 2.75 & 0.06 & 1.50 & 0.73 \\
     \textbf{power\_level} & \textbf{2.64} & \textbf{0.10} & 1.82 & 0.60 \\
     RF & 2.83 & $-$0.16 & 2.51 & 0.23 \\
     xgboost & 2.73 & $-$0.07 & 2.20 & 0.41 \\
     \midrule
-    \textbf{ensemble} (5-mem.) & 2.68 & 0.05 & \textbf{1.56} & \textbf{0.70} \\
-    ens.\ ridge+xgb & 2.72 & 0.02 & 1.83 & 0.59 \\
+    \textbf{ensemble} (5-mem.) & 2.71 & 0.02 & \textbf{1.47} & \textbf{0.74} \\
+    ens.\ ridge+xgb & 2.80 & $-$0.06 & 1.50 & 0.72 \\
     \bottomrule
   \end{tabular}}
 
@@ -373,7 +406,7 @@
     \item \textbf{Panel} --- \texttt{campaign-day-panel}: version-linked budgets, clicks, \texttt{all\_conv} per segment.
     \item \textbf{Features} --- calendar; keyword-set embeddings; GKP aggregates.
     \item \textbf{Response tournament} --- ridge, power (log/level), RF, XGB; time-series CV; level-scale RMSE.
-    \item \textbf{MILP} --- per-segment budget + keyword set; Gurobi \texttt{tree\_embed}.
+    \item \textbf{MILP} --- per-segment budget + keyword set; maximize incremental lift at $b_0{=}0$; Gurobi \texttt{tree\_embed}.
     \item \textbf{Backtest} --- daily \texttt{plan\_vs\_actual.csv} (ensemble scoring) $\rightarrow$ \texttt{backtest\_summary.csv}.
   \end{enumerate}
 \end{frame}
@@ -388,11 +421,12 @@
 \end{frame}
 
 \begin{frame}{Backtest evaluation}
-  \textbf{Per day $t$:}
-  \texttt{pred\_lift}, \texttt{actual\_model\_lift}, \texttt{observed\_conv\_scaled\_clicks}.
+  \textbf{Per day $t$} (\texttt{plan\_vs\_actual.csv}):
+  \texttt{pred\_lift\_raw\_total}, \texttt{actual\_model\_lift\_raw\_total} (evaluation ensemble);
+  \texttt{observed\_total} (panel \texttt{conv\_scaled}).
 
   \vspace{0.35em}
-  \textbf{Outputs:} daily \texttt{plan\_vs\_actual.csv}; month rollup in \texttt{backtest\_summary.csv}.
+  \textbf{Outputs:} daily CSVs under \texttt{plans/YYYYMMDD/}; month rollup in \texttt{backtest\_summary.csv}.
 
   \vspace{0.25em}
   {\footnotesize Keyword-set choices (not fixed all month): \textbf{Keyword sets in March plans}.
@@ -402,7 +436,7 @@
 \begin{frame}{Keyword sets in March plans}
   \footnotesize
   \textbf{Daily MILP} re-solves with walk-forward $\hat f$; the winning \texttt{keyword\_set\_id} can change day to day.
-  Only \textbf{A / Broad} is fixed all 31 days; other segments have a \textbf{dominant} set (${\geq}$27/31 days) but can switch; USA Phrase+Exact alternates mid-month.
+  No segment keeps one set all 31 days; \textbf{B / Phrase; Exact} is most stable (\texttt{top\_11}, 24/31).
 
   \vspace{0.25em}
   \centering
@@ -412,32 +446,31 @@
     \toprule
     Segment & Dominant plan set (days / 31) & Also selected \\
     \midrule
-    A / Broad & \texttt{semantic\_2} (31) & --- \\
-    A / Phrase; Exact & \texttt{ks\_0013} hist.\ (29) & \texttt{dispersion\_9} (2) \\
-    B / Broad & \texttt{semantic\_5} (27) & \texttt{dispersion\_6} (4) \\
-    B / Phrase; Exact & \texttt{dispersion\_13} (29) & \texttt{semantic\_12} (2) \\
-    USA / Broad & \texttt{composite\_18} (30) & \texttt{top\_15} (1) \\
-    USA / Phrase; Exact & \texttt{dispersion\_21} (19) & \texttt{ks\_0010} hist.\ (12) \\
+    A / Broad & \texttt{ks\_0001} hist.\ (12) & \texttt{semantic\_2} (10), \texttt{dispersion\_3} (5) \\
+    A / Phrase; Exact & \texttt{ks\_0006} hist.\ (16) & \texttt{ks\_0005} hist.\ (15) \\
+    B / Broad & \texttt{ks\_0002} hist.\ (16) & \texttt{semantic\_5} (9), \texttt{dispersion\_6} (3) \\
+    B / Phrase; Exact & \texttt{top\_11} (24) & \texttt{ks\_0017} hist.\ (6), \texttt{dispersion\_13} (1) \\
+    USA / Broad & \texttt{dispersion\_17} (20) & \texttt{ks\_0009} hist.\ (11) \\
+    USA / Phrase; Exact & \texttt{ks\_0010} hist.\ (18) & \texttt{dispersion\_21} (7), \texttt{semantic\_20} (6) \\
     \bottomrule
   \end{tabular}
 
   \vspace{0.25em}
   \raggedright
   {\scriptsize
-  Prefix \texttt{synthetic\_\{region\}\_\{match\}\_} omitted in table (e.g.\ full ID \texttt{synthetic\_USA\_Broad\_composite\_18}).
+  Prefix \texttt{synthetic\_\{region\}\_\{match\}\_} omitted (e.g.\ \texttt{synthetic\_B\_Phrase; Exact\_top\_11}).
   \texttt{ks\_0010}: large US Phrase+Exact historical list (${\sim}$115 kw).
-  \texttt{ks\_0013}: small A Phrase+Exact historical list (${\sim}$19 kw).
-  Broad plans favor \textbf{semantic} synthetics; Phrase+Exact mix \textbf{dispersion} synthetics and \textbf{historical} sets.
+  A Phrase+Exact alternates two small historical lists (\texttt{ks\_0005}/\texttt{ks\_0006}).
   Source: \texttt{plans/*/campaign\_plan.csv}, Mar 2026 backtest.}
   \normalsize
 \end{frame}
 
 \begin{frame}{Caveats}
   \begin{itemize}
-    \item \textbf{Lift $\neq$ observed level:} predicted daily lifts $\sim$4.3 (plan) / $\sim$2.1 (actual under $\hat f$) vs.\ observed $\sim$15; scoring is counterfactual on $\hat f$, not realized outcomes.
+    \item \textbf{Lift $\neq$ observed level:} predicted daily lifts $\sim$3.9 (plan) / $\sim$1.4 (panel config under $\hat f$) vs.\ observed $\sim$15; scoring is counterfactual on $\hat f$, not realized outcomes.
     \item \textbf{Scoring vs.\ optimizer mismatch:} MILP uses \texttt{ensemble\_ridge\_xgb}; evaluation uses the wider 5-member ensemble --- plan lift can exceed actual lift under $\hat f$.
-    \item \textbf{Keyword sets not fixed:} mostly stable per segment, but USA Phrase+Exact flips \texttt{dispersion\_21} $\leftrightarrow$ \texttt{ks\_0010} after mid-March; budgets move even when the set ID is unchanged.
-    \item \textbf{Budget binding:} plan totals hit the \$413/day cap; ${\sim}$1.5 / 6 segments at \$0 budget on average (others absorb spend).
+    \item \textbf{Keyword sets not fixed:} walk-forward refit shifts choices (e.g.\ A Broad splits across historical \texttt{ks\_0001} and \texttt{semantic\_2}); USA Phrase+Exact mixes \texttt{ks\_0010} with dispersion/semantic synthetics.
+    \item \textbf{Budget binding:} plan totals hit the \$413/day cap; ${\sim}$0.5 / 6 segments at \$0 budget on average (others absorb spend).
   \end{itemize}
 \end{frame}
 
