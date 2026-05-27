@@ -1,7 +1,0 @@
-segment,keyword_set_id,display_file
-A / Broad,synthetic_A_Broad_top_1,synthetic_A_Broad_top_1.csv
-B / Broad,synthetic_B_Broad_top_3,synthetic_B_Broad_top_3.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_dispersion_8,synthetic_A_Phrase; Exact_dispersion_8.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_dispersion_13,synthetic_B_Phrase; Exact_dispersion_13.csv
-USA / Broad,synthetic_USA_Broad_top_15,synthetic_USA_Broad_top_15.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_dispersion_20,synthetic_USA_Phrase; Exact_dispersion_20.csv
