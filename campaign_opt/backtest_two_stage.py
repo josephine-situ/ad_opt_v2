@@ -8,12 +8,10 @@ from typing import Any
 
 import pandas as pd
 
-from campaign_opt.backtest import (
-    _fit_evaluation_model,
-    optimizer_manifest_for_backtest,
-)
+from campaign_opt.backtest import optimizer_manifest_for_backtest
 from campaign_opt.evaluation import (
     compare_plan_and_actual_week,
+    fit_evaluation_model,
     plan_vs_actual_row_metrics,
     week_planning_dates,
     week_starts_in_window,
@@ -46,7 +44,7 @@ def run_two_stage_backtest(
     plans_dir.mkdir(parents=True, exist_ok=True)
     set_features = build_keyword_set_feature_table(config.course)
     opt_manifest = optimizer_manifest_for_backtest(config)
-    eval_model = _fit_evaluation_model(config, df, opt_manifest, out_dir)
+    eval_model = fit_evaluation_model(config, df, opt_manifest, out_dir)
 
     start = pd.Timestamp(start).normalize()
     end = pd.Timestamp(end).normalize()

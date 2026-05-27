@@ -10,19 +10,11 @@ import pandas as pd
 
 from campaign_opt.evaluation import (
     compare_plan_and_actual,
-    fit_ensemble,
-    fit_single_model_evaluation,
-    optimizer_winner_name,
+    fit_evaluation_model,
     plan_vs_actual_row_metrics,
-    save_ensemble,
-    save_evaluation_model,
 )
 from campaign_opt.features import train_before_date
-from campaign_opt.modeling import (
-    _cv_rmse_member_weights,
-    base_tournament_candidates,
-    eval_pipeline_holdout,
-)
+from campaign_opt.modeling import eval_pipeline_holdout
 from campaign_opt.optimize import require_optimizer_winner, run_optimizer
 from campaign_opt.schema import CampaignOptConfig
 from utils.campaign_features import build_keyword_set_feature_table
@@ -48,71 +40,8 @@ def optimizer_manifest_for_backtest(config: CampaignOptConfig) -> dict:
     return manifest
 
 
-def _load_holdout_metrics(config: CampaignOptConfig) -> dict[str, dict[str, float]]:
-    path = config.exp_dir() / "holdout_metrics.json"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Missing {path}. Run fit_response_models.py before backtest."
-        )
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _evaluation_ensemble_weights(
-    config: CampaignOptConfig,
-    metrics_table: dict[str, dict[str, float]],
-) -> dict[str, float]:
-    """Inverse-CV-RMSE weights over base tournament members only."""
-    member_names = base_tournament_candidates(config.model_policy.candidates)
-    for name in member_names:
-        rmse = (metrics_table.get(name) or {}).get("cv_rmse_levels")
-        if rmse is None:
-            raise ValueError(
-                f"holdout_metrics.json entry {name!r} missing cv_rmse_levels "
-                "(required when evaluation.weight_by_cv_rmse is true)"
-            )
-    return _cv_rmse_member_weights(metrics_table, member_names)
-
-
-def _fit_evaluation_model(
-    config: CampaignOptConfig,
-    df: pd.DataFrame,
-    opt_manifest: dict,
-    out_dir: Path,
-) -> Any:
-    """Single full-panel model for plan-vs-actual scoring (not walk-forward)."""
-    if not config.evaluation.use_ensemble:
-        eval_name = optimizer_winner_name(config)
-        print(f"Fitting evaluation model {eval_name!r} on full panel: {len(df)} rows")
-        model = fit_single_model_evaluation(
-            df,
-            config,
-            opt_manifest,
-            model_name=eval_name,
-        )
-        save_evaluation_model(model, out_dir / f"evaluation_{eval_name}.joblib")
-        return model
-
-    static_metrics = _load_holdout_metrics(config)
-    weights = (
-        _evaluation_ensemble_weights(config, static_metrics)
-        if config.evaluation.weight_by_cv_rmse
-        else None
-    )
-    dmin = pd.to_datetime(df["date"]).min().date()
-    dmax = pd.to_datetime(df["date"]).max().date()
-    print(
-        f"Fitting evaluation ensemble on full panel: "
-        f"{len(df)} rows ({dmin} → {dmax})"
-    )
-    ensemble = fit_ensemble(
-        df,
-        config,
-        member_weights=weights,
-        member_hyperparams=opt_manifest.get("best_hyperparams"),
-    )
-    save_ensemble(ensemble, out_dir / "ensemble_model.joblib")
-    return ensemble
+# Backward-compatible alias for tests and scripts that patch the old name.
+_fit_evaluation_model = fit_evaluation_model
 
 
 def run_daily_backtest(
@@ -137,7 +66,7 @@ def run_daily_backtest(
     plans_dir.mkdir(parents=True, exist_ok=True)
     set_features = build_keyword_set_feature_table(config.course)
     opt_manifest = optimizer_manifest_for_backtest(config)
-    eval_model = _fit_evaluation_model(config, df, opt_manifest, out_dir)
+    eval_model = fit_evaluation_model(config, df, opt_manifest, out_dir)
     feature_cols = opt_manifest["feature_cols"]
 
     dates = pd.date_range(start, end, freq="D")

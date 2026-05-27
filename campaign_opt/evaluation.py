@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from sklearn.metrics import mean_squared_error, r2_score
 from campaign_opt.decisions import region_of_segment
 from campaign_opt.modeling import (
     _build_preprocessor,
+    _cv_rmse_member_weights,
     _prep_xy,
     base_tournament_candidates,
     pipeline_feature_overview_lines,
@@ -163,6 +165,104 @@ def fit_ensemble(
         target=config.target,
         baseline_budget=float(config.evaluation.baseline_budget),
     )
+
+
+def load_holdout_metrics(config: CampaignOptConfig) -> dict[str, dict[str, float]]:
+    """Tournament CV/holdout metrics (``holdout_metrics.json``)."""
+    path = config.exp_dir() / "holdout_metrics.json"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing {path}. Run fit_response_models.py before fitting the evaluation ensemble."
+        )
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def evaluation_ensemble_weights(
+    config: CampaignOptConfig,
+    metrics_table: dict[str, dict[str, float]],
+) -> dict[str, float]:
+    """Inverse-CV-RMSE weights over base tournament members only."""
+    member_names = base_tournament_candidates(config.model_policy.candidates)
+    for name in member_names:
+        rmse = (metrics_table.get(name) or {}).get("cv_rmse_levels")
+        if rmse is None:
+            raise ValueError(
+                f"holdout_metrics.json entry {name!r} missing cv_rmse_levels "
+                "(required when evaluation.weight_by_cv_rmse is true)"
+            )
+    return _cv_rmse_member_weights(metrics_table, member_names)
+
+
+def fit_evaluation_model(
+    config: CampaignOptConfig,
+    df: pd.DataFrame,
+    manifest: dict,
+    out_dir: Path,
+) -> EnsembleModel:
+    """
+    Fit the plan-vs-actual scorer on the full modeling panel (backtest + production).
+
+    When ``evaluation.use_ensemble`` is true, uses CV-RMSE weights from
+    ``holdout_metrics.json`` when ``evaluation.weight_by_cv_rmse`` is set.
+    Saves ``ensemble_model.joblib`` (or ``evaluation_{name}.joblib``) under ``out_dir``.
+    """
+    out_dir = Path(out_dir)
+    if not config.evaluation.use_ensemble:
+        eval_name = optimizer_winner_name(config)
+        print(f"Fitting evaluation model {eval_name!r} on full panel: {len(df)} rows")
+        model = fit_single_model_evaluation(
+            df,
+            config,
+            manifest,
+            model_name=eval_name,
+        )
+        save_evaluation_model(model, out_dir / f"evaluation_{eval_name}.joblib")
+        return model
+
+    static_metrics = load_holdout_metrics(config)
+    weights = (
+        evaluation_ensemble_weights(config, static_metrics)
+        if config.evaluation.weight_by_cv_rmse
+        else None
+    )
+    dmin = pd.to_datetime(df["date"]).min().date()
+    dmax = pd.to_datetime(df["date"]).max().date()
+    print(
+        f"Fitting evaluation ensemble on full panel: "
+        f"{len(df)} rows ({dmin} → {dmax})"
+    )
+    if weights:
+        for name, w in sorted(weights.items()):
+            print(f"    member weight: {name}={w:.3f}")
+    ensemble = fit_ensemble(
+        df,
+        config,
+        member_weights=weights,
+        member_hyperparams=manifest.get("best_hyperparams"),
+    )
+    save_ensemble(ensemble, out_dir / "ensemble_model.joblib")
+    return ensemble
+
+
+def load_or_fit_evaluation_model(
+    config: CampaignOptConfig,
+    df: pd.DataFrame,
+    manifest: dict,
+    out_dir: Path,
+) -> EnsembleModel:
+    """Load saved evaluation ensemble or fit with :func:`fit_evaluation_model`."""
+    out_dir = Path(out_dir)
+    if config.evaluation.use_ensemble:
+        path = out_dir / "ensemble_model.joblib"
+        if path.exists():
+            return joblib.load(path)
+    else:
+        eval_name = optimizer_winner_name(config)
+        path = out_dir / f"evaluation_{eval_name}.joblib"
+        if path.exists():
+            return joblib.load(path)
+    return fit_evaluation_model(config, df, manifest, out_dir)
 
 
 def optimizer_winner_name(config: CampaignOptConfig) -> str:
@@ -377,6 +477,53 @@ def region_actual_lookup(day_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["region", "daily_budget", "keyword_set_id"])
     df = _ensure_region_column(day_df)
     return _aggregate_campaign_decisions(df, ["region"])
+
+
+def baseline_levels_for_candidate_sets(
+    model: Any,
+    k_map: dict[str, list[str]],
+    config: CampaignOptConfig,
+    planning_date: pd.Timestamp,
+    set_features: pd.DataFrame,
+    *,
+    baseline_budget: float | None = None,
+) -> dict[tuple[str, str], float]:
+    """
+    Level f_k(baseline) for each (segment, keyword_set) candidate.
+
+    Uses the same ``build_segment_decision_rows`` path as plan scoring and
+    ``EnsembleModel.predict_levels`` (or ``pipeline.predict`` for a single sklearn winner).
+    """
+    bb = float(config.evaluation.baseline_budget if baseline_budget is None else baseline_budget)
+    feature_cols = get_context_feature_columns(config.context_features)
+    target = config.target
+    decisions: list[dict[str, Any]] = []
+    for seg, kids in k_map.items():
+        for k in kids:
+            decisions.append(
+                {
+                    "segment": str(seg),
+                    "keyword_set_id": str(k),
+                    "daily_budget": bb,
+                }
+            )
+    if not decisions:
+        return {}
+    dec_df = pd.DataFrame(decisions)
+    rows = build_segment_decision_rows(
+        dec_df, planning_date, set_features, config.course, feature_cols
+    )
+    if target not in rows.columns:
+        rows[target] = 0.0
+    if isinstance(model, EnsembleModel):
+        levels = model.predict_levels(rows)
+    else:
+        X, _ = _prep_xy(rows, target, feature_cols)
+        levels = np.asarray(model.predict(X), dtype=float)
+    return {
+        (str(dec["segment"]), str(dec["keyword_set_id"])): float(levels[i])
+        for i, dec in enumerate(decisions)
+    }
 
 
 def build_segment_decision_rows(

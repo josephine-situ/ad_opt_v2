@@ -247,6 +247,39 @@ def _gurobi_incremental_pred(
     return float(f_dec) - float(f0)
 
 
+def _plan_incremental_pred(
+    model: gp.Model,
+    seg: str,
+    pred_var: Any,
+    chosen_k: str | None,
+    x_vars: dict[str, Any],
+    y_vars: dict[tuple[str, str], Any],
+    k_map: dict[str, list[str]],
+    baseline_budget: float,
+    *,
+    baseline_level_by_key: dict[tuple[str, str], float] | None = None,
+    coeffs: dict[str, Any] | None = None,
+) -> float | None:
+    """Incremental lift for the solved plan; tree backends use precomputed baseline levels."""
+    if baseline_level_by_key is not None and chosen_k is not None:
+        f_dec = _predicted_value(pred_var)
+        key = (seg, str(chosen_k))
+        f0 = baseline_level_by_key.get(key, baseline_level_by_key.get((str(seg), str(chosen_k))))
+        if f_dec is not None and f0 is not None:
+            return float(f_dec) - float(f0)
+    return _optimizer_incremental_pred(
+        model,
+        seg,
+        pred_var,
+        x_vars,
+        y_vars,
+        k_map,
+        str(chosen_k),
+        baseline_budget,
+        coeffs=coeffs,
+    )
+
+
 def _optimizer_incremental_pred(
     model: gp.Model,
     seg: str,
@@ -306,6 +339,79 @@ def _budget_tiebreak_penalty(config: CampaignOptConfig) -> float:
     return penalty
 
 
+def _baseline_budget(config: CampaignOptConfig) -> float:
+    return float(config.evaluation.baseline_budget)
+
+
+def _piecewise_budget_level_at(pw_seg: dict[str, list[float]], budget: float) -> float:
+    weights = _sos2_weights_at_x(pw_seg["knots"], budget)
+    vals = pw_seg["values"]
+    return float(sum(weights[i] * float(vals[i]) for i in range(len(weights))))
+
+
+def baseline_levels_from_coeffs(
+    coeffs: dict[str, Any],
+    segments: list[str],
+    k_map: dict[str, list[str]],
+    baseline_budget: float,
+    *,
+    n_planning_days: int = 1,
+    calendar_offsets: dict[tuple[str, int], float] | None = None,
+) -> dict[tuple[str, str], float]:
+    """
+    f_k(baseline_budget) per (segment, keyword_set) for incremental MILP objectives.
+
+    Matches evaluation: same keyword set at ``baseline_budget`` (default 0).
+    """
+    pw = coeffs.get("piecewise_budget")
+    set_lift = coeffs.get("static_context_lift") or coeffs.get("keyword_set_effect", {})
+    seg_slope = coeffs.get("segment_budget_slope", {})
+    seg_intercept = coeffs.get("segment_intercept", {})
+    cal_offset = float(coeffs.get("calendar_offset", 0.0))
+    n_days = max(1, int(n_planning_days))
+    out: dict[tuple[str, str], float] = {}
+
+    for seg in segments:
+        beta = float(seg_slope.get(seg, seg_slope.get(str(seg), 0.0)))
+        alpha = float(seg_intercept.get(seg, seg_intercept.get(str(seg), 0.0)))
+        for k in k_map.get(seg, []):
+            kid = str(k)
+            lift = float(set_lift.get(kid, 0.0))
+            total = 0.0
+            for day_idx in range(n_days):
+                cal = cal_offset
+                if calendar_offsets is not None:
+                    cal = float(calendar_offsets.get((seg, day_idx), cal_offset))
+                if pw is not None and seg in pw:
+                    total += _piecewise_budget_level_at(pw[seg], baseline_budget) + cal + lift
+                else:
+                    total += alpha + beta * float(baseline_budget) + cal + lift
+            out[(seg, kid)] = total
+    return out
+
+
+def _incremental_objective_expr(
+    pred_vars: dict[str, Any],
+    y_vars: dict[tuple[str, str], Any],
+    segments: list[str],
+    k_map: dict[str, list[str]],
+    baseline_level_by_key: dict[tuple[str, str], float],
+) -> Any:
+    """Sum_s f_s(plan) - sum_{s,k} y_sk * f_k(baseline)."""
+    level_sum = gp.quicksum(pred_vars[s] for s in segments)
+    baseline_terms = []
+    for seg in segments:
+        for k in k_map.get(seg, []):
+            key = (seg, str(k))
+            if key not in y_vars:
+                continue
+            f0 = float(baseline_level_by_key.get(key, 0.0))
+            baseline_terms.append(f0 * y_vars[key])
+    if not baseline_terms:
+        return level_sum
+    return level_sum - gp.quicksum(baseline_terms)
+
+
 def _add_regional_order_constraints(
     model: gp.Model,
     config: CampaignOptConfig,
@@ -347,6 +453,8 @@ def solve_campaign_milp(
     segment_predictors_by_date: list[SegmentPredictor] | None = None,
     train: pd.DataFrame | None = None,
     solver_coeffs: dict[str, Any] | None = None,
+    baseline_level_by_key: dict[tuple[str, str], float] | None = None,
+    planning_calendar_offsets: dict[tuple[str, int], float] | None = None,
 ) -> pd.DataFrame:
     """
     Single entry point for segment budget + keyword-set MILPs.
@@ -354,8 +462,15 @@ def solve_campaign_milp(
     Each backend only supplies how predicted target is built per segment
     (linear budget slope, piecewise budget curve, embedded trees, etc.).
 
+    The objective maximizes incremental lift
+    ``sum_s f_s(plan) - sum_{s,k} y_sk * f_k(baseline_budget)`` (same keyword set at
+  ``evaluation.baseline_budget``), minus an optional budget tie-break.
+
     Pass ``model``, ``x_vars``, and ``y_vars`` when a backend adds constraints
     (e.g. exact tree embedding) before the objective is set.
+
+    Tree backends must pass ``baseline_level_by_key`` (per-candidate level at baseline).
+    Linear/piecewise backends may omit it; levels are derived from ``solver_coeffs``.
     """
     segments = build_segment_list(candidates)
     k_map = candidates_by_segment(candidates)
@@ -410,7 +525,26 @@ def solve_campaign_milp(
 
     model.addConstr(gp.quicksum(x_vars[s] for s in segments) <= total_budget, name="total_budget")
     _add_regional_order_constraints(model, config, segments, x_vars)
-    pred_lift = gp.quicksum(pred_vars[s] for s in segments)
+
+    n_planning_days = len(segment_predictors_by_date) if segment_predictors_by_date else 1
+    baseline_budget = _baseline_budget(config)
+    if baseline_level_by_key is None:
+        if solver_coeffs is None:
+            raise ValueError(
+                "incremental MILP objective requires baseline_level_by_key or solver_coeffs"
+            )
+        baseline_level_by_key = baseline_levels_from_coeffs(
+            solver_coeffs,
+            segments,
+            k_map,
+            baseline_budget,
+            n_planning_days=n_planning_days,
+            calendar_offsets=planning_calendar_offsets,
+        )
+
+    pred_lift = _incremental_objective_expr(
+        pred_vars, y_vars, segments, k_map, baseline_level_by_key
+    )
     penalty = _budget_tiebreak_penalty(config)
     if penalty > 0:
         model.setObjective(
@@ -438,8 +572,6 @@ def solve_campaign_milp(
             model.write(str(output_dir / f"{model_name}.lp"))
 
     rows = []
-    n_planning_days = len(segment_predictors_by_date) if segment_predictors_by_date else 1
-    baseline_budget = 0.0
     has_solution = model.SolCount > 0
     for seg in segments:
         if fixed_keyword_sets and seg in fixed_keyword_sets:
@@ -458,15 +590,16 @@ def solve_campaign_milp(
                 "daily_budget": x_vars[seg].X if model.SolCount else None,
                 "keyword_set_id": chosen_k,
                 "milp_pred": _predicted_value(pred_vars[seg]),
-                "pred_over_base": _optimizer_incremental_pred(
+                "pred_over_base": _plan_incremental_pred(
                     model,
                     seg,
                     pred_vars[seg],
+                    chosen_k,
                     x_vars,
                     y_vars,
                     k_map,
-                    str(chosen_k),
                     baseline_budget,
+                    baseline_level_by_key=baseline_level_by_key,
                     coeffs=solver_coeffs,
                 ),
                 "external_model_pred": None,
