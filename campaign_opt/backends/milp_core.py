@@ -602,6 +602,12 @@ def solve_campaign_milp(
         )
     else:
         model.setObjective(objective_expr, GRB.MAXIMIZE)
+    tb = f" − {penalty}×Σ budget" if penalty > 0 else ""
+    print(
+        f"[Info] MILP objective: {objective_mode} "
+        f"({'Σ segment level' if objective_mode == 'levels' else 'incremental lift'}{tb})",
+        flush=True,
+    )
     model.optimize()
 
     if model.Status not in (GRB.OPTIMAL, GRB.SUBOPTIMAL, GRB.TIME_LIMIT):
@@ -660,11 +666,26 @@ def solve_campaign_milp(
     if write_outputs and output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
         plan.to_csv(output_dir / "campaign_plan.csv", index=False)
+        status_payload: dict[str, Any] = {
+            "status": int(model.Status),
+            "obj_val": model.ObjVal if model.SolCount else None,
+            "objective": objective_mode,
+        }
+        if model.SolCount and len(plan):
+            milp = pd.to_numeric(plan["milp_pred"], errors="coerce")
+            bud = pd.to_numeric(plan["daily_budget"], errors="coerce")
+            level_sum = float(milp.sum())
+            budget_sum = float(bud.sum())
+            status_payload["predicted_level_sum"] = level_sum
+            status_payload["budget_sum"] = budget_sum
+            status_payload["tiebreak_penalty"] = penalty
+            status_payload["tiebreak_term"] = penalty * budget_sum
+            if objective_mode == "levels" and penalty > 0 and model.ObjVal is not None:
+                status_payload["obj_val_as_level_sum_minus_tiebreak"] = float(
+                    model.ObjVal
+                ) + penalty * budget_sum
         with open(output_dir / "solver_status.json", "w", encoding="utf-8") as f:
-            json.dump(
-                {"status": int(model.Status), "obj_val": model.ObjVal if model.SolCount else None},
-                f,
-            )
+            json.dump(status_payload, f, indent=2)
     return plan
 
 
