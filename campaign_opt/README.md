@@ -293,22 +293,7 @@ Or pass `--analyze` to `backtest_campaign.py` after a local full-window run. Out
 - `regional_breakdown.csv` — opt vs actual spend/lift shares by region
 - `backtest_summary.tex` — LaTeX performance table
 
-### Slurm (cluster)
-
-One array task per day (`--day`); the last task runs analysis for each course:
-
-```bash
-EXP_NAME=default COURSES="sys_think" START_DAY=2025-10-01 END_DAY=2026-02-10 \
-  sbatch --array=0-132%4 submit_backtest.sh
-```
-
-Rerun missing days (auto-detect from `plans/YYYYMMDD/campaign_plan.csv`):
-
-```bash
-sbatch submit_backtest_missing.sh
-```
-
-Environment overrides: `EXP_NAME`, `COURSES`, `START_DAY`, `END_DAY`, `STRATEGY` (`daily` or `two_stage`), `EXTRA_ARGS`, `PY` (default `uv run python`).
+On a cluster, run one `backtest_campaign.py` job per day with `--day YYYY-MM-DD`, then `analyze_backtest_results.py` after the window completes.
 
 ---
 

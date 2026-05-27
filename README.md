@@ -51,8 +51,6 @@ uv run python scripts/backtest_campaign.py --course sys_think --start 2026-05-12
 uv run python scripts/analyze_backtest_results.py --course sys_think --start 2026-05-12 --end 2026-05-25
 ```
 
-Cluster array jobs: `submit_backtest.sh` (one day per task; last task runs analysis). Rerun gaps: `submit_backtest_missing.sh`.
-
 Per-day plan folders and fitted `.joblib` files under `opt_results/.../backtest/` are regeneratable and not tracked in git.
 
 ## Presentations
