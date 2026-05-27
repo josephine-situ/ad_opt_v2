@@ -27,7 +27,6 @@ from campaign_opt.features import prepare_modeling_data
 from campaign_opt.schema import default_config_path, load_campaign_config
 from config import COURSE_CONFIG
 from utils.campaign_features import add_segment_column, load_campaign_day_panel
-from utils.keyword_candidates import build_segment_candidates
 from utils.tee_logging import setup_tee_logging
 
 
@@ -38,21 +37,15 @@ def _load_backtest_inputs(config, course: str):
         config.target = "clicks"
 
     panel = add_segment_column(load_campaign_day_panel(config.course))
-    cand_path = Path("data") / config.course / "processed" / "segment-keyword-candidates.csv"
     allowed_match_types = parse_allowed_match_types(config.constraints)
     excluded_regions = parse_excluded_regions(config.constraints)
-    if not cand_path.exists():
-        candidates, extended = build_segment_candidates(
-            config.course,
-            allowed_match_types=allowed_match_types,
-            excluded_regions=excluded_regions or None,
-        )
-        cand_path.parent.mkdir(parents=True, exist_ok=True)
-        candidates.to_csv(cand_path, index=False)
-        extended.to_csv(
-            Path("data") / config.course / "processed" / "campaign-keyword-sets-extended.csv",
-            index=False,
-        )
+    from utils.keyword_candidates import ensure_segment_keyword_candidates
+
+    cand_path = ensure_segment_keyword_candidates(
+        config.course,
+        allowed_match_types=allowed_match_types,
+        excluded_regions=excluded_regions or None,
+    )
     candidates = apply_candidate_region_policy(pd.read_csv(cand_path), config.constraints)
     return df, panel, candidates
 
@@ -170,9 +163,9 @@ def main() -> None:
             end=end,
             total_budget=total_budget,
             out_dir=out_dir,
-            budget_cadence=budget_cadence,
+            use_actual_budget=args.use_actual_budget,
         )
-        print(f"Finished {len(summary)} weeks. Summary: {out_dir / 'weekly_backtest_summary.csv'}")
+        print(f"Finished {len(summary)} days. Summary: {out_dir / 'daily_backtest_summary.csv'}")
     else:
         summary = run_daily_backtest(
             config,

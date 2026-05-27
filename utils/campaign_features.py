@@ -92,18 +92,36 @@ def load_keyword_sets(course: str) -> pd.DataFrame:
     return keyword_sets
 
 
+def _merge_keyword_set_tables(base: pd.DataFrame, extended: pd.DataFrame) -> pd.DataFrame:
+    """Use extended rows where present; keep base rows for ids not in extended."""
+    ext = extended.set_index("keyword_set_id", drop=False)
+    ext_ids = set(ext.index.astype(str))
+    rows: list[pd.Series] = []
+    for _, row in base.iterrows():
+        kid = str(row["keyword_set_id"])
+        rows.append(ext.loc[kid] if kid in ext_ids else row)
+    for kid in sorted(ext_ids - {str(x) for x in base["keyword_set_id"]}):
+        rows.append(ext.loc[kid])
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+
 def load_keyword_sets_for_features(course: str) -> pd.DataFrame:
     """Historical keyword sets plus synthetic rows from campaign-keyword-sets-extended.csv."""
+    from utils.keyword_allowlist import (
+        apply_allowlist_to_keyword_sets,
+        load_enrollment_keyword_allowlist,
+    )
+
     base = load_keyword_sets(course)
     ext_path = data_paths(course)["processed"] / "campaign-keyword-sets-extended.csv"
-    if not ext_path.exists():
-        return base
-    extended, _ = resolve_positive_keyword_column(pd.read_csv(ext_path))
-    new_ids = set(extended["keyword_set_id"].astype(str)) - set(base["keyword_set_id"].astype(str))
-    if not new_ids:
-        return base
-    extra = extended[extended["keyword_set_id"].astype(str).isin(new_ids)]
-    return pd.concat([base, extra], ignore_index=True)
+    if ext_path.exists():
+        extended, _ = resolve_positive_keyword_column(pd.read_csv(ext_path))
+        merged = _merge_keyword_set_tables(base, extended)
+    else:
+        merged = base
+    if load_enrollment_keyword_allowlist(course) is not None:
+        merged = apply_allowlist_to_keyword_sets(merged, course)
+    return merged
 
 
 def add_segment_column(df: pd.DataFrame) -> pd.DataFrame:

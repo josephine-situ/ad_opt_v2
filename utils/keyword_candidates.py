@@ -16,6 +16,11 @@ from utils.campaign_features import (
     load_keyword_sets,
     load_or_build_embeddings,
 )
+from utils.keyword_allowlist import (
+    filter_keyword_list,
+    filter_keyword_sets_dataframe,
+    load_enrollment_keyword_allowlist,
+)
 
 MATCH_TYPE_COLS = {
     "Broad": "broad_keywords",
@@ -34,6 +39,7 @@ def _keywords_from_panel(
     *,
     top_n: int = 30,
     volume_col: str = "clicks",
+    allowed_keywords: set[str] | None = None,
 ) -> list[str]:
     """Top keywords by volume and volume/cost efficiency for the segment panel slice."""
     if volume_col not in kw_day.columns:
@@ -44,6 +50,8 @@ def _keywords_from_panel(
     sub = kw_day[kw_day["region"] == region].copy()
     if allowed:
         sub = sub[sub["match_type"].isin(allowed)]
+    if allowed_keywords:
+        sub = sub[sub["keyword"].astype(str).str.lower().str.strip().isin(allowed_keywords)]
     if sub.empty:
         return []
 
@@ -262,13 +270,19 @@ def _ensure_embeddings(
     pool: list[str],
     emb_map: dict[str, np.ndarray] | None,
     anchors: np.ndarray | None,
+    allowed_keywords: set[str] | None = None,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     if emb_map is not None and anchors is not None:
         return emb_map, anchors
     paths = data_paths(course)
     all_kw = [k.lower() for k in pool]
     for _, g in summary.groupby("segment", sort=False):
-        all_kw.extend(k.lower() for k in _keywords_from_panel(kw_day, g.iloc[0], top_n=top_n))
+        all_kw.extend(
+            k.lower()
+            for k in _keywords_from_panel(
+                kw_day, g.iloc[0], top_n=top_n, allowed_keywords=allowed_keywords
+            )
+        )
     all_kw.extend(a.lower() for a in COURSE_ANCHORS)
     cache = paths["cache"] / "keyword_embeddings.parquet"
     emb_map = load_or_build_embeddings(all_kw, cache)
@@ -351,6 +365,7 @@ def build_segment_candidates(
     synthetic_prefix: str = "synthetic",
     allowed_match_types: list[str] | None = None,
     excluded_regions: list[str] | None = None,
+    allowed_keywords: set[str] | None = None,
     include_performance_synthetic: bool = True,
     include_semantic_synthetic: bool = True,
     include_dispersion_synthetic: bool = True,
@@ -360,6 +375,9 @@ def build_segment_candidates(
     Returns:
         candidates: segment, keyword_set_id, source
         extended_sets: keyword_set_id, positive_keywords (+ match-type columns when known)
+
+    When ``data/<course>/gkp/*Keywords*Enrollments*.xlsx`` exists, only those keywords
+    are kept in historical and synthetic sets; empty sets are dropped from candidates.
 
     Synthetic sources:
         synthetic_top — union of top-click and top click-efficiency keywords from kw-day-panel
@@ -374,15 +392,22 @@ def build_segment_candidates(
         summary = summary[~summary["region"].isin(excluded_regions)]
     if allowed_match_types:
         summary = summary[summary["match_types"].isin(allowed_match_types)]
+    if allowed_keywords is None:
+        allowed_keywords = load_enrollment_keyword_allowlist(course)
     keyword_sets = load_keyword_sets(course)
+    if allowed_keywords:
+        keyword_sets = filter_keyword_sets_dataframe(keyword_sets, allowed_keywords)
     positive_col = "positive_keywords"
 
     kw_path = Path("data") / course / "processed" / "kw-day-panel.csv"
     kw_day = pd.read_csv(kw_path) if kw_path.exists() else pd.DataFrame()
 
+    allowed_set_ids = set(keyword_sets["keyword_set_id"].astype(str))
     hist_rows = []
     for segment, grp in summary.groupby("segment", sort=False):
         for set_id in grp["keyword_set_id"].dropna().unique():
+            if str(set_id) not in allowed_set_ids:
+                continue
             hist_rows.append(
                 {
                     "segment": segment,
@@ -406,9 +431,13 @@ def build_segment_candidates(
     if not kw_day.empty:
         for segment, grp in summary.groupby("segment", sort=False):
             row = grp.iloc[0]
-            pool = _keywords_from_panel(kw_day, row, top_n=top_n)
+            pool = _keywords_from_panel(
+                kw_day, row, top_n=top_n, allowed_keywords=allowed_keywords
+            )
             if not pool:
                 continue
+            if allowed_keywords:
+                pool = filter_keyword_list(pool, allowed_keywords)
 
             target_size = set_size or _target_set_size(summary, segment, top_n=top_n, fallback=top_n)
             seen_variants: set[frozenset[str]] = set()
@@ -432,7 +461,13 @@ def build_segment_candidates(
                 )
                 seen_variants.add(frozenset(k.lower() for k in pool))
 
-                pool_conv = _keywords_from_panel(kw_day, row, top_n=top_n, volume_col="all_conv")
+                pool_conv = _keywords_from_panel(
+                    kw_day,
+                    row,
+                    top_n=top_n,
+                    volume_col="all_conv",
+                    allowed_keywords=allowed_keywords,
+                )
                 if pool_conv:
                     synth_idx += 1
                     new_id, synth_idx = _next_synthetic_id(
@@ -458,7 +493,14 @@ def build_segment_candidates(
 
             if need_embeddings:
                 emb_map, anchors = _ensure_embeddings(
-                    course, summary, kw_day, top_n=top_n, pool=pool, emb_map=emb_map, anchors=anchors
+                    course,
+                    summary,
+                    kw_day,
+                    top_n=top_n,
+                    pool=pool,
+                    emb_map=emb_map,
+                    anchors=anchors,
+                    allowed_keywords=allowed_keywords,
                 )
                 pool_lower = [k.lower() for k in pool]
 
@@ -520,3 +562,29 @@ def build_segment_candidates(
         extended = pd.concat([extended, pd.DataFrame(synthetic_sets)], ignore_index=True)
 
     return candidates, extended
+
+
+def ensure_segment_keyword_candidates(
+    course: str,
+    *,
+    allowed_match_types: list[str] | None = None,
+    excluded_regions: list[str] | None = None,
+) -> Path:
+    """Write segment-keyword-candidates and extended sets when missing or allowlist is newer."""
+    from utils.keyword_allowlist import should_refresh_keyword_candidates
+
+    processed = Path("data") / course / "processed"
+    cand_path = processed / "segment-keyword-candidates.csv"
+    ext_path = processed / "campaign-keyword-sets-extended.csv"
+    if not should_refresh_keyword_candidates(course, cand_path):
+        return cand_path
+
+    candidates, extended = build_segment_candidates(
+        course,
+        allowed_match_types=allowed_match_types,
+        excluded_regions=excluded_regions,
+    )
+    processed.mkdir(parents=True, exist_ok=True)
+    candidates.to_csv(cand_path, index=False)
+    extended.to_csv(ext_path, index=False)
+    return cand_path

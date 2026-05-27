@@ -55,23 +55,15 @@ def main() -> None:
     )
     panel = add_segment_column(load_campaign_day_panel(config.course))
 
-    cand_path = Path("data") / config.course / "processed" / "segment-keyword-candidates.csv"
     allowed_match_types = parse_allowed_match_types(config.constraints)
     excluded_regions = parse_excluded_regions(config.constraints)
-    if not cand_path.exists():
-        from utils.keyword_candidates import build_segment_candidates
+    from utils.keyword_candidates import ensure_segment_keyword_candidates
 
-        candidates, extended = build_segment_candidates(
-            config.course,
-            allowed_match_types=allowed_match_types,
-            excluded_regions=excluded_regions or None,
-        )
-        cand_path.parent.mkdir(parents=True, exist_ok=True)
-        candidates.to_csv(cand_path, index=False)
-        extended.to_csv(
-            Path("data") / config.course / "processed" / "campaign-keyword-sets-extended.csv",
-            index=False,
-        )
+    cand_path = ensure_segment_keyword_candidates(
+        config.course,
+        allowed_match_types=allowed_match_types,
+        excluded_regions=excluded_regions or None,
+    )
     candidates = apply_candidate_region_policy(pd.read_csv(cand_path), config.constraints)
 
     course_cfg = COURSE_CONFIG.get(config.course, {})
