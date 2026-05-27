@@ -14,8 +14,8 @@ from campaign_opt.backends.tree_embed import (
     _embed_linear_candidate_predictions,
     _probe_ridge_xgb_embed_on_embed_rows,
 )
-from campaign_opt.coefficients import ridge_embed_coeffs
 from campaign_opt.decisions import apply_candidate_region_policy, build_segment_list, historical_budget_bounds
+from campaign_opt.linear_design import LinearMilpRidgeModel
 from campaign_opt.evaluation import EnsembleModel
 from campaign_opt.features import prepare_modeling_data, train_holdout_split
 from campaign_opt.modeling import refit_optimizer_model
@@ -59,18 +59,11 @@ def test_ridge_xgb_embed_matches_ensemble_levels():
     bounds = historical_budget_bounds(panel, segments)
     ridge = next(m for m in ensemble.members if m.name == "ridge")
     xgb = next(m for m in ensemble.members if m.name == "xgboost")
+    ridge_artifact = ridge.pipeline
+    assert isinstance(ridge_artifact, LinearMilpRidgeModel)
     total_w = sum(m.weight for m in ensemble.members) or 1.0
     w_ridge = ridge.weight / total_w
     w_xgb = xgb.weight / total_w
-    coeffs = ridge_embed_coeffs(
-        ridge.pipeline,
-        production,
-        config,
-        candidates,
-        set_features,
-        planning_date,
-        segments,
-    )
 
     import gurobipy as gp
 
@@ -80,7 +73,9 @@ def test_ridge_xgb_embed_matches_ensemble_levels():
         seg: model.addVar(lb=bounds[seg][0], ub=bounds[seg][1], name=f"x_{seg}")
         for seg in segments
     }
-    linear_pred = _embed_linear_candidate_predictions(coeffs, keys, x_vars)
+    linear_pred = _embed_linear_candidate_predictions(
+        ridge_artifact, embed_rows, keys, x_vars
+    )
     tree_pred = _embed_candidate_predictions(
         model, xgb.pipeline, embed_rows, keys, x_vars, bounds, config
     )
@@ -89,10 +84,12 @@ def test_ridge_xgb_embed_matches_ensemble_levels():
         ensemble,
         embed_rows,
         keys,
-        coeffs,
+        ridge_artifact,
         xgb.pipeline,
         bounds,
         config,
+        planning_date,
+        set_features,
         w_ridge=w_ridge,
         w_xgb=w_xgb,
         budgets=[0.0, 50.0, 120.0],
