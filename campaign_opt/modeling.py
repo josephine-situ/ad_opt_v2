@@ -23,6 +23,7 @@ from campaign_opt.linear_design import (
     SEGMENT_MATCH_COLS,
     LinearMilpRidgeModel,
     build_linear_milp_design_matrix,
+    fit_linear_milp_ridge,
     split_context_columns_by_dtype,
 )
 from campaign_opt.schema import CampaignOptConfig
@@ -244,8 +245,7 @@ def fit_ridge(train, holdout, config, feature_cols, *, hyperparams: dict[str, An
     del feature_cols  # ridge uses MILP-linear design (region + match + budget interactions + context)
     alpha = float((hyperparams or {}).get("alpha", 1.0))
     train_design = build_linear_milp_design_matrix(train, config)
-    model = Ridge(alpha=alpha)
-    model.fit(train_design.X.values, train_design.y)
+    artifact = fit_linear_milp_ridge(train_design, config, alpha=alpha)
 
     holdout_design = build_linear_milp_design_matrix(
         holdout, config, columns=train_design.x_columns
@@ -257,10 +257,9 @@ def fit_ridge(train, holdout, config, feature_cols, *, hyperparams: dict[str, An
             "holdout_mae_levels": float("nan"),
         }
     else:
-        pred = np.clip(model.predict(holdout_design.X.values), 0, None)
+        pred = np.clip(artifact.predict_design_frame(holdout), 0, None)
         m = _level_metrics(holdout_design.y, pred)
 
-    artifact = LinearMilpRidgeModel(model, train_design.x_columns, config)
     return ModelResult(
         name="ridge",
         pipeline=artifact,
@@ -270,7 +269,7 @@ def fit_ridge(train, holdout, config, feature_cols, *, hyperparams: dict[str, An
         holdout_mae=m["holdout_mae_levels"],
         best_hyperparams=hyperparams,
         extra={
-            "milp_model": model,
+            "milp_model": artifact.model,
             "milp_design": train_design,
         },
     )
@@ -285,9 +284,7 @@ def fit_ridge_full(
     """Fit aligned ridge on all training rows (ensemble / production)."""
     alpha = float((hyperparams or {}).get("alpha", 1.0))
     design = build_linear_milp_design_matrix(train, config)
-    model = Ridge(alpha=alpha)
-    model.fit(design.X.values, design.y)
-    return LinearMilpRidgeModel(model, design.x_columns, config)
+    return fit_linear_milp_ridge(design, config, alpha=alpha)
 
 
 def fit_random_forest(
@@ -445,10 +442,8 @@ def refit_winner_on_data(
     if winner.name == "ridge":
         alpha = float((winner.best_hyperparams or {}).get("alpha", 1.0))
         design = build_linear_milp_design_matrix(df, config)
-        model = Ridge(alpha=alpha)
-        model.fit(design.X.values, design.y)
-        pipeline = LinearMilpRidgeModel(model, design.x_columns, config)
-        extra = {"milp_model": model, "milp_design": design}
+        pipeline = fit_linear_milp_ridge(design, config, alpha=alpha)
+        extra = {"milp_model": pipeline.model, "milp_design": design}
     else:
         target = config.target
         tr = spec.transform(df, target) if spec.transform else df
@@ -881,9 +876,12 @@ def run_tournament(
                     tune=tune,
                     n_folds=n_folds,
                 )
+                # Optimizer / ridge_xgb_embed use equal ridge+XGB blend; only the
+                # full 5-member eval ensemble uses inverse-CV-RMSE weights.
                 weights = (
                     _cv_rmse_member_weights(metrics_table, member_names)
                     if config.evaluation.weight_by_cv_rmse
+                    and name != "ensemble_ridge_xgb"
                     else None
                 )
 

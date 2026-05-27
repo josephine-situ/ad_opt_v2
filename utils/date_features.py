@@ -34,7 +34,7 @@ def get_holiday_calendars(country_codes: Iterable[str], years: list[int] | None 
     calendars: dict = {}
     for code in set(country_codes):
         try:
-            calendars[code] = holidays.CountryHoliday(code, years=years)
+            calendars[code] = holidays.country_holidays(code, years=years)
         except Exception:
             calendars[code] = None
     return calendars

@@ -47,13 +47,14 @@ def solve_linear_campaign_milp(
     coeffs = _prepare_linear_coeffs(config, coeffs, candidates)
     segment_predictor = make_linear_segment_predictor(coeffs)
     segment_predictors_by_date = None
+    planning_calendar_offsets = None
 
     if dates and len(dates) > 1:
         if train is None:
             raise ValueError("train is required when planning_dates has more than one date")
-        cal_offsets = calendar_offsets_for_planning(train, config, dates, segments)
+        planning_calendar_offsets = calendar_offsets_for_planning(train, config, dates, segments)
         segment_predictors_by_date = make_linear_segment_predictors_for_dates(
-            coeffs, cal_offsets, len(dates)
+            coeffs, planning_calendar_offsets, len(dates)
         )
 
     return solve_campaign_milp(
@@ -72,4 +73,5 @@ def solve_linear_campaign_milp(
         segment_predictors_by_date=segment_predictors_by_date,
         train=train,
         solver_coeffs=coeffs,
+        planning_calendar_offsets=planning_calendar_offsets,
     )

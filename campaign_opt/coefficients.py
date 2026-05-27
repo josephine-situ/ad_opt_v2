@@ -16,9 +16,12 @@ from campaign_opt.linear_design import (
     LinearMilpDesign,
     LinearMilpRidgeModel,
     build_linear_milp_design_matrix,
+    fit_linear_milp_ridge,
+    segment_budget_response_from_artifact,
     segment_intercept_from_model,
     segment_slope_from_model,
     static_context_columns,
+    template_row_for_segment,
 )
 from campaign_opt.schema import CampaignOptConfig
 from utils.date_features import calendar_vector_for_date
@@ -109,26 +112,61 @@ def refresh_static_context_lift(
 def _fit_ridge_design(
     train: pd.DataFrame,
     config: CampaignOptConfig,
-) -> tuple[Ridge, pd.DataFrame, pd.Series, list[str], list[str]]:
+) -> tuple[LinearMilpRidgeModel, pd.DataFrame, pd.Series, list[str], list[str]]:
     """Fit ridge on the shared MILP-linear design matrix."""
     design = build_linear_milp_design_matrix(train, config)
-    model = Ridge(alpha=1.0)
-    model.fit(design.X.values, design.y)
-    return model, design.X, pd.Series(design.y), design.cal_cols, design.x_columns
+    artifact = fit_linear_milp_ridge(design, config, alpha=1.0)
+    return artifact, design.X, pd.Series(design.y), design.cal_cols, design.x_columns
 
 
 def calendar_offset_for_date(
-    model: Ridge,
+    model: Ridge | LinearMilpRidgeModel,
     X_columns: list[str],
     cal_cols: list[str],
     planning_date: pd.Timestamp,
     region: str,
     course: str,
+    *,
+    template: pd.Series | None = None,
+    config: CampaignOptConfig | None = None,
 ) -> float:
     """Calendar-only contribution from fitted ridge for one date/region."""
+    if isinstance(model, LinearMilpRidgeModel) and model.uses_scaled_fit():
+        if template is None or config is None:
+            raise ValueError("template and config required for scaled LinearMilpRidgeModel")
+        return _calendar_offset_from_artifact(
+            model, template, cal_cols, planning_date, region, course, config
+        )
     cal = calendar_vector_for_date(planning_date, region, course)
     context_coefs = extract_context_feature_coefs(model, X_columns)
     return context_contribution(cal, context_coefs, cal_cols)
+
+
+def _calendar_offset_from_artifact(
+    artifact: LinearMilpRidgeModel,
+    template: pd.Series,
+    cal_cols: list[str],
+    planning_date: pd.Timestamp,
+    region: str,
+    course: str,
+    config: CampaignOptConfig,
+) -> float:
+    """Calendar effect via predict (scaled ridge); template supplies segment/static context."""
+    cal = calendar_vector_for_date(planning_date, region, course)
+    row_cal = template.copy()
+    row_cal["daily_budget"] = 0.0
+    for col in cal_cols:
+        if col in cal:
+            row_cal[col] = cal[col]
+    row_zero_cal = row_cal.copy()
+    for col in cal_cols:
+        if col in row_zero_cal.index and pd.api.types.is_numeric_dtype(type(row_zero_cal[col])):
+            row_zero_cal[col] = 0.0
+        elif col in row_zero_cal.index:
+            row_zero_cal[col] = ""
+    level_with = float(artifact.predict_design_frame(pd.DataFrame([row_cal]))[0])
+    level_without = float(artifact.predict_design_frame(pd.DataFrame([row_zero_cal]))[0])
+    return level_with - level_without
 
 
 def calendar_offset_from_context_coefs(
@@ -150,19 +188,49 @@ def calendar_offsets_for_planning(
     segments: list[str],
 ) -> dict[tuple[str, int], float]:
     """Per-segment, per-date-index calendar offsets for multi-day MILP objectives."""
-    model, _, _, cal_cols, x_columns = _fit_ridge_design(train, config)
+    artifact, _, _, cal_cols, x_columns = _fit_ridge_design(train, config)
+    design = build_linear_milp_design_matrix(train, config, columns=x_columns)
     offsets: dict[tuple[str, int], float] = {}
     for seg in segments:
         region = region_of_segment(seg)
+        template = template_row_for_segment(design.sub, seg)
         for idx, d in enumerate(planning_dates):
             offsets[(seg, idx)] = calendar_offset_for_date(
-                model, x_columns, cal_cols, pd.Timestamp(d), region, config.course
+                artifact,
+                x_columns,
+                cal_cols,
+                pd.Timestamp(d),
+                region,
+                config.course,
+                template=template,
+                config=config,
             )
     return offsets
 
 
+def _static_lift_from_artifact(
+    artifact: LinearMilpRidgeModel,
+    sub: pd.DataFrame,
+    static_cols: list[str],
+) -> dict[str, float]:
+    """Per keyword_set_id static context contribution (prediction-based for scaled ridge)."""
+    if not static_cols or "keyword_set_id" not in sub.columns:
+        return {}
+    out: dict[str, float] = {}
+    for set_id in sub["keyword_set_id"].dropna().unique():
+        row = sub[sub["keyword_set_id"] == set_id].iloc[0]
+        row_zero = row.copy()
+        for col in static_cols:
+            if col in row_zero.index:
+                row_zero[col] = 0.0
+        level = float(artifact.predict_design_frame(pd.DataFrame([row]))[0])
+        level_zero = float(artifact.predict_design_frame(pd.DataFrame([row_zero]))[0])
+        out[str(set_id)] = level - level_zero
+    return out
+
+
 def coeffs_from_linear_milp_design(
-    model: Ridge,
+    model: Ridge | LinearMilpRidgeModel,
     design: LinearMilpDesign,
     config: CampaignOptConfig,
     *,
@@ -174,16 +242,36 @@ def coeffs_from_linear_milp_design(
     """Extract MILP coefficients from a fitted ridge on ``design``."""
     sub = design.sub
     x_columns = design.x_columns
-    context_coefs = extract_context_feature_coefs(model, x_columns)
+    artifact = model if isinstance(model, LinearMilpRidgeModel) else LinearMilpRidgeModel(model, x_columns, config)
+    ridge = artifact.model
 
     seg_slopes: dict[str, float] = {}
     seg_intercepts: dict[str, float] = {}
-    global_slope = float(model.coef_[x_columns.index("daily_budget")])
 
-    for seg in sub["segment"].unique():
-        seg_str = str(seg)
-        seg_slopes[seg_str] = segment_slope_from_model(model, x_columns, seg_str)
-        seg_intercepts[seg_str] = segment_intercept_from_model(model, x_columns, seg_str)
+    if artifact.uses_scaled_fit():
+        for seg in sub["segment"].unique():
+            seg_str = str(seg)
+            template = template_row_for_segment(sub, seg_str)
+            intercept, slope = segment_budget_response_from_artifact(
+                artifact, template, seg_str, budget_lo=0.0, budget_hi=1.0
+            )
+            seg_intercepts[seg_str] = intercept
+            seg_slopes[seg_str] = slope
+        global_slope = float(np.mean(list(seg_slopes.values()))) if seg_slopes else 0.0
+        context_coefs = extract_context_feature_coefs(ridge, x_columns)
+        static_lift = _static_lift_from_artifact(artifact, sub, design.static_cols)
+    else:
+        context_coefs = extract_context_feature_coefs(ridge, x_columns)
+        global_slope = float(ridge.coef_[x_columns.index("daily_budget")])
+        for seg in sub["segment"].unique():
+            seg_str = str(seg)
+            seg_slopes[seg_str] = segment_slope_from_model(ridge, x_columns, seg_str)
+            seg_intercepts[seg_str] = segment_intercept_from_model(ridge, x_columns, seg_str)
+        static_lift = {}
+        if design.static_cols and "keyword_set_id" in sub.columns:
+            for set_id in sub["keyword_set_id"].dropna().unique():
+                row = sub[sub["keyword_set_id"] == set_id].iloc[0]
+                static_lift[str(set_id)] = context_contribution(row, context_coefs, design.static_cols)
 
     seg_slopes = shrink_segment_slopes(
         pd.Series(seg_slopes),
@@ -192,27 +280,50 @@ def coeffs_from_linear_milp_design(
         weight=shrink_weight,
     ).to_dict()
 
-    static_lift: dict[str, float] = {}
-    if design.static_cols and "keyword_set_id" in sub.columns:
-        for set_id in sub["keyword_set_id"].dropna().unique():
-            row = sub[sub["keyword_set_id"] == set_id].iloc[0]
-            static_lift[str(set_id)] = context_contribution(row, context_coefs, design.static_cols)
-
     if calendar_date is not None and calendar_region is not None:
-        cal_effect = calendar_offset_from_context_coefs(
-            context_coefs,
-            design.cal_cols,
-            pd.Timestamp(calendar_date),
-            calendar_region,
-            config.course,
-        )
+        if artifact.uses_scaled_fit():
+            reg_rows = sub[
+                sub["segment"].astype(str).map(region_of_segment) == calendar_region
+            ]
+            template = reg_rows.iloc[0] if not reg_rows.empty else sub.iloc[0]
+            cal_effect = _calendar_offset_from_artifact(
+                artifact,
+                template,
+                design.cal_cols,
+                pd.Timestamp(calendar_date),
+                calendar_region,
+                config.course,
+                config,
+            )
+        else:
+            cal_effect = calendar_offset_from_context_coefs(
+                context_coefs,
+                design.cal_cols,
+                pd.Timestamp(calendar_date),
+                calendar_region,
+                config.course,
+            )
     else:
         last = sub.iloc[-1]
         last_region = region_of_segment(str(last["segment"]))
-        last_date = pd.Timestamp(last["date"]) if "date" in last.index else pd.Timestamp(sub["date"].max())
-        cal_effect = calendar_offset_from_context_coefs(
-            context_coefs, design.cal_cols, last_date, last_region, config.course
-        )
+        if "date" in sub.columns:
+            last_date = pd.Timestamp(last["date"]) if "date" in last.index else pd.Timestamp(sub["date"].max())
+        else:
+            last_date = pd.Timestamp("2026-01-01")
+        if artifact.uses_scaled_fit():
+            cal_effect = _calendar_offset_from_artifact(
+                artifact,
+                last,
+                design.cal_cols,
+                last_date,
+                last_region,
+                config.course,
+                config,
+            )
+        else:
+            cal_effect = calendar_offset_from_context_coefs(
+                context_coefs, design.cal_cols, last_date, last_region, config.course
+            )
 
     return {
         "segment_intercept": seg_intercepts,
@@ -222,7 +333,7 @@ def coeffs_from_linear_milp_design(
         "calendar_context_columns": design.cal_cols,
         "static_context_lift": static_lift,
         "calendar_offset": cal_effect,
-        "global_intercept": float(model.intercept_),
+        "global_intercept": float(ridge.intercept_),
     }
 
 
@@ -239,20 +350,22 @@ def ridge_embed_coeffs(
     design = build_linear_milp_design_matrix(train, config, columns=artifact.x_columns)
     # No slope shrinkage: coeffs must match ``predict_design_frame`` on the fitted ridge.
     coeffs = coeffs_from_linear_milp_design(
-        artifact.model, design, config, shrink_weight=0.0, min_budget_levels=1
+        artifact, design, config, shrink_weight=0.0, min_budget_levels=1
     )
-    context_coefs = coeffs["context_feature_coefs"]
     cal_cols = coeffs["calendar_context_columns"]
-    coeffs["calendar_offset_by_segment"] = {
-        str(seg): calendar_offset_from_context_coefs(
-            context_coefs,
+    coeffs["calendar_offset_by_segment"] = {}
+    for seg in segments:
+        template = template_row_for_segment(design.sub, seg)
+        coeffs["calendar_offset_by_segment"][str(seg)] = calendar_offset_for_date(
+            artifact,
+            artifact.x_columns,
             cal_cols,
             pd.Timestamp(planning_date),
             region_of_segment(seg),
             config.course,
+            template=template,
+            config=config,
         )
-        for seg in segments
-    }
     return refresh_static_context_lift(coeffs, config, candidates, set_features)
 
 
@@ -263,7 +376,7 @@ def export_linear_solver_coeffs(
     *,
     shrink_weight: float = 0.5,
     min_budget_levels: int = 3,
-    prefit_model: Ridge | None = None,
+    prefit_model: Ridge | LinearMilpRidgeModel | None = None,
     prefit_design: LinearMilpDesign | None = None,
 ) -> dict:
     """
@@ -278,8 +391,7 @@ def export_linear_solver_coeffs(
         model, design = prefit_model, prefit_design
     else:
         design = build_linear_milp_design_matrix(train, config)
-        model = Ridge(alpha=1.0)
-        model.fit(design.X.values, design.y)
+        model = fit_linear_milp_ridge(design, config, alpha=1.0)
 
     coeffs = coeffs_from_linear_milp_design(
         model,
