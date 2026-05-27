@@ -1,4 +1,4 @@
-"""Tree embed must match sklearn at fixed budgets (regression for leaf tightening)."""
+"""Tree embed must match sklearn at all budget points (regression for leaf pruning bug)."""
 
 from __future__ import annotations
 
@@ -12,9 +12,8 @@ from gurobipy import GRB
 
 from campaign_opt.backends.tree_embed import _build_candidate_feature_rows
 from campaign_opt.backends.tree_embedding import (
-    _booster_leaf_nodes_at_budgets,
     _budget_affine,
-    _tighten_allowed_leaf_nodes,
+    _raw_budget_breakpoints_from_trees,
     embed_tree_prediction,
     get_tree_path_sets,
 )
@@ -37,20 +36,16 @@ from utils.campaign_features import (
 def _milp_level_at_budget(
     pipeline,
     *,
-    feature_row: pd.DataFrame,
     x_proc: np.ndarray,
     budget: float,
     budget_lo: float,
     budget_hi: float,
-    allowed: dict[int, set[int]] | None,
 ) -> float:
     tree_paths, base_or_n, kind = get_tree_path_sets(pipeline)
     budget_idx, budget_mean, budget_scale = _budget_affine(pipeline)
     model = gp.Model("embed_check")
     model.setParam("OutputFlag", 0)
-    x = model.addVar(lb=budget_lo, ub=budget_hi, name="x")
-    x.lb = float(budget)
-    x.ub = float(budget)
+    x = model.addVar(lb=float(budget), ub=float(budget), name="x")
     pred_var = embed_tree_prediction(
         model,
         tree_paths=tree_paths,
@@ -64,15 +59,14 @@ def _milp_level_at_budget(
         model_kind=kind,
         base_or_n_trees=base_or_n,
         name_prefix="emb",
-        allowed_leaf_nodes=allowed,
     )
     model.optimize()
     assert model.Status in (GRB.OPTIMAL, GRB.SUBOPTIMAL)
     return float(pred_var.X)
 
 
-def test_embed_matches_sklearn_at_low_budget_after_leaf_tighten():
-    """A / Phrase; Exact / ks_0013 must be feasible and exact at budget=0."""
+def test_embed_matches_sklearn_at_tree_thresholds():
+    """Embedding must be exact at every budget — especially at tree split thresholds."""
     from campaign_opt.features import prepare_modeling_data, train_holdout_split
 
     if not default_config_path("sys_think", "default").exists():
@@ -110,6 +104,9 @@ def test_embed_matches_sklearn_at_low_budget_after_leaf_tighten():
     target = config.target
     bounds = historical_budget_bounds(panel, build_segment_list(candidates))
 
+    tree_paths, base_or_n, kind = get_tree_path_sets(pipeline)
+    budget_idx, budget_mean, budget_scale = _budget_affine(pipeline)
+
     seg, kid = "A / Phrase; Exact", "ks_0013"
     i = next(j for j, (s, k) in enumerate(keys) if s == seg and str(k) == kid)
     budget_lo, budget_hi = bounds[seg]
@@ -123,25 +120,32 @@ def test_embed_matches_sklearn_at_low_budget_after_leaf_tighten():
 
     X0 = feature_row_at(0.0)
     x_proc = np.asarray(pipeline[:-1].transform(X0), dtype=float).ravel()
-    allowed = _tighten_allowed_leaf_nodes(
-        _booster_leaf_nodes_at_budgets(
-            pipeline, feature_row_at(budget_lo), target, feature_cols, budget_lo, budget_hi
-        ),
-        pipeline,
-        feature_row_at((budget_lo + budget_hi) / 2),
-        target,
-        feature_cols,
-        budget_lo,
-        budget_hi,
+
+    breakpoints = _raw_budget_breakpoints_from_trees(
+        tree_paths, np.asarray(x_proc, dtype=np.float32),
+        budget_idx, budget_mean, budget_scale, budget_lo, budget_hi,
     )
-    sk = float(pipeline.predict(feature_row_at(0.0))[0])
-    milp = _milp_level_at_budget(
-        pipeline,
-        feature_row=feature_row_at(0.0),
-        x_proc=x_proc,
-        budget=0.0,
-        budget_lo=budget_lo,
-        budget_hi=budget_hi,
-        allowed=allowed,
-    )
-    assert abs(sk - milp) < 1e-5
+    eps = max(1e-6, (budget_hi - budget_lo) * 1e-9)
+    test_budgets = {budget_lo, budget_hi, (budget_lo + budget_hi) / 2}
+    for bp in breakpoints:
+        test_budgets.add(bp)
+        test_budgets.add(max(budget_lo, bp - eps))
+        test_budgets.add(min(budget_hi, bp + eps))
+
+    max_diff = 0.0
+    for budget in sorted(test_budgets):
+        sk = float(pipeline.predict(feature_row_at(budget))[0])
+        milp = _milp_level_at_budget(
+            pipeline,
+            x_proc=x_proc,
+            budget=budget,
+            budget_lo=budget_lo,
+            budget_hi=budget_hi,
+        )
+        diff = abs(sk - milp)
+        max_diff = max(max_diff, diff)
+        assert diff < 1e-4, (
+            f"Embed != sklearn at budget={budget:.4f}: "
+            f"sklearn={sk:.6f}, milp={milp:.6f}, diff={diff:.6g}"
+        )
+    print(f"  max embed vs sklearn diff: {max_diff:.2e} across {len(test_budgets)} budget points")

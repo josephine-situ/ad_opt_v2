@@ -19,6 +19,7 @@ from campaign_opt.backends.milp_core import (
 )
 from campaign_opt.backends.tree_embedding import (
     _budget_affine,
+    _raw_budget_breakpoints_from_trees,
     embed_tree_prediction,
     get_tree_path_sets,
 )
@@ -563,6 +564,80 @@ def _probe_ridge_xgb_embed_on_embed_rows(
         )
 
 
+def _diagnose_milp_vs_sklearn_at_solved_budgets(
+    plan: pd.DataFrame,
+    ensemble: EnsembleModel,
+    embed_rows: pd.DataFrame,
+    keys: list[tuple[str, str]],
+    ridge_artifact: LinearMilpRidgeModel,
+    xgb_pipeline: Any,
+    bounds: dict[str, tuple[float, float]],
+    config: CampaignOptConfig,
+    planning_date: pd.Timestamp,
+    set_features: pd.DataFrame,
+    *,
+    w_ridge: float,
+    w_xgb: float,
+) -> None:
+    """Post-solve: compare embed-path sklearn vs validation-path ensemble at solved budgets."""
+    feature_cols = get_context_feature_columns(config.context_features)
+    target = config.target
+    key_to_idx = {k: i for i, k in enumerate(keys)}
+
+    for _, row in plan.iterrows():
+        seg = str(row["segment"])
+        kid = str(row["keyword_set_id"])
+        budget = float(row["daily_budget"])
+        milp_pred = float(row["milp_pred"])
+        key = (seg, kid)
+        if key not in key_to_idx:
+            continue
+        idx = key_to_idx[key]
+
+        # Embed-path: XGB prediction at solved budget
+        r = embed_rows.iloc[idx: idx + 1].copy()
+        r["daily_budget"] = budget
+        if target not in r.columns:
+            r[target] = 0.0
+        X_embed, _ = _prep_xy(r, target, feature_cols)
+        sk_xgb_embed = float(xgb_pipeline.predict(X_embed)[0])
+
+        # Embed-path: ridge prediction at solved budget
+        ridge_embed = float(ridge_artifact.predict_design_frame(
+            pd.DataFrame([{**embed_rows.iloc[idx].to_dict(), "daily_budget": budget, target: 0.0}])
+        )[0])
+
+        blend_embed = w_ridge * ridge_embed + w_xgb * sk_xgb_embed
+
+        # Validation-path: ensemble prediction at solved budget
+        dec = pd.DataFrame([{"segment": seg, "keyword_set_id": kid, "daily_budget": budget}])
+        dec_rows = build_segment_decision_rows(
+            dec, planning_date, set_features, config.course, feature_cols
+        )
+        if target not in dec_rows.columns:
+            dec_rows[target] = 0.0
+        ensemble_pred = float(ensemble.predict_levels(dec_rows)[0])
+
+        # Validation-path: per-component
+        X_val, _ = _prep_xy(dec_rows, target, feature_cols)
+        sk_xgb_val = float(xgb_pipeline.predict(X_val)[0])
+        ridge_val = float(ridge_artifact.predict_design_frame(dec_rows)[0])
+
+        embed_vs_val = abs(blend_embed - ensemble_pred)
+        xgb_diff = abs(sk_xgb_embed - sk_xgb_val)
+        ridge_diff = abs(ridge_embed - ridge_val)
+        milp_vs_embed = abs(milp_pred - blend_embed)
+
+        if embed_vs_val > 0.01 or milp_vs_embed > 0.01:
+            print(
+                f"[Diag] {seg} kid={kid} budget={budget:.2f}\n"
+                f"  milp_pred={milp_pred:.6f}  blend_embed={blend_embed:.6f}  ensemble_val={ensemble_pred:.6f}\n"
+                f"  xgb: embed={sk_xgb_embed:.6f} val={sk_xgb_val:.6f} diff={xgb_diff:.6g}\n"
+                f"  ridge: embed={ridge_embed:.6f} val={ridge_val:.6f} diff={ridge_diff:.6g}\n"
+                f"  milp_vs_embed_blend={milp_vs_embed:.6g}  embed_vs_validation={embed_vs_val:.6g}"
+            )
+
+
 def _external_incremental_pred_by_segment(
     plan: pd.DataFrame,
     pipeline: Any,
@@ -712,13 +787,58 @@ def solve_ridge_xgb_embed_campaign_milp(
         pipeline, k_map, config, planning_date, set_features, baseline_budget=baseline_budget
     )
 
+    # Compute valid level_ub from actual model predictions so the McCormick
+    # gating variable bound never clips the true prediction.
+    feature_cols = get_context_feature_columns(config.context_features)
+    target = config.target
+    level_ub_overrides: dict[str, float] = {}
+    for i, (seg, kid) in enumerate(keys):
+        if (seg, str(kid)) not in pred_by_key:
+            continue
+        lo, hi = bounds[seg]
+        probe_budgets = [lo, hi, (lo + hi) / 2]
+        # Also check at tree breakpoints where the XGB prediction can jump.
+        r0 = embed_rows.iloc[i: i + 1].copy()
+        r0["daily_budget"] = 0.0
+        if target not in r0.columns:
+            r0[target] = 0.0
+        X0, _ = _prep_xy(r0, target, feature_cols)
+        x_proc_0 = np.asarray(xgb_member.pipeline[:-1].transform(X0), dtype=np.float32).ravel()
+        tree_paths, _, _ = get_tree_path_sets(xgb_member.pipeline)
+        budget_idx, budget_mean, budget_scale = _budget_affine(xgb_member.pipeline)
+        bps = _raw_budget_breakpoints_from_trees(
+            tree_paths, x_proc_0, budget_idx, budget_mean, budget_scale, lo, hi
+        )
+        probe_budgets.extend(bps)
+
+        max_blend = 0.0
+        for b in probe_budgets:
+            b = max(lo, min(hi, float(b)))
+            r = embed_rows.iloc[i: i + 1].copy()
+            r["daily_budget"] = b
+            if target not in r.columns:
+                r[target] = 0.0
+            X_b, _ = _prep_xy(r, target, feature_cols)
+            xgb_b = float(xgb_member.pipeline.predict(X_b)[0])
+            ridge_b = float(ridge_artifact.predict_design_frame(
+                pd.DataFrame([{**embed_rows.iloc[i].to_dict(), "daily_budget": b, target: 0.0}])
+            )[0])
+            max_blend = max(max_blend, w_ridge * ridge_b + w_xgb * xgb_b)
+        cur = level_ub_overrides.get(seg, 0.0)
+        level_ub_overrides[seg] = max(cur, max_blend * 1.1)
+
     def segment_predictor(seg: str, x_var: Any, y_vars_map: dict, k_map_local: dict) -> Any:
-        expr = gp.LinExpr()
+        seg_pred = model.addVar(lb=-GRB.INFINITY, name=f"seg_pred_{seg.replace(' ', '_')}")
         for k in k_map_local.get(seg, []):
             key = (seg, str(k))
-            if key in pred_by_key:
-                expr += pred_by_key[key] * y_vars_map[(seg, k)]
-        return expr
+            if key not in pred_by_key:
+                continue
+            model.addGenConstrIndicator(
+                y_vars_map[(seg, k)], 1,
+                seg_pred - pred_by_key[key], GRB.EQUAL, 0.0,
+                name=f"ind_{seg.replace(' ', '_')}_{k}",
+            )
+        return seg_pred
 
     plan = solve_campaign_milp(
         config,
@@ -737,6 +857,13 @@ def solve_ridge_xgb_embed_campaign_milp(
         fixed_budgets=fixed_budgets,
         train=train,
         baseline_level_by_key=baseline_level_by_key,
+        level_ub_overrides=level_ub_overrides,
+    )
+    # Post-solve: re-probe embedding at actual solved budgets to localize discrepancy.
+    _diagnose_milp_vs_sklearn_at_solved_budgets(
+        plan, pipeline, embed_rows, keys, ridge_artifact, xgb_member.pipeline,
+        bounds, config, planning_date, set_features,
+        w_ridge=w_ridge, w_xgb=w_xgb,
     )
     # pred_over_base from Gurobi can differ slightly from sklearn on tree embed; use ensemble lift.
     ext_pred = _external_incremental_pred_by_segment(
@@ -793,18 +920,55 @@ def solve_tree_embed_campaign_milp(
     )
     _disable_pruned_keyword_sets(model, y_vars, k_map, pred_by_key)
 
+    # Compute valid level_ub from sklearn predictions across budget range.
+    feature_cols = get_context_feature_columns(config.context_features)
+    target = config.target
+    level_ub_overrides: dict[str, float] = {}
+    tree_paths_ub, _, _ = get_tree_path_sets(pipeline)
+    budget_idx_ub, budget_mean_ub, budget_scale_ub = _budget_affine(pipeline)
+    for i, (seg, kid) in enumerate(keys):
+        if (seg, str(kid)) not in pred_by_key:
+            continue
+        lo, hi = bounds[seg]
+        r0 = embed_rows.iloc[i: i + 1].copy()
+        r0["daily_budget"] = 0.0
+        if target not in r0.columns:
+            r0[target] = 0.0
+        X0, _ = _prep_xy(r0, target, feature_cols)
+        x_proc_0 = np.asarray(pipeline[:-1].transform(X0), dtype=np.float32).ravel()
+        bps = _raw_budget_breakpoints_from_trees(
+            tree_paths_ub, x_proc_0, budget_idx_ub, budget_mean_ub, budget_scale_ub, lo, hi
+        )
+        probe_budgets = [lo, hi, (lo + hi) / 2, *bps]
+        max_pred = 0.0
+        for b in probe_budgets:
+            b = max(lo, min(hi, float(b)))
+            r = embed_rows.iloc[i: i + 1].copy()
+            r["daily_budget"] = b
+            if target not in r.columns:
+                r[target] = 0.0
+            X_b, _ = _prep_xy(r, target, feature_cols)
+            max_pred = max(max_pred, float(pipeline.predict(X_b)[0]))
+        cur = level_ub_overrides.get(seg, 0.0)
+        level_ub_overrides[seg] = max(cur, max_pred * 1.1)
+
     baseline_budget = float(config.evaluation.baseline_budget)
     baseline_level_by_key = baseline_levels_for_candidate_sets(
         pipeline, k_map, config, planning_date, set_features, baseline_budget=baseline_budget
     )
 
     def segment_predictor(seg: str, x_var: Any, y_vars_map: dict, k_map_local: dict) -> Any:
-        expr = gp.LinExpr()
+        seg_pred = model.addVar(lb=-GRB.INFINITY, name=f"seg_pred_{seg.replace(' ', '_')}")
         for k in k_map_local.get(seg, []):
             key = (seg, str(k))
-            if key in pred_by_key:
-                expr += pred_by_key[key] * y_vars_map[(seg, k)]
-        return expr
+            if key not in pred_by_key:
+                continue
+            model.addGenConstrIndicator(
+                y_vars_map[(seg, k)], 1,
+                seg_pred - pred_by_key[key], GRB.EQUAL, 0.0,
+                name=f"ind_{seg.replace(' ', '_')}_{k}",
+            )
+        return seg_pred
 
     plan = solve_campaign_milp(
         config,
@@ -823,6 +987,7 @@ def solve_tree_embed_campaign_milp(
         fixed_budgets=fixed_budgets,
         train=train,
         baseline_level_by_key=baseline_level_by_key,
+        level_ub_overrides=level_ub_overrides,
     )
     ext_pred = _external_incremental_pred_by_segment(
         plan, pipeline, train, config, planning_date, set_features

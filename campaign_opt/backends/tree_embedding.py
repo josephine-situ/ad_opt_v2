@@ -88,70 +88,6 @@ def _intervals_overlap(
     return a[0] <= b[1] and b[0] <= a[1]
 
 
-def _booster_leaf_nodes_at_budgets(
-    pipeline,
-    x_raw_row: pd.DataFrame,
-    target: str,
-    feature_cols: list[str],
-    budget_lo: float,
-    budget_hi: float,
-    *,
-    tree_budget_thresholds: list[float] | None = None,
-) -> dict[int, set[int]]:
-    """Map tree index -> set of leaf node ids the booster visits across the budget range.
-
-    Probes at lo/mid/hi plus every raw-budget tree split threshold (and
-    eps-offsets) so that leaves active only in narrow sub-intervals are
-    never missed.
-    """
-    import xgboost as xgb
-
-    estimator = pipeline.named_steps["model"]
-    booster = estimator.get_booster()
-    lo, hi = float(budget_lo), float(budget_hi)
-    probes: set[float] = {lo, hi, (lo + hi) / 2}
-    if tree_budget_thresholds:
-        eps = max(1e-6, (hi - lo) * 1e-9)
-        for thr in tree_budget_thresholds:
-            thr = float(thr)
-            if lo <= thr <= hi:
-                probes.add(thr)
-                probes.add(max(lo, thr - eps))
-                probes.add(min(hi, thr + eps))
-    allowed: dict[int, set[int]] = {}
-    for budget in sorted(probes):
-        probe = x_raw_row.copy()
-        probe["daily_budget"] = budget
-        if target not in probe.columns:
-            probe[target] = 0.0
-        x_raw, _ = _prep_xy(probe, target, feature_cols)
-        x_proc = np.asarray(pipeline[:-1].transform(x_raw), dtype=np.float32)
-        leaf_ids = booster.predict(xgb.DMatrix(x_proc), pred_leaf=True)[0]
-        for tree_idx, node_id in enumerate(leaf_ids):
-            allowed.setdefault(int(tree_idx), set()).add(int(node_id))
-    return allowed
-
-
-def _tighten_allowed_leaf_nodes(
-    allowed: dict[int, set[int]],
-    pipeline,
-    x_raw_row: pd.DataFrame,
-    target: str,
-    feature_cols: list[str],
-    budget_lo: float,
-    budget_hi: float,
-) -> dict[int, set[int]]:
-    """
-    Return leaves the booster may use on [budget_lo, budget_hi].
-
-    ``allowed`` already unions leaf ids from probes at lo, mid, and hi budgets.
-    Do not intersect further to mid-budget leaves only — that drops leaves active
-    at budget_lo and makes the MILP infeasible or inconsistent with ``predict()``.
-    """
-    _ = (pipeline, x_raw_row, target, feature_cols, budget_lo, budget_hi)
-    return allowed
-
-
 def get_tree_path_sets(pipeline) -> tuple[list[list[TreePath]], float, str]:
     """
     Return (paths_per_tree, base_or_scale, kind).
@@ -611,19 +547,19 @@ def embed_tree_prediction(
     model_kind: str,
     base_or_n_trees: float,
     name_prefix: str,
-    allowed_leaf_nodes: dict[int, set[int]] | None = None,
 ) -> Any:
     """
     Embed one tree ensemble as a Gurobi expression in ``budget_var``.
 
-    Budget splits use processed features ``(budget - mean) / scale`` (same as training).
+    Leaf filtering uses structural checks only: ``_static_feasible_leaf`` for
+    non-budget features and ``_leaf_budget_interval`` for budget-range overlap.
+    These are derived directly from the parsed tree and are exact.
     """
     x_proc_row = np.asarray(x_proc_row, dtype=np.float32).ravel()
     min_lhs, max_proc = _processed_budget_bounds(
         budget_lo, budget_hi, budget_mean, budget_scale
     )
     proc_span = max(float(max_proc) - float(min_lhs), 1.0)
-    # Floor Big-M on the full scaled-budget range (+10%) so constraints stay valid at extremes.
     big_m_floor = proc_span * 1.1 + 1.0
     max_lhs = float(max_proc) + 0.05 * proc_span
     budget_range = (min_lhs, max_proc)
@@ -639,13 +575,6 @@ def embed_tree_prediction(
 
         for leaf_idx, path in enumerate(paths):
             conds, leaf_val = path[0], path[1]
-            node_id = path[2] if len(path) > 2 else None
-            if (
-                allowed_leaf_nodes is not None
-                and node_id is not None
-                and node_id not in allowed_leaf_nodes.get(t_idx, set())
-            ):
-                continue
 
             feasible = True
             dynamic_conds: list[tuple[str, float]] = []

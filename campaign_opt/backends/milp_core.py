@@ -468,6 +468,7 @@ def solve_campaign_milp(
     solver_coeffs: dict[str, Any] | None = None,
     baseline_level_by_key: dict[tuple[str, str], float] | None = None,
     planning_calendar_offsets: dict[tuple[str, int], float] | None = None,
+    level_ub_overrides: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """
     Single entry point for segment budget + keyword-set MILPs.
@@ -552,6 +553,7 @@ def solve_campaign_milp(
         solver_coeffs=solver_coeffs,
         n_planning_days=n_planning_days,
         calendar_offsets=planning_calendar_offsets,
+        level_ub_overrides=level_ub_overrides,
     )
 
     model.addConstr(gp.quicksum(x_vars[s] for s in segments) <= total_budget, name="total_budget")

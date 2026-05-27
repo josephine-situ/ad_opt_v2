@@ -156,6 +156,7 @@ def gate_pred_vars_if_enabled(
     solver_coeffs: dict[str, Any] | None = None,
     n_planning_days: int = 1,
     calendar_offsets: dict[tuple[str, int], float] | None = None,
+    level_ub_overrides: dict[str, float] | None = None,
 ) -> dict[str, float]:
     """
     Optionally replace ``pred_vars`` with gated expressions.
@@ -180,6 +181,8 @@ def gate_pred_vars_if_enabled(
             n_planning_days=n_planning_days,
             calendar_offsets=calendar_offsets,
         )
+        if level_ub_overrides and seg in level_ub_overrides:
+            level_ub = max(level_ub, float(level_ub_overrides[seg]))
         m_b = budget_big_m_from_bounds(lo, hi)
         safe = str(seg).replace(" ", "_").replace("/", "_")
         pred_vars[seg] = gate_level_expr(
