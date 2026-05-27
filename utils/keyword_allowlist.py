@@ -20,15 +20,14 @@ _KEYWORD_LIST_COLS = (
 )
 
 
+def clean_keyword_text(keyword: str) -> str:
+    """Strip bracket/quote artifacts and collapse internal whitespace."""
+    s = str(keyword).replace('"', "").replace("[", "").replace("]", "")
+    return " ".join(s.split()).strip()
+
+
 def normalize_keyword(keyword: str) -> str:
-    return (
-        str(keyword)
-        .replace('"', "")
-        .replace("[", "")
-        .replace("]", "")
-        .lower()
-        .strip()
-    )
+    return clean_keyword_text(keyword).lower()
 
 
 def _read_xlsx_first_sheet(path: Path) -> list[list[str]]:
@@ -130,11 +129,12 @@ def load_enrollment_keyword_allowlist(course: str) -> set[str] | None:
 def _split_keyword_field(raw: object) -> list[str]:
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return []
-    return [k.strip() for k in re.split(r"[;\n]", str(raw)) if k.strip()]
+    return [clean_keyword_text(k) for k in re.split(r"[;\n]", str(raw)) if clean_keyword_text(k)]
 
 
 def _join_keyword_field(keywords: list[str]) -> str:
-    return "; ".join(sorted({k for k in keywords if k}))
+    cleaned = [clean_keyword_text(k) for k in keywords if clean_keyword_text(k)]
+    return "; ".join(sorted(dict.fromkeys(cleaned)))
 
 
 def enrollment_allowlist_keywords(
@@ -170,7 +170,7 @@ def enrollment_allowlist_keywords(
             for kw in sub["keyword"].dropna().astype(str):
                 key = normalize_keyword(kw)
                 if key in allowlist:
-                    canonical[key] = kw.strip()
+                    canonical[key] = clean_keyword_text(kw)
 
     keys_in_order: list[str] = []
     seen_keys: set[str] = set()
@@ -197,7 +197,7 @@ def filter_keyword_list(keywords: list[str], allowlist: set[str]) -> list[str]:
         key = normalize_keyword(kw)
         if key in allowlist and key not in seen:
             seen.add(key)
-            out.append(kw.strip() if kw.strip() else key)
+            out.append(clean_keyword_text(kw) if clean_keyword_text(kw) else key)
     return out
 
 

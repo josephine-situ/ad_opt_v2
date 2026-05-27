@@ -16,24 +16,62 @@ USA / Phrase; Exact,USA,Phrase; Exact,ks_0010,historical
 USA / Phrase; Exact,USA,Phrase; Exact,ks_0023,historical
 USA / Phrase; Exact,USA,Phrase; Exact,ks_0024,historical
 USA / Phrase; Exact,USA,Phrase; Exact,ks_0025,historical
-A / Broad,A,Broad,synthetic_A_Broad_top_conv_1,synthetic_top_conv
-A / Broad,A,Broad,synthetic_A_Broad_allowlist_2,synthetic_allowlist
-A / Broad,A,Broad,synthetic_A_Broad_semantic_3,synthetic_semantic
-A / Broad,A,Broad,synthetic_A_Broad_dispersion_4,synthetic_dispersion
-A / Broad,A,Broad,synthetic_A_Broad_composite_5,synthetic_composite
-B / Broad,B,Broad,synthetic_B_Broad_top_conv_6,synthetic_top_conv
-B / Broad,B,Broad,synthetic_B_Broad_allowlist_7,synthetic_allowlist
-B / Broad,B,Broad,synthetic_B_Broad_semantic_8,synthetic_semantic
-B / Broad,B,Broad,synthetic_B_Broad_dispersion_9,synthetic_dispersion
-B / Broad,B,Broad,synthetic_B_Broad_composite_10,synthetic_composite
-A / Phrase; Exact,A,Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_11,synthetic_top_conv
-A / Phrase; Exact,A,Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_12,synthetic_allowlist
-B / Phrase; Exact,B,Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_13,synthetic_top_conv
-B / Phrase; Exact,B,Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_14,synthetic_allowlist
-USA / Broad,USA,Broad,synthetic_USA_Broad_top_conv_15,synthetic_top_conv
-USA / Broad,USA,Broad,synthetic_USA_Broad_allowlist_16,synthetic_allowlist
-USA / Broad,USA,Broad,synthetic_USA_Broad_semantic_17,synthetic_semantic
-USA / Broad,USA,Broad,synthetic_USA_Broad_dispersion_18,synthetic_dispersion
-USA / Broad,USA,Broad,synthetic_USA_Broad_composite_19,synthetic_composite
-USA / Phrase; Exact,USA,Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_20,synthetic_top_conv
-USA / Phrase; Exact,USA,Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_21,synthetic_allowlist
+A / Broad,A,Broad,synthetic_A_Broad_allowlist_n10_1,synthetic_allowlist_n10
+A / Broad,A,Broad,synthetic_A_Broad_top_conv_n10_2,synthetic_top_conv_n10
+A / Broad,A,Broad,synthetic_A_Broad_semantic_n10_3,synthetic_semantic_n10
+A / Broad,A,Broad,synthetic_A_Broad_dispersion_n10_4,synthetic_dispersion_n10
+A / Broad,A,Broad,synthetic_A_Broad_composite_n10_5,synthetic_composite_n10
+A / Broad,A,Broad,synthetic_A_Broad_allowlist_n20_6,synthetic_allowlist_n20
+A / Broad,A,Broad,synthetic_A_Broad_top_conv_n20_7,synthetic_top_conv_n20
+A / Broad,A,Broad,synthetic_A_Broad_semantic_n20_8,synthetic_semantic_n20
+A / Broad,A,Broad,synthetic_A_Broad_dispersion_n20_9,synthetic_dispersion_n20
+A / Broad,A,Broad,synthetic_A_Broad_composite_n20_10,synthetic_composite_n20
+A / Broad,A,Broad,synthetic_A_Broad_allowlist_n40_11,synthetic_allowlist_n40
+A / Broad,A,Broad,synthetic_A_Broad_top_conv_n40_12,synthetic_top_conv_n40
+A / Broad,A,Broad,synthetic_A_Broad_semantic_n40_13,synthetic_semantic_n40
+A / Broad,A,Broad,synthetic_A_Broad_dispersion_n40_14,synthetic_dispersion_n40
+A / Broad,A,Broad,synthetic_A_Broad_composite_n40_15,synthetic_composite_n40
+B / Broad,B,Broad,synthetic_B_Broad_allowlist_n10_16,synthetic_allowlist_n10
+B / Broad,B,Broad,synthetic_B_Broad_top_conv_n10_17,synthetic_top_conv_n10
+B / Broad,B,Broad,synthetic_B_Broad_semantic_n10_18,synthetic_semantic_n10
+B / Broad,B,Broad,synthetic_B_Broad_dispersion_n10_19,synthetic_dispersion_n10
+B / Broad,B,Broad,synthetic_B_Broad_allowlist_n20_20,synthetic_allowlist_n20
+B / Broad,B,Broad,synthetic_B_Broad_top_conv_n20_21,synthetic_top_conv_n20
+B / Broad,B,Broad,synthetic_B_Broad_semantic_n20_22,synthetic_semantic_n20
+B / Broad,B,Broad,synthetic_B_Broad_dispersion_n20_23,synthetic_dispersion_n20
+B / Broad,B,Broad,synthetic_B_Broad_composite_n20_24,synthetic_composite_n20
+B / Broad,B,Broad,synthetic_B_Broad_allowlist_n40_25,synthetic_allowlist_n40
+B / Broad,B,Broad,synthetic_B_Broad_top_conv_n40_26,synthetic_top_conv_n40
+B / Broad,B,Broad,synthetic_B_Broad_semantic_n40_27,synthetic_semantic_n40
+B / Broad,B,Broad,synthetic_B_Broad_dispersion_n40_28,synthetic_dispersion_n40
+B / Broad,B,Broad,synthetic_B_Broad_composite_n40_29,synthetic_composite_n40
+A / Phrase; Exact,A,Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_n10_30,synthetic_allowlist_n10
+A / Phrase; Exact,A,Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_n10_31,synthetic_top_conv_n10
+A / Phrase; Exact,A,Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_n20_32,synthetic_allowlist_n20
+A / Phrase; Exact,A,Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_n20_33,synthetic_top_conv_n20
+A / Phrase; Exact,A,Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_n40_34,synthetic_allowlist_n40
+A / Phrase; Exact,A,Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_n40_35,synthetic_top_conv_n40
+B / Phrase; Exact,B,Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_n10_36,synthetic_allowlist_n10
+B / Phrase; Exact,B,Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_n10_37,synthetic_top_conv_n10
+B / Phrase; Exact,B,Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_n20_38,synthetic_allowlist_n20
+B / Phrase; Exact,B,Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_n20_39,synthetic_top_conv_n20
+B / Phrase; Exact,B,Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_n40_40,synthetic_allowlist_n40
+B / Phrase; Exact,B,Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_n40_41,synthetic_top_conv_n40
+USA / Broad,USA,Broad,synthetic_USA_Broad_allowlist_n10_42,synthetic_allowlist_n10
+USA / Broad,USA,Broad,synthetic_USA_Broad_top_conv_n10_43,synthetic_top_conv_n10
+USA / Broad,USA,Broad,synthetic_USA_Broad_allowlist_n20_44,synthetic_allowlist_n20
+USA / Broad,USA,Broad,synthetic_USA_Broad_top_conv_n20_45,synthetic_top_conv_n20
+USA / Broad,USA,Broad,synthetic_USA_Broad_semantic_n20_46,synthetic_semantic_n20
+USA / Broad,USA,Broad,synthetic_USA_Broad_dispersion_n20_47,synthetic_dispersion_n20
+USA / Broad,USA,Broad,synthetic_USA_Broad_composite_n20_48,synthetic_composite_n20
+USA / Broad,USA,Broad,synthetic_USA_Broad_allowlist_n40_49,synthetic_allowlist_n40
+USA / Broad,USA,Broad,synthetic_USA_Broad_top_conv_n40_50,synthetic_top_conv_n40
+USA / Broad,USA,Broad,synthetic_USA_Broad_semantic_n40_51,synthetic_semantic_n40
+USA / Broad,USA,Broad,synthetic_USA_Broad_dispersion_n40_52,synthetic_dispersion_n40
+USA / Broad,USA,Broad,synthetic_USA_Broad_composite_n40_53,synthetic_composite_n40
+USA / Phrase; Exact,USA,Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_n10_54,synthetic_allowlist_n10
+USA / Phrase; Exact,USA,Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_n10_55,synthetic_top_conv_n10
+USA / Phrase; Exact,USA,Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_n20_56,synthetic_allowlist_n20
+USA / Phrase; Exact,USA,Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_n20_57,synthetic_top_conv_n20
+USA / Phrase; Exact,USA,Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_n40_58,synthetic_allowlist_n40
+USA / Phrase; Exact,USA,Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_n40_59,synthetic_top_conv_n40

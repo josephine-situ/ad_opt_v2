@@ -8,12 +8,15 @@ from pathlib import Path
 import pandas as pd
 
 from utils.campaign_features import MATCH_TYPE_LIST_COLS, data_paths
+from utils.keyword_allowlist import clean_keyword_text
 
 
 def _parse_keyword_list(value: object) -> list[str]:
     if pd.isna(value) or not str(value).strip():
         return []
-    return sorted(k.strip() for k in str(value).split(";") if k.strip())
+    return sorted(
+        k for k in (clean_keyword_text(part) for part in str(value).split(";")) if k
+    )
 
 
 def keyword_set_display_frame(row: pd.Series) -> pd.DataFrame:

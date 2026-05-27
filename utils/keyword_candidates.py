@@ -17,7 +17,9 @@ from utils.campaign_features import (
     load_or_build_embeddings,
 )
 from utils.keyword_allowlist import (
+    clean_keyword_text,
     enrollment_allowlist_keywords,
+    filter_keyword_list,
     filter_keyword_sets_dataframe,
     load_enrollment_keyword_allowlist,
     load_enrollment_keyword_allowlist_ordered,
@@ -83,8 +85,16 @@ def _keywords_from_panel(
         return []
 
     agg["efficiency"] = agg["volume"] / agg["cost"].clip(lower=0.01)
-    top_vol = set(agg.nlargest(top_n, "volume")["keyword"].astype(str).tolist())
-    top_eff = set(agg.nlargest(top_n, "efficiency")["keyword"].astype(str).tolist())
+    top_vol = {
+        clean_keyword_text(k)
+        for k in agg.nlargest(top_n, "volume")["keyword"].astype(str).tolist()
+        if clean_keyword_text(k)
+    }
+    top_eff = {
+        clean_keyword_text(k)
+        for k in agg.nlargest(top_n, "efficiency")["keyword"].astype(str).tolist()
+        if clean_keyword_text(k)
+    }
     return sorted(top_vol | top_eff)
 
 
@@ -122,33 +132,35 @@ def _assign_keywords_by_match_type(
     """Split a flat keyword list into broad/phrase/exact columns using panel rank_col."""
     region = segment_row["region"]
     allowed = _parse_segment_match_types(segment_row["match_types"])
-    kw_lower = {k.lower(): k for k in keywords}
+    kw_by_key = {normalize_keyword(k): clean_keyword_text(k) for k in keywords}
 
     sub = kw_day[kw_day["region"] == region]
     if allowed:
         sub = sub[sub["match_type"].isin(allowed)]
 
     by_mt: dict[str, list[str]] = {mt: [] for mt in allowed}
-    if not sub.empty and kw_lower and rank_col in sub.columns:
+    if not sub.empty and kw_by_key and rank_col in sub.columns:
+        sub = sub.copy()
+        sub["_kw_key"] = sub["keyword"].astype(str).map(normalize_keyword)
         agg = (
-            sub[sub["keyword"].str.lower().isin(kw_lower.keys())]
-            .groupby(["keyword", "match_type"], as_index=False)
+            sub[sub["_kw_key"].isin(kw_by_key.keys())]
+            .groupby(["_kw_key", "match_type"], as_index=False)
             .agg(rank_metric=(rank_col, "sum"))
         )
-        for kw, grp in agg.groupby("keyword"):
+        for kw_key, grp in agg.groupby("_kw_key"):
             best_mt = grp.loc[grp["rank_metric"].idxmax(), "match_type"]
-            canon = kw_lower.get(str(kw).lower(), str(kw))
+            canon = kw_by_key.get(str(kw_key), clean_keyword_text(str(kw_key)))
             if best_mt in by_mt:
                 by_mt[best_mt].append(canon)
 
-    seen = {k.lower() for ks in by_mt.values() for k in ks}
+    seen = {normalize_keyword(k) for ks in by_mt.values() for k in ks}
     fallback = allowed[0] if allowed else "Broad"
     for kw in keywords:
-        if kw.lower() not in seen:
-            by_mt.setdefault(fallback, []).append(kw)
+        if normalize_keyword(kw) not in seen:
+            by_mt.setdefault(fallback, []).append(clean_keyword_text(kw))
 
     return {
-        MATCH_TYPE_COLS[mt]: "; ".join(sorted(set(by_mt.get(mt, []))))
+        MATCH_TYPE_COLS[mt]: "; ".join(sorted(dict.fromkeys(by_mt.get(mt, []))))
         for mt in ("Broad", "Phrase", "Exact")
     }
 
@@ -381,7 +393,10 @@ def _append_synthetic_set(
 ) -> None:
     if not keywords:
         return
-    pos = "; ".join(sorted(keywords))
+    keywords = [clean_keyword_text(k) for k in keywords if clean_keyword_text(k)]
+    if not keywords:
+        return
+    pos = "; ".join(sorted(dict.fromkeys(keywords)))
     record: dict = {"keyword_set_id": new_id, positive_col: pos}
     if not kw_day.empty:
         record.update(
@@ -399,10 +414,17 @@ def _append_synthetic_set(
     )
 
 
+def _top_n_labels(base_suffix: str, base_source: str, n: int, *, multi_top_n: bool) -> tuple[str, str]:
+    if multi_top_n:
+        return f"{base_suffix}_n{n}", f"{base_source}_n{n}"
+    return base_suffix, base_source
+
+
 def build_segment_candidates(
     course: str,
     *,
     top_n: int = 30,
+    top_n_values: list[int] | None = None,
     set_size: int | None = None,
     synthetic_prefix: str = "synthetic",
     allowed_match_types: list[str] | None = None,
@@ -424,10 +446,14 @@ def build_segment_candidates(
 
     Synthetic sources:
         synthetic_top_conv — union of top all_conv and top conversion-efficiency keywords from kw-day-panel
+        synthetic_top_conv_n{N} — same, when ``top_n_values`` lists multiple N (e.g. 10, 20, 40)
         synthetic_allowlist — full enrollment allowlist (when ``*Keywords*Enrollments*.xlsx`` exists)
+        synthetic_allowlist_n{N} — first N allowlist keywords by enrollment priority (with ``top_n_values``)
         synthetic_semantic — top keywords by per-keyword course-anchor similarity
         synthetic_dispersion — greedy set maximizing embed_dispersion
         synthetic_composite — greedy set maximizing z(course_sim_mean) + z(dispersion)
+
+    Pass ``top_n_values=[10, 20, 40]`` to emit separate performance/embedding sets per cap.
     """
     summary = load_campaign_summary(course)
     summary = add_segment_column(summary)
@@ -472,17 +498,13 @@ def build_segment_candidates(
     anchors: np.ndarray | None = None
     need_embeddings = include_semantic_synthetic or include_dispersion_synthetic or include_composite_synthetic
 
+    top_n_list = sorted({int(n) for n in (top_n_values or [top_n]) if int(n) > 0})
+    multi_top_n = len(top_n_list) > 1
+    rank_col = "all_conv" if not kw_day.empty and "all_conv" in kw_day.columns else "clicks"
+
     if not kw_day.empty:
         for segment, grp in summary.groupby("segment", sort=False):
             row = grp.iloc[0]
-            pool = _keywords_from_panel(
-                kw_day,
-                row,
-                top_n=top_n,
-                volume_col="all_conv",
-                allowed_keywords=allowed_keywords,
-                require_positive_volume=True,
-            )
             allowlist_pool: list[str] = []
             if allowed_keywords:
                 allowlist_pool = enrollment_allowlist_keywords(
@@ -491,48 +513,14 @@ def build_segment_candidates(
                     row,
                     allowlist_order=allowlist_ordered,
                 )
-                if allowlist_ordered:
-                    pool = _fill_pool_to_top_n(
-                        pool,
-                        top_n=top_n,
-                        allowlist_ranked=allowlist_ordered,
-                        segment_allowlist=allowlist_pool,
-                    )
 
-            if not pool and not allowlist_pool:
-                continue
+            segment_seen: set[frozenset[str]] = set()
+            any_pool = bool(allowlist_pool)
 
-            target_size = set_size or _target_set_size(summary, segment, top_n=top_n, fallback=top_n)
-            seen_variants: set[frozenset[str]] = set()
-            rank_col = "all_conv" if "all_conv" in kw_day.columns else "clicks"
-
-            if include_top_conv_synthetic and pool:
-                synth_idx += 1
-                new_id, synth_idx = _next_synthetic_id(
-                    segment,
-                    "top_conv",
-                    synthetic_prefix=synthetic_prefix,
-                    synth_idx=synth_idx,
-                    existing_ids=existing_ids,
-                )
-                _append_synthetic_set(
-                    synthetic_sets=synthetic_sets,
-                    synth_cand=synth_cand,
-                    segment=segment,
-                    row=row,
-                    new_id=new_id,
-                    keywords=pool,
-                    source="synthetic_top_conv",
-                    kw_day=kw_day,
-                    positive_col=positive_col,
-                    match_type_rank_col="all_conv",
-                )
-                seen_variants.add(frozenset(k.lower() for k in pool))
-
-            if include_allowlist_synthetic and allowlist_pool:
+            if include_allowlist_synthetic and allowlist_pool and not multi_top_n:
                 allowlist_key = frozenset(k.lower() for k in allowlist_pool)
-                if allowlist_key not in seen_variants:
-                    seen_variants.add(allowlist_key)
+                if allowlist_key not in segment_seen:
+                    segment_seen.add(allowlist_key)
                     synth_idx += 1
                     new_id, synth_idx = _next_synthetic_id(
                         segment,
@@ -554,52 +542,73 @@ def build_segment_candidates(
                         match_type_rank_col=rank_col,
                     )
 
-            if need_embeddings and pool:
-                emb_map, anchors = _ensure_embeddings(
-                    course,
-                    summary,
+            for n in top_n_list:
+                pool = _keywords_from_panel(
                     kw_day,
-                    top_n=top_n,
-                    pool=pool,
-                    emb_map=emb_map,
-                    anchors=anchors,
+                    row,
+                    top_n=n,
+                    volume_col="all_conv",
                     allowed_keywords=allowed_keywords,
+                    require_positive_volume=True,
                 )
-                pool_lower = [k.lower() for k in pool]
+                if allowed_keywords and allowlist_ordered:
+                    pool = _fill_pool_to_top_n(
+                        pool,
+                        top_n=n,
+                        allowlist_ranked=allowlist_ordered,
+                        segment_allowlist=allowlist_pool,
+                    )
+                if not pool:
+                    pool_empty = True
+                else:
+                    pool_empty = False
+                    any_pool = True
 
-                semantic_variants: list[tuple[str, str, list[str]]] = []
-                if include_semantic_synthetic:
-                    semantic_variants.append(
-                        (
-                            "semantic",
-                            "synthetic_semantic",
-                            _top_keywords_by_course_sim(pool_lower, emb_map, anchors, set_size=target_size),
+                if include_allowlist_synthetic and allowlist_pool and multi_top_n:
+                    capped_allowlist = allowlist_pool[:n]
+                    if capped_allowlist:
+                        any_pool = True
+                        allow_suffix, allow_source = _top_n_labels(
+                            "allowlist", "synthetic_allowlist", n, multi_top_n=True
                         )
-                    )
-                if include_dispersion_synthetic:
-                    semantic_variants.append(
-                        (
-                            "dispersion",
-                            "synthetic_dispersion",
-                            _top_keywords_by_dispersion(pool_lower, emb_map, anchors, set_size=target_size),
-                        )
-                    )
-                if include_composite_synthetic:
-                    semantic_variants.append(
-                        (
-                            "composite",
-                            "synthetic_composite",
-                            _top_keywords_by_composite(pool_lower, emb_map, anchors, set_size=target_size),
-                        )
-                    )
+                        allow_key = frozenset(k.lower() for k in capped_allowlist)
+                        if allow_key not in segment_seen:
+                            segment_seen.add(allow_key)
+                            synth_idx += 1
+                            new_id, synth_idx = _next_synthetic_id(
+                                segment,
+                                allow_suffix,
+                                synthetic_prefix=synthetic_prefix,
+                                synth_idx=synth_idx,
+                                existing_ids=existing_ids,
+                            )
+                            _append_synthetic_set(
+                                synthetic_sets=synthetic_sets,
+                                synth_cand=synth_cand,
+                                segment=segment,
+                                row=row,
+                                new_id=new_id,
+                                keywords=capped_allowlist,
+                                source=allow_source,
+                                kw_day=kw_day,
+                                positive_col=positive_col,
+                                match_type_rank_col=rank_col,
+                            )
 
-                for suffix, source, keywords in semantic_variants:
-                    if not _is_distinct_variant(keywords, pool, seen_variants):
-                        continue
+                if pool_empty:
+                    continue
+
+                target_size = set_size or _target_set_size(summary, segment, top_n=n, fallback=n)
+                seen_variants: set[frozenset[str]] = set()
+                conv_suffix, conv_source = _top_n_labels(
+                    "top_conv", "synthetic_top_conv", n, multi_top_n=multi_top_n
+                )
+
+                if include_top_conv_synthetic:
                     synth_idx += 1
                     new_id, synth_idx = _next_synthetic_id(
                         segment,
-                        suffix,
+                        conv_suffix,
                         synthetic_prefix=synthetic_prefix,
                         synth_idx=synth_idx,
                         existing_ids=existing_ids,
@@ -610,11 +619,93 @@ def build_segment_candidates(
                         segment=segment,
                         row=row,
                         new_id=new_id,
-                        keywords=keywords,
-                        source=source,
+                        keywords=pool,
+                        source=conv_source,
                         kw_day=kw_day,
                         positive_col=positive_col,
+                        match_type_rank_col="all_conv",
                     )
+                    seen_variants.add(frozenset(k.lower() for k in pool))
+
+                if need_embeddings:
+                    emb_map, anchors = _ensure_embeddings(
+                        course,
+                        summary,
+                        kw_day,
+                        top_n=n,
+                        pool=pool,
+                        emb_map=emb_map,
+                        anchors=anchors,
+                        allowed_keywords=allowed_keywords,
+                    )
+                    pool_lower = [k.lower() for k in pool]
+
+                    semantic_variants: list[tuple[str, str, list[str]]] = []
+                    if include_semantic_synthetic:
+                        sem_suffix, sem_source = _top_n_labels(
+                            "semantic", "synthetic_semantic", n, multi_top_n=multi_top_n
+                        )
+                        semantic_variants.append(
+                            (
+                                sem_suffix,
+                                sem_source,
+                                _top_keywords_by_course_sim(
+                                    pool_lower, emb_map, anchors, set_size=target_size
+                                ),
+                            )
+                        )
+                    if include_dispersion_synthetic:
+                        disp_suffix, disp_source = _top_n_labels(
+                            "dispersion", "synthetic_dispersion", n, multi_top_n=multi_top_n
+                        )
+                        semantic_variants.append(
+                            (
+                                disp_suffix,
+                                disp_source,
+                                _top_keywords_by_dispersion(
+                                    pool_lower, emb_map, anchors, set_size=target_size
+                                ),
+                            )
+                        )
+                    if include_composite_synthetic:
+                        comp_suffix, comp_source = _top_n_labels(
+                            "composite", "synthetic_composite", n, multi_top_n=multi_top_n
+                        )
+                        semantic_variants.append(
+                            (
+                                comp_suffix,
+                                comp_source,
+                                _top_keywords_by_composite(
+                                    pool_lower, emb_map, anchors, set_size=target_size
+                                ),
+                            )
+                        )
+
+                    for suffix, source, keywords in semantic_variants:
+                        if not _is_distinct_variant(keywords, pool, seen_variants):
+                            continue
+                        synth_idx += 1
+                        new_id, synth_idx = _next_synthetic_id(
+                            segment,
+                            suffix,
+                            synthetic_prefix=synthetic_prefix,
+                            synth_idx=synth_idx,
+                            existing_ids=existing_ids,
+                        )
+                        _append_synthetic_set(
+                            synthetic_sets=synthetic_sets,
+                            synth_cand=synth_cand,
+                            segment=segment,
+                            row=row,
+                            new_id=new_id,
+                            keywords=keywords,
+                            source=source,
+                            kw_day=kw_day,
+                            positive_col=positive_col,
+                        )
+
+            if not any_pool and not allowlist_pool:
+                continue
 
     synth_df = pd.DataFrame(synth_cand)
     candidates = pd.concat([hist_df, synth_df], ignore_index=True)

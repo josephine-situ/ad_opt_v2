@@ -5,16 +5,29 @@ from __future__ import annotations
 import pandas as pd
 
 from utils.keyword_allowlist import (
+    clean_keyword_text,
     enrollment_allowlist_keywords,
     filter_keyword_list,
     filter_keyword_sets_dataframe,
     load_enrollment_keyword_allowlist,
+    load_enrollment_keyword_allowlist_ordered,
     normalize_keyword,
 )
 
 
 def test_normalize_keyword_strips_brackets():
     assert normalize_keyword('[mit systems thinking]') == "mit systems thinking"
+
+
+def test_clean_keyword_text_collapses_whitespace():
+    assert clean_keyword_text("system  dynamics") == "system dynamics"
+    assert normalize_keyword("system  thinking  training") == "system thinking training"
+
+
+def test_enrollment_allowlist_ordered_collapses_whitespace():
+    ordered = load_enrollment_keyword_allowlist_ordered("sys_think")
+    assert ordered is not None
+    assert not any("  " in kw for kw in ordered)
 
 
 def test_filter_keyword_list_respects_allowlist():
@@ -79,4 +92,5 @@ def test_load_enrollment_keyword_allowlist_sys_think():
     allowlist = load_enrollment_keyword_allowlist("sys_think")
     assert allowlist is not None
     assert "what is system thinking" in allowlist
-    assert len(allowlist) >= 60
+    # 56 unique after collapsing internal whitespace (xlsx had duplicate spellings).
+    assert len(allowlist) == 56

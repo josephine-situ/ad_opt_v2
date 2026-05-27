@@ -18,7 +18,12 @@ def main() -> None:
     parser.add_argument("--course", default="sys_think")
     parser.add_argument("--config", default="")
     parser.add_argument("--exp-name", default="default")
-    parser.add_argument("--top-n", type=int, default=30)
+    parser.add_argument("--top-n", type=int, default=30, help="Panel rank cap when --top-n-values is not set")
+    parser.add_argument(
+        "--top-n-values",
+        default="",
+        help="Comma-separated caps for separate synthetic sets, e.g. 10,20,40",
+    )
     parser.add_argument("--set-size", type=int, default=0, help="Target keywords per synthetic set (0 = segment median)")
     parser.add_argument(
         "--no-top-conv-synthetic",
@@ -42,9 +47,11 @@ def main() -> None:
     allowed_match_types = parse_allowed_match_types(config.constraints)
     excluded_regions = parse_excluded_regions(config.constraints)
 
+    top_n_values = [int(x.strip()) for x in args.top_n_values.split(",") if x.strip()]
     candidates, extended_sets = build_segment_candidates(
         args.course,
         top_n=args.top_n,
+        top_n_values=top_n_values or None,
         set_size=args.set_size or None,
         allowed_match_types=allowed_match_types,
         excluded_regions=excluded_regions or None,
