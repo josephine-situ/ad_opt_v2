@@ -111,6 +111,33 @@ def region_of_segment(segment: str) -> str:
     return segment.split(" / ")[0].strip()
 
 
+def actual_campaign_budget_total(
+    panel: pd.DataFrame,
+    date: pd.Timestamp,
+    *,
+    excluded_regions: list[str] | None = None,
+) -> float:
+    """
+    Sum configured daily budget caps across active regions on ``date``.
+
+    Uses one budget value per region (median when multiple panel rows exist),
+    matching ``region_actual_lookup`` in plan-vs-actual scoring.
+    """
+    day = panel[panel["date"] == pd.Timestamp(date).normalize()].copy()
+    if day.empty:
+        raise ValueError(f"No panel rows on {date.date()}")
+    if "region" not in day.columns and "segment" in day.columns:
+        day["region"] = day["segment"].map(region_of_segment)
+    if excluded_regions:
+        day = day[~day["region"].isin(excluded_regions)]
+    if day.empty:
+        raise ValueError(f"No panel rows on {date.date()} after region exclusions")
+    budget = pd.to_numeric(day["daily_budget"], errors="coerce")
+    if budget.isna().all():
+        raise ValueError(f"daily_budget missing on {date.date()}")
+    return float(day.groupby("region")["daily_budget"].median().sum())
+
+
 def segment_conversion_rates(
     panel: pd.DataFrame,
     segments: list[str],

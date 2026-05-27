@@ -81,6 +81,11 @@ def main() -> None:
     )
     parser.add_argument("--budget", type=float, default=None)
     parser.add_argument(
+        "--use-actual-budget",
+        action="store_true",
+        help="Use configured daily budget caps from the panel for each backtest day",
+    )
+    parser.add_argument(
         "--strategy",
         choices=("daily", "two_stage"),
         default=None,
@@ -96,10 +101,24 @@ def main() -> None:
         default=None,
         help="For two_stage: pandas offset alias for budget re-optimization (default W-MON)",
     )
+    parser.add_argument(
+        "--optimizer-backend",
+        default=None,
+        help="Override model_policy.optimizer_backend (e.g. linear when Gurobi license is size-limited)",
+    )
+    parser.add_argument(
+        "--optimizer-winner",
+        default=None,
+        help="Override model_policy.optimizer_winner for the MILP optimizer",
+    )
     args = parser.parse_args()
 
     config_path = Path(args.config) if args.config else default_config_path(args.course, args.exp_name)
     config = load_campaign_config(config_path)
+    if args.optimizer_backend:
+        config.model_policy.optimizer_backend = args.optimizer_backend
+    if args.optimizer_winner:
+        config.model_policy.optimizer_winner = args.optimizer_winner
     strategy = args.strategy or config.backtest.strategy
     budget_cadence = args.budget_cadence or config.backtest.budget_cadence
 
@@ -123,6 +142,9 @@ def main() -> None:
             "strategy": strategy,
             "budget_cadence": budget_cadence,
             "target": config.target,
+            "budget_mode": "actual" if args.use_actual_budget else "fixed",
+            "optimizer_winner": config.model_policy.optimizer_winner,
+            "optimizer_backend": config.model_policy.optimizer_backend,
             "total_budget": args.budget
             or float(COURSE_CONFIG.get(config.course, {}).get("campaign_budget", 400.0)),
         },
@@ -134,6 +156,8 @@ def main() -> None:
         return
 
     df, panel, candidates = _load_backtest_inputs(config, args.course)
+    if args.use_actual_budget and args.budget is not None:
+        print("[Warn] --budget ignored when --use-actual-budget is set")
     total_budget = args.budget or float(COURSE_CONFIG.get(config.course, {}).get("campaign_budget", 400.0))
 
     if strategy == "two_stage":
@@ -159,6 +183,7 @@ def main() -> None:
             end=end,
             total_budget=total_budget,
             out_dir=out_dir,
+            use_actual_budget=args.use_actual_budget,
         )
         print(f"Finished {len(summary)} days. Summary: {out_dir / 'daily_backtest_summary.csv'}")
 

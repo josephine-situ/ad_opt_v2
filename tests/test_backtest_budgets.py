@@ -11,6 +11,7 @@ import pytest
 
 from campaign_opt.backtest import load_fit_manifest, run_daily_backtest
 from campaign_opt.decisions import (
+    actual_campaign_budget_total,
     budgets_proportional_to_conversion_rates,
     segment_conversion_rates,
 )
@@ -42,6 +43,23 @@ def test_budgets_proportional_to_conversion_rates():
     budgets = budgets_proportional_to_conversion_rates(panel, segments, total_budget=100.0)
     assert abs(sum(budgets.values()) - 100.0) < 1e-9
     assert budgets["B / Phrase; Exact"] > budgets["A / Broad"]
+
+
+def test_actual_campaign_budget_total():
+    panel = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-01-01", "2025-01-01", "2025-01-01"]),
+            "region": ["USA", "A", "B"],
+            "match_types": ["Broad", "Broad", "Broad"],
+            "daily_budget": [200.0, 100.0, 50.0],
+        }
+    )
+    total = actual_campaign_budget_total(panel, pd.Timestamp("2025-01-01"))
+    assert total == 350.0
+    total_excl = actual_campaign_budget_total(
+        panel, pd.Timestamp("2025-01-01"), excluded_regions=["B"]
+    )
+    assert total_excl == 300.0
 
 
 def test_load_fit_manifest_requires_optimizer_winner():

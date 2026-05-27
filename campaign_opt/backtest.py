@@ -15,6 +15,7 @@ from campaign_opt.evaluation import (
 )
 from campaign_opt.features import train_before_date
 from campaign_opt.modeling import eval_pipeline_holdout
+from campaign_opt.decisions import actual_campaign_budget_total, parse_excluded_regions
 from campaign_opt.optimize import require_optimizer_winner, run_optimizer
 from campaign_opt.schema import CampaignOptConfig
 from utils.campaign_features import build_keyword_set_feature_table
@@ -54,6 +55,7 @@ def run_daily_backtest(
     end: pd.Timestamp,
     total_budget: float,
     out_dir: Path,
+    use_actual_budget: bool = False,
 ) -> pd.DataFrame:
     """
     For each day t in [start, end]:
@@ -72,6 +74,7 @@ def run_daily_backtest(
     dates = pd.date_range(start, end, freq="D")
     daily_rows: list[dict[str, Any]] = []
     min_train = config.model_policy.validation.min_train_rows
+    excluded_regions = parse_excluded_regions(config.constraints)
 
     for opt_date in dates:
         opt_date = pd.Timestamp(opt_date)
@@ -89,13 +92,19 @@ def run_daily_backtest(
         if holdout.empty:
             raise RuntimeError(f"No modeling-panel rows on {opt_date.date()}")
 
+        day_budget = (
+            actual_campaign_budget_total(panel, opt_date, excluded_regions=excluded_regions)
+            if use_actual_budget
+            else total_budget
+        )
+
         plan = run_optimizer(
             config,
             opt_manifest,
             train,
             candidates,
             panel,
-            total_budget=total_budget,
+            total_budget=day_budget,
             output_dir=day_dir,
             planning_date=opt_date,
             write_outputs=True,
@@ -110,6 +119,7 @@ def run_daily_backtest(
             "optimizer_winner": require_optimizer_winner(config),
             "backend": _resolve_backtest_backend(config),
             "n_segments": len(plan),
+            "total_budget": day_budget,
             "plan_budget_total": float(plan_budget.sum()),
             "n_segments_zero_budget": int((plan_budget <= 0).sum()),
         }
@@ -142,7 +152,8 @@ def run_daily_backtest(
         daily_rows.append(day_row)
         budget_note = (
             f"budget=${day_row['plan_budget_total']:.1f} "
-            f"({day_row['n_segments_zero_budget']}/{day_row['n_segments']} segments at $0)"
+            f"(cap=${day_row['total_budget']:.1f}, "
+            f"{day_row['n_segments_zero_budget']}/{day_row['n_segments']} segments at $0)"
         )
         print(f"  [{opt_date.date()}] done — segments={len(plan)}, {budget_note}")
 
