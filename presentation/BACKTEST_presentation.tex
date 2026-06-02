@@ -159,7 +159,7 @@
   \vspace{0.15em}
   \textbf{Stage 2} (each day $t$ in May 12--25):
   \begin{enumerate}
-    \item Train on \texttt{date}${<}t$; single-day MILP with \textbf{fixed} sets; optimize budgets only.
+    \item Train on \texttt{date}${<}t$ $\rightarrow$ CV-tune; single-day MILP with \textbf{fixed} sets; optimize budgets only.
     \item Score gated $\hat f$ at plan vs.\ panel budgets (\texttt{plan\_vs\_actual.csv}).
     \item Record realized \texttt{conv\_scaled\_clicks}.
   \end{enumerate}

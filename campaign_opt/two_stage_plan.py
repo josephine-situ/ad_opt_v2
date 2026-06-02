@@ -85,7 +85,8 @@ def optimize_budgets_for_day(
     """
     Stage 2: single-day MILP with fixed keyword sets.
 
-    Trains on ``date < planning_date`` (walk-forward, no hyperparameter search).
+    Trains on ``date < planning_date`` (walk-forward) with time-series CV
+    hyperparameter search on that slice (same as daily backtest).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +111,7 @@ def optimize_budgets_for_day(
         planning_date=planning_date,
         fixed_keyword_sets=fixed_keyword_sets,
         write_outputs=True,
-        tune_optimizer=False,
+        tune_optimizer=True,
     )
     plan.to_csv(output_dir / "campaign_plan.csv", index=False)
     return plan

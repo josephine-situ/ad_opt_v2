@@ -69,8 +69,8 @@ def run_two_stage_backtest(
              Budgets can vary per day.  Model trained on data before ``start``.
 
     Stage 2: Fix keyword sets from Stage 1.  Each day t in [start, end],
-             retrain ridge+xgb on data available up to day t, then single-day
-             MILP to optimize that day's budget allocation.
+             walk-forward train ridge+xgb on date < t (CV-tuned hyperparameters),
+             then single-day MILP to optimize that day's budget allocation.
 
     When ``use_actual_budget=True``, each day's budget constraint is the actual
     configured daily budget from the panel (matching the daily backtest behaviour).

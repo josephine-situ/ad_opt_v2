@@ -280,8 +280,8 @@ uv run python scripts/backtest_campaign.py --course sys_think --start 2026-05-12
 
 For each day `t` in `[start, end]`:
 
-1. Train on `date < t` (walk-forward).
-2. Single-day MILP with `fixed_keyword_sets` from stage 1 (`tune_optimizer=False`); only `daily_budget` per segment is free.
+1. Train on `date < t` (walk-forward) with time-series CV hyperparameter search (`tune_optimizer=True`).
+2. Single-day MILP with `fixed_keyword_sets` from stage 1; only `daily_budget` per segment is free.
 3. Score plan vs panel with the evaluation ensemble → `plans/YYYYMMDD/plan_vs_actual.csv` and `campaign_plan.csv`.
 
 **Flags**
