@@ -9,7 +9,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from campaign_opt.decisions import parse_allowed_match_types, parse_excluded_regions
 from campaign_opt.schema import default_config_path, load_campaign_config
-from utils.keyword_candidates import build_segment_candidates, write_segment_keyword_candidate_files
+from utils.keyword_candidates import (
+    DEFAULT_TOP_N_VALUES,
+    build_segment_candidates,
+    verify_segment_keyword_candidates,
+    write_segment_keyword_candidate_files,
+)
 from utils.tee_logging import setup_tee_logging
 
 
@@ -21,8 +26,13 @@ def main() -> None:
     parser.add_argument("--top-n", type=int, default=30, help="Panel rank cap when --top-n-values is not set")
     parser.add_argument(
         "--top-n-values",
-        default="",
-        help="Comma-separated caps for separate synthetic sets, e.g. 10,20,40",
+        default=",".join(str(n) for n in DEFAULT_TOP_N_VALUES),
+        help="Comma-separated caps for separate synthetic sets (default: 10,20,40)",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="After writing, run verify_segment_keyword_candidates and exit non-zero on failure",
     )
     parser.add_argument("--set-size", type=int, default=0, help="Target keywords per synthetic set (0 = segment median)")
     parser.add_argument(
@@ -66,6 +76,18 @@ def main() -> None:
     )
     print(f"Wrote {len(candidates)} candidate rows across {candidates['segment'].nunique()} segments.")
     print(f"Updated keyword-sets-display at {display_dir}")
+
+    if args.verify:
+        caps = tuple(top_n_values or list(DEFAULT_TOP_N_VALUES))
+        issues = verify_segment_keyword_candidates(
+            args.course, candidates, extended_sets, top_n_values=caps
+        )
+        if issues:
+            print("Verification failed:")
+            for issue in issues:
+                print(f"  - {issue}")
+            raise SystemExit(1)
+        print("Verification passed.")
 
 
 if __name__ == "__main__":

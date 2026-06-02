@@ -71,12 +71,12 @@
   \textbf{Pool $\mathcal{K}_s$} (\texttt{build\_keyword\_candidates.py --top-n-values 10,20,40}):
   \begin{itemize}
     \item \textbf{Historical} --- every \texttt{keyword\_set\_id} seen in segment (allowlist-filtered).
-    \item \textbf{synthetic\_top\_conv\_n\{10,20,40\}} --- rank \texttt{kw-day-panel} by \texttt{all\_conv} (positive only) within region + allowed match types; union with conversion-efficiency keywords; pad to $N$ from allowlist enrollment priority if needed.
+    \item \textbf{synthetic\_top\_conv\_n\{10,20,40\}} --- rank \texttt{kw-day-panel} by \texttt{all\_conv} per match type (top volume + efficiency within each type); pad each type from allowlist if needed.
     \item \textbf{synthetic\_allowlist\_n\{10,20,40\}} --- first $N$ allowlist keywords by enrollment count (same match-type filter).
-    \item \textbf{synthetic\_semantic/dispersion/composite\_n\{10,20,40\}} --- same performance pool; greedy or similarity-ranked subsets at each cap.
+    \item \textbf{synthetic\_semantic/dispersion/composite\_n\{10,20,40\}} --- top $N$ per match type from allowlist∩region by embedding score; pad from allowlist.
   \end{itemize}
 
-  \textbf{Lists \& features:} \texttt{broad}/\texttt{phrase}/\texttt{exact} columns from dominant \texttt{all\_conv} per keyword (top-conv sets); GKP + embeddings in \texttt{keyword-set-features.csv}.
+  \textbf{Lists \& features:} \texttt{broad}/\texttt{phrase}/\texttt{exact} ranked per match type; GKP + embeddings on union in \texttt{keyword-set-features.csv}.
 
   {\scriptsize May run (\texttt{--strategy two\_stage}): keyword sets fixed in stage~1 for the full window; stage~2 re-optimizes budgets only.}
   \normalsize

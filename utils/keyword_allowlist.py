@@ -147,8 +147,8 @@ def enrollment_allowlist_keywords(
     """
     Full enrollment allowlist as a keyword list for one segment.
 
-    Uses panel spelling when a keyword appears in the segment's region / match types;
-    otherwise the normalized allowlist text.
+    Uses panel spelling when a keyword appears in the segment's region for that match type
+    (from any campaign configuration in the region); otherwise the normalized allowlist text.
     """
     if not allowlist:
         return []
@@ -162,11 +162,9 @@ def enrollment_allowlist_keywords(
     }
 
     canonical: dict[str, str] = {}
-    if not kw_day.empty and pd.notna(region):
-        sub = kw_day[kw_day["region"] == region]
-        if allowed_mt and "match_type" in sub.columns:
-            sub = sub[sub["match_type"].isin(allowed_mt)]
-        if not sub.empty and "keyword" in sub.columns:
+    if not kw_day.empty and pd.notna(region) and "keyword" in kw_day.columns:
+        for mt in allowed_mt:
+            sub = kw_day[(kw_day["region"] == region) & (kw_day["match_type"] == mt)]
             for kw in sub["keyword"].dropna().astype(str):
                 key = normalize_keyword(kw)
                 if key in allowlist:

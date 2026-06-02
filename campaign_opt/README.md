@@ -146,19 +146,19 @@ uv run python scripts/build_gkp_set_features.py --course sys_think
 
 Produces set-level GKP aggregates and `data/<course>/processed/segment-keyword-candidates.csv` used by the MILP.
 
-**Keyword candidates (`build_keyword_candidates.py`)**
+**Keyword candidates (`build_keyword_candidates.py`)** — full construction details: [`docs/keyword_sets.md`](../docs/keyword_sets.md).
 
 - **Segment** = `(region, match_types)` where `match_types` is the campaign-level configuration from change history (`Broad`, `Phrase; Exact`, `Exact`, or `Broad; Phrase; Exact`). The MILP picks one keyword set per segment, not separate lists per match type.
 - **Enrollment allowlist** — when `data/<course>/gkp/*Keywords*Enrollments*.xlsx` exists, `load_enrollment_keyword_allowlist()` restricts **all** historical and synthetic sets to approved keywords; sets with no allowlisted keywords are dropped from `segment-keyword-candidates.csv`.
 - **Historical** candidates: every `keyword_set_id` observed in that segment (allowlist-filtered).
-- **`synthetic_top_conv` / `synthetic_top_conv_n{N}`** — rank `kw-day-panel.csv` by **`all_conv`** (not clicks): `volume_col="all_conv"`, `require_positive_volume=True`, within segment region and `allowed_match_types`. The pool is the union of top‑`N` converters and conversion‑efficiency keywords (`all_conv` per dollar). If fewer than `N` converters exist, pad from the enrollment allowlist (by enrollment count in the GKP file, else sheet order). With `--top-n-values 10,20,40`, emit separate sets `synthetic_top_conv_n10`, `_n20`, `_n40` per segment.
-- **`synthetic_allowlist` / `synthetic_allowlist_n{N}`** — first `N` allowlist keywords by enrollment priority (full list when only one `top_n` is used). Only emitted when the enrollments spreadsheet exists.
-- **`synthetic_semantic` / `synthetic_dispersion` / `synthetic_composite`** (each with `_n10` / `_n20` / `_n40` when multiple caps are set) — built from the same top‑conv performance pool; semantic = course‑anchor similarity ranking; dispersion = greedy max spread; composite = greedy max `z(course_sim) + z(dispersion)`.
+- **`synthetic_top_conv` / `synthetic_top_conv_n{N}`** — rank `kw-day-panel.csv` by **`all_conv`** **per match type** (top‑`N` volume + top‑`N` efficiency within each type); pad each type from the enrollment allowlist if needed. With `--top-n-values 10,20,40`, emit `synthetic_top_conv_n10`, `_n20`, `_n40` per segment.
+- **`synthetic_allowlist` / `synthetic_allowlist_n{N}`** — allowlist keywords per match type (panel-observed first). Only when the enrollments spreadsheet exists.
+- **`synthetic_semantic` / `dispersion` / `composite`** — top `N` per match type from allowlist∩region (for that type) by embedding score; pad from allowlist.
 - Default shipped caps: pass **`--top-n-values 10,20,40`** (see command above). Without it, a single cap uses `--top-n` (default 30).
 
 Disable variants with `--no-top-conv-synthetic`, `--no-allowlist-synthetic`, `--no-semantic-synthetic`, `--no-dispersion-synthetic`, or `--no-composite-synthetic`.
 
-Keywords **do not** need to be identical across Broad / Phrase / Exact within a campaign. Historical sets store separate `broad_keywords`, `phrase_keywords`, and `exact_keywords` columns; synthetic top‑conv sets assign match-type columns using **dominant `all_conv`** per keyword in the panel (`match_type_rank_col="all_conv"`). Union-level semantic/GKP features use `positive_keywords`; **match-type structure** features (counts, Jaccard overlap, per-type course similarity, cross-type embedding similarity) are computed from the split lists in `build_gkp_set_features.py` and exposed as `keyword_set_match_type` in the campaign config.
+Broad / phrase / exact lists **may overlap**. Synthetics rank and assign keywords **per match type** (no flat pool → re-split). See [`docs/keyword_sets.md`](../docs/keyword_sets.md). Union-level semantic/GKP features use `positive_keywords`.
 
 Outputs:
 
