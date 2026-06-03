@@ -4,12 +4,37 @@ from __future__ import annotations
 
 import pandas as pd
 
+from campaign_opt.decisions import parse_allowed_match_types, parse_excluded_regions, region_of_segment
 from campaign_opt.schema import CampaignOptConfig
 from utils.campaign_features import (
     build_modeling_frame,
     get_context_feature_columns,
     merge_match_type_set_features,
 )
+
+
+def filter_training_scope(df: pd.DataFrame, config: CampaignOptConfig) -> pd.DataFrame:
+    """
+    Keep rows in optimization scope: ``allowed_match_types`` and non-``excluded_regions``.
+    """
+    out = df.copy()
+    if "segment" not in out.columns:
+        return out
+
+    excluded = parse_excluded_regions(config.constraints)
+    if excluded:
+        regions = out["segment"].map(region_of_segment)
+        out = out[~regions.isin(excluded)]
+
+    allowed = parse_allowed_match_types(config.constraints)
+    if allowed:
+        if "match_types" in out.columns:
+            mt = out["match_types"].astype(str)
+        else:
+            mt = out["segment"].astype(str).str.split(" / ", n=1).str[1]
+        out = out[mt.isin(allowed)]
+
+    return out.reset_index(drop=True)
 
 
 def filter_modeling_lookback(
@@ -48,6 +73,8 @@ def prepare_modeling_data(config: CampaignOptConfig | str) -> pd.DataFrame:
             if col not in df.columns:
                 df[col] = pd.NA
     df = df.dropna(subset=["daily_budget", "segment"])
+    if isinstance(config, CampaignOptConfig):
+        df = filter_training_scope(df, config)
     return filter_modeling_lookback(df, lookback_days)
 
 

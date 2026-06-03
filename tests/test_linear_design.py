@@ -37,10 +37,9 @@ def test_linear_design_uses_region_and_match_not_segment_dummies():
     design = build_linear_milp_design_matrix(df, _minimal_config())
     cols = design.x_columns
     assert any(c.startswith("region_") for c in cols)
-    assert "has_broad" in cols
-    assert "has_exact" in cols
+    assert "is_broad_match" in cols
     assert "budget_x_region_USA" in cols
-    assert "budget_x_has_broad" in cols
+    assert "budget_x_is_broad_match" in cols
     assert not any(c.startswith("seg_") for c in cols)
 
 

@@ -13,7 +13,8 @@
       "season",
       "is_weekend",
       "is_public_holiday",
-      "days_to_next_course_start"
+      "days_to_next_course_start",
+      "days_since_version_start"
     ],
     "keyword_set_static": [
       "embed_cohesion",
@@ -46,11 +47,8 @@
   "model_policy": {
     "candidates": [
       "ridge",
-      "power_log",
-      "power_level",
       "random_forest",
       "xgboost",
-      "ensemble",
       "ensemble_ridge_xgb"
     ],
     "selection_metric": "holdout_rmse_levels",

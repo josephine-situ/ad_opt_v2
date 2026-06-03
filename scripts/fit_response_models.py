@@ -11,7 +11,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from campaign_opt.evaluation import fit_evaluation_model
 from campaign_opt.feature_artifacts import save_modeling_artifacts
 from campaign_opt.features import prepare_modeling_data, train_holdout_split
-from campaign_opt.modeling import model_feature_overview_lines, run_tournament, save_manifest
+from campaign_opt.modeling import (
+    model_feature_overview_lines,
+    print_tournament_metric_summary,
+    run_tournament,
+    save_manifest,
+)
 from campaign_opt.schema import default_config_path, load_campaign_config
 from utils.tee_logging import setup_tee_logging
 
@@ -35,6 +40,7 @@ def main() -> None:
     setup_tee_logging(log_file=None, default_log_prefix=f"fit_models_{config.course}")
 
     df = prepare_modeling_data(config)
+    print(f"Modeling panel: {len(df)} rows, {df['segment'].nunique()} segments")
     if config.modeling_lookback_days:
         print(
             f"Modeling lookback: last {config.modeling_lookback_days} days "
@@ -67,8 +73,11 @@ def main() -> None:
 
     print(
         f"Winner: {winner.name} (backend={manifest['backend']}, "
-        f"holdout R^2={winner.holdout_r2:.4f})"
+        f"holdout RMSE={winner.holdout_rmse:.4f}, holdout R^2={winner.holdout_r2:.4f})"
     )
+    if winner.cv_r2 is not None:
+        print(f"  Winner CV R^2={winner.cv_r2:.4f} (CV RMSE={winner.cv_rmse:.4f})")
+    print_tournament_metric_summary(metrics_table, winner_name=winner.name)
     for line in model_feature_overview_lines(
         winner, shap_effects=manifest.get("shap_mean_effects")
     ):

@@ -11,14 +11,15 @@ from sklearn.preprocessing import StandardScaler
 
 from campaign_opt.schema import CampaignOptConfig
 from utils.campaign_features import (
+    SEGMENT_BROAD_MATCH_COL,
     add_segment_match_type_indicators,
     get_context_feature_columns,
-    parse_match_types,
+    is_broad_match_campaign,
 )
 
-SEGMENT_MATCH_COLS = ("has_broad", "has_phrase", "has_exact")
+SEGMENT_MATCH_COLS = (SEGMENT_BROAD_MATCH_COL,)
 SEGMENT_STRUCTURAL_EXACT = frozenset({"daily_budget", *SEGMENT_MATCH_COLS})
-SEGMENT_STRUCTURAL_PREFIXES = ("region_", "budget_x_region_", "budget_x_has_")
+SEGMENT_STRUCTURAL_PREFIXES = ("region_", "budget_x_region_", "budget_x_")
 RIDGE_NO_SCALE_COLS = frozenset({"is_weekend", "is_public_holiday"})
 
 
@@ -125,15 +126,12 @@ def split_context_columns_by_dtype(
 
 
 def segment_match_indicators(segment: str) -> dict[str, float | str]:
-    """Decompose a compound segment string into region + match-type flags."""
+    """Decompose a compound segment string into region + broad-only match flag."""
     region = segment.split(" / ", 1)[0].strip()
     match_part = segment.split(" / ", 1)[1].strip() if " / " in segment else ""
-    types = parse_match_types(match_part)
     return {
         "region": region,
-        "has_broad": float("Broad" in types),
-        "has_phrase": float("Phrase" in types),
-        "has_exact": float("Exact" in types),
+        SEGMENT_BROAD_MATCH_COL: float(is_broad_match_campaign(match_part)),
     }
 
 
@@ -272,7 +270,7 @@ def build_linear_milp_design_matrix(
     """
     Design used by MILP linear backend and aligned tournament ridge:
 
-      y ~ region + match_type_flags + daily_budget + budget×(region + match) + context_features
+      y ~ region + is_broad_match + daily_budget + budget×(region + is_broad_match) + context_features
 
     Per-compound-segment intercepts/slopes for Gurobi are derived from these coefficients.
     """

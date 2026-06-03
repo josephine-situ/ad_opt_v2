@@ -16,9 +16,7 @@ def test_compute_mean_shap_effects_without_shap():
         {
             "region": ["A", "B"],
             "match_types": ["Broad", "Exact"],
-            "has_broad": [1, 0],
-            "has_phrase": [0, 0],
-            "has_exact": [0, 1],
+            "is_broad_match": [1, 0],
             "daily_budget": [10.0, 20.0],
             "clicks": [1.0, 2.0],
             "segment": ["A / Broad", "B / Exact"],
@@ -49,9 +47,7 @@ def test_compute_mean_shap_effects_tree_model():
         {
             "region": ["A", "B", "A", "B"],
             "match_types": ["Broad", "Exact", "Broad", "Exact"],
-            "has_broad": [1, 0, 1, 0],
-            "has_phrase": [0, 0, 0, 0],
-            "has_exact": [0, 1, 0, 1],
+            "is_broad_match": [1, 0, 1, 0],
             "daily_budget": [10.0, 20.0, 12.0, 18.0],
             "embed_cohesion": [0.38, 0.41, 0.39, 0.42],
             "clicks": [1.0, 2.0, 1.5, 2.5],

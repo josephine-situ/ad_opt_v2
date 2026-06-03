@@ -24,7 +24,7 @@ More on API pulls and HTML parsing: root `[README.md](../README.md)`.
 
 ## Modeling considerations
 
-Raw `**all_conv**` is a poor default optimization target because of how the panel is built and what we can identify from history. The shipped `default` experiment uses `**conv_scaled_clicks**` (clicks weighted by segment conversion-per-click); `**clicks**` remains a supported alternative.
+Raw `**all_conv**` is a poor default optimization target because of how the panel is built and what we can identify from history. The shipped `default` experiment uses `**conv_scaled_clicks**` (clicks × fixed conv/click per `(region, match_types)`, computed once from the full campaign-day panel); `**clicks**` remains a supported alternative. Calendar context includes `**days_since_version_start**` (days since the active `campaign_version` start in `campaign-summary.csv`).
 
 **Decision lever.** Response models use `**daily_budget`** (the configured cap from change history). `**cost**` is observed spend, not a controllable input, and is excluded from models and budget diagnostics.
 
@@ -221,7 +221,7 @@ uv run python scripts/fit_response_models.py --course sys_think --skip-evaluatio
 
 Tournament (ridge, power, RF, XGB) with **level-scale** metrics; writes `model_manifest.json`, `winner_model.joblib`, `holdout_metrics.json`, and `**linear_coeffs.json`** under `opt_results/<course>/campaign/<exp>/`.
 
-**Ridge uses the same design as the linear MILP** (`region + match_type + budget×(region + match) + context_features` via `[linear_design.py](linear_design.py)`). Keyword-set selection in the MILP uses `**static_context_lift`** — per-set scores derived from static context-feature coefficients (semantic, GKP), not `keyword_set_id` dummies. Saved debug matrices land in `features/`:
+**Ridge uses the same design as the linear MILP** (`region + is_broad_match + budget×(region + is_broad_match) + context_features` via `[linear_design.py](linear_design.py)`). The modeling panel is filtered to `constraints.allowed_match_types` and non-`excluded_regions` before the tournament. The tournament always scores a **`mean_baseline`** candidate (training-set mean target) for reference; it cannot be selected as the optimizer winner. Keyword-set selection in the MILP uses `**static_context_lift`** — per-set scores derived from static context-feature coefficients (semantic, GKP), not `keyword_set_id` dummies. Saved debug matrices land in `features/`:
 
 
 | File                                   | Purpose                            |
@@ -254,7 +254,7 @@ Normally done automatically at the end of step 5 (`fit_response_models.py`). Re-
 uv run python scripts/fit_evaluation_ensemble.py --course sys_think
 ```
 
-Fits the 5-member ensemble on the **full modeling panel** with CV-RMSE weights from `holdout_metrics.json` (same as backtest). Writes `ensemble_model.joblib` and `ensemble_meta.json`.
+Fits the evaluation ensemble (ridge, random forest, xgboost — no power-law members) on the **full modeling panel** with CV-RMSE weights from `holdout_metrics.json` (same as backtest). Writes `ensemble_model.joblib` and `ensemble_meta.json`.
 
 ## 7. Optimize (Gurobi MILP)
 

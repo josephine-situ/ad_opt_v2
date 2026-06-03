@@ -35,6 +35,7 @@ from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.shap_effects import compute_mean_shap_effects, format_top_shap_effects
 from campaign_opt.train_specs import build_estimator, get_train_spec
 from utils.campaign_features import (
+    SEGMENT_BROAD_MATCH_COL,
     TREE_SEGMENT_FEATURE_COLS,
     add_segment_match_type_indicators,
     get_context_feature_columns,
@@ -50,6 +51,22 @@ BASE_TOURNAMENT_CANDIDATES = [
     "random_forest",
     "xgboost",
 ]
+MEAN_BASELINE_CANDIDATE = "mean_baseline"
+
+
+def is_mean_baseline_candidate(name: str) -> bool:
+    return name == MEAN_BASELINE_CANDIDATE
+
+
+@dataclass
+class TrainingMeanBaseline:
+    """Constant level predictor: training-set mean of the optimization target."""
+
+    mean_level: float
+
+    def predict(self, X: Any) -> np.ndarray:
+        n = int(getattr(X, "shape", [len(X)])[0])
+        return np.full(n, self.mean_level, dtype=float)
 ENSEMBLE_MEMBER_GROUPS: dict[str, list[str]] = {
     "ensemble": list(BASE_TOURNAMENT_CANDIDATES),
     "ensemble_ridge_xgb": ["ridge", "xgboost"],
@@ -194,7 +211,7 @@ def _build_preprocessor(feature_cols: list[str], sample: pd.DataFrame) -> Column
             OneHotEncoder(handle_unknown="ignore", sparse_output=False),
             ["region"],
         ),
-        ("match", "passthrough", ["has_broad", "has_phrase", "has_exact"]),
+        ("match", "passthrough", [SEGMENT_BROAD_MATCH_COL]),
     ]
     if ctx_numeric:
         transformers.append(("ctx_num", "passthrough", ctx_numeric))
@@ -267,6 +284,46 @@ def _fit_and_evaluate(
         holdout_r2=m["holdout_r2_levels"],
         holdout_mae=m["holdout_mae_levels"],
         best_hyperparams=hyperparams,
+    )
+
+
+def fit_mean_baseline(
+    train: pd.DataFrame,
+    holdout: pd.DataFrame,
+    config: CampaignOptConfig,
+    feature_cols: list[str],
+    *,
+    hyperparams: dict[str, Any] | None = None,
+) -> ModelResult:
+    """Predict the training-set mean target level (reference for tournament comparison)."""
+    del feature_cols, hyperparams
+    target = config.target
+    y_train = train.dropna(subset=[target])[target].astype(float)
+    if y_train.empty:
+        raise ValueError(f"No training rows with target {target!r} for mean baseline")
+    mean_level = float(y_train.mean())
+    model = TrainingMeanBaseline(mean_level)
+
+    if holdout.empty:
+        m = {
+            "holdout_rmse_levels": float("nan"),
+            "holdout_r2_levels": float("nan"),
+            "holdout_mae_levels": float("nan"),
+        }
+    else:
+        ho = holdout.dropna(subset=[target])
+        y = ho[target].astype(float).values
+        pred = np.clip(model.predict(np.zeros((len(ho), 1))), 0, None)
+        m = _level_metrics(y, pred)
+
+    return ModelResult(
+        name=MEAN_BASELINE_CANDIDATE,
+        pipeline=model,
+        backend="baseline",
+        holdout_rmse=m["holdout_rmse_levels"],
+        holdout_r2=m["holdout_r2_levels"],
+        holdout_mae=m["holdout_mae_levels"],
+        extra={"train_mean": mean_level},
     )
 
 
@@ -433,6 +490,20 @@ def refit_winner_on_data(
 
     Evaluation metrics on ``winner`` (CV / holdout from the train split) are preserved.
     """
+    if is_mean_baseline_candidate(winner.name):
+        res = fit_mean_baseline(df, df.iloc[0:0], config, feature_cols)
+        return ModelResult(
+            name=winner.name,
+            pipeline=res.pipeline,
+            backend=winner.backend,
+            holdout_rmse=winner.holdout_rmse,
+            holdout_r2=winner.holdout_r2,
+            holdout_mae=winner.holdout_mae,
+            cv_rmse=winner.cv_rmse,
+            cv_r2=winner.cv_r2,
+            cv_mae=winner.cv_mae,
+            extra=res.extra,
+        )
     if is_ensemble_candidate(winner.name):
         member_names = ENSEMBLE_MEMBER_GROUPS[winner.name]
         member_hp = winner.best_hyperparams if isinstance(winner.best_hyperparams, dict) else {}
@@ -752,13 +823,13 @@ def _ridge_milp_overview(artifact: LinearMilpRidgeModel, *, top_n: int) -> list[
     ]
     if region_slopes:
         lines.append(f"    budget slope by region: {_format_top_pairs(region_slopes, limit=top_n)}")
-    match_slopes = [
-        (col[len("budget_x_") :], float(coef[cols.index(col)]))
-        for col in cols
-        if col.startswith("budget_x_has_")
-    ]
-    if match_slopes:
-        lines.append(f"    budget slope by match: {_format_top_pairs(match_slopes, limit=top_n)}")
+    if SEGMENT_BROAD_MATCH_COL in cols:
+        inter_col = f"budget_x_{SEGMENT_BROAD_MATCH_COL}"
+        if inter_col in cols:
+            lines.append(
+                f"    budget slope (broad vs phrase/exact): "
+                f"{SEGMENT_BROAD_MATCH_COL}={float(coef[cols.index(inter_col)]):+.3g}"
+            )
     elif "daily_budget" in cols:
         lines.append(f"    budget slope: (shared)={global_slope:+.3g}")
 
@@ -803,6 +874,8 @@ def _pipeline_overview(pipe: Pipeline, *, top_n: int) -> list[str]:
 
 def pipeline_feature_overview_lines(pipeline: Any, *, top_n: int = 6) -> list[str]:
     """Compact coefficient / importance summary for a fitted pipeline."""
+    if isinstance(pipeline, TrainingMeanBaseline):
+        return [f"    train mean level: {pipeline.mean_level:.4g}"]
     if isinstance(pipeline, LinearMilpRidgeModel):
         return _ridge_milp_overview(pipeline, top_n=top_n)
     if isinstance(pipeline, Pipeline):
@@ -820,7 +893,13 @@ def model_feature_overview_lines(
     shap_effects: dict[str, float] | None = None,
 ) -> list[str]:
     lines = pipeline_feature_overview_lines(res.pipeline, top_n=top_n)
-    if shap_effects is None and shap_data is not None and target and feature_cols:
+    if (
+        shap_effects is None
+        and shap_data is not None
+        and target
+        and feature_cols
+        and not is_mean_baseline_candidate(res.name)
+    ):
         shap_effects = compute_mean_shap_effects(
             res.pipeline, shap_data, target, feature_cols
         )
@@ -834,6 +913,42 @@ def resolve_backend(winner: ModelResult, config: CampaignOptConfig) -> str:
     if policy.optimizer_backend != "auto":
         return policy.optimizer_backend
     return winner.backend
+
+
+def print_tournament_metric_summary(
+    metrics_table: dict[str, dict[str, float]],
+    *,
+    winner_name: str | None = None,
+) -> None:
+    """Print holdout / CV $R^2$ for ensemble candidates and the tournament winner."""
+    print("\n--- Tournament metric summary ---")
+    summary_rows = [
+        ("ensemble ridge+xgb", "ensemble_ridge_xgb"),
+        ("mean baseline", MEAN_BASELINE_CANDIDATE),
+    ]
+    if "ensemble" in metrics_table:
+        summary_rows.insert(0, ("ensemble", "ensemble"))
+    for label, key in summary_rows:
+        row = metrics_table.get(key) or {}
+        cv_r2 = row.get("cv_r2_levels")
+        ho_r2 = row.get("holdout_r2_levels")
+        cv_rmse = row.get("cv_rmse_levels")
+        ho_rmse = row.get("holdout_rmse_levels")
+        cv_r2_s = f"{cv_r2:.4f}" if cv_r2 is not None else "n/a"
+        ho_r2_s = f"{ho_r2:.4f}" if ho_r2 is not None else "n/a"
+        cv_rmse_s = f"{cv_rmse:.4f}" if cv_rmse is not None else "n/a"
+        ho_rmse_s = f"{ho_rmse:.4f}" if ho_rmse is not None else "n/a"
+        print(
+            f"  {label}: CV RMSE={cv_rmse_s} R^2={cv_r2_s}; "
+            f"holdout RMSE={ho_rmse_s} R^2={ho_r2_s}"
+        )
+    if winner_name:
+        row = metrics_table.get(winner_name) or {}
+        cv_r2 = row.get("cv_r2_levels")
+        ho_r2 = row.get("holdout_r2_levels")
+        cv_s = f"{cv_r2:.4f}" if cv_r2 is not None else "n/a"
+        ho_s = f"{ho_r2:.4f}" if ho_r2 is not None else "n/a"
+        print(f"  winner ({winner_name}): CV R^2={cv_s} holdout R^2={ho_s}")
 
 
 def _selection_score(res: ModelResult, config: CampaignOptConfig) -> float:
@@ -989,9 +1104,11 @@ def run_tournament(
             warn_if_poor_r2(res.holdout_r2, scope="holdout", label=name)
             if res.cv_r2 is not None:
                 warn_if_poor_r2(res.cv_r2, scope="CV", label=name)
-            shap_effects = compute_mean_shap_effects(
-                res.pipeline, train, config.target, feature_cols
-            )
+            shap_effects = None
+            if not is_mean_baseline_candidate(name):
+                shap_effects = compute_mean_shap_effects(
+                    res.pipeline, train, config.target, feature_cols
+                )
             for line in model_feature_overview_lines(res, shap_effects=shap_effects):
                 print(line)
             if shap_effects:
@@ -999,11 +1116,49 @@ def run_tournament(
         except Exception as exc:
             print(f"  {name}: skipped ({exc})")
 
-    if not results:
+    try:
+        baseline_res = fit_mean_baseline(train, holdout, config, feature_cols)
+        if run_cv:
+            cv_metrics = cross_validate_model(
+                fit_mean_baseline, train, config, feature_cols, n_folds=n_folds
+            )
+            baseline_res.cv_rmse = cv_metrics["cv_rmse_levels"]
+            baseline_res.cv_r2 = cv_metrics["cv_r2_levels"]
+            baseline_res.cv_mae = cv_metrics["cv_mae_levels"]
+        results.append(baseline_res)
+        metrics_table[MEAN_BASELINE_CANDIDATE] = {
+            "holdout_rmse_levels": baseline_res.holdout_rmse,
+            "holdout_r2_levels": baseline_res.holdout_r2,
+            "holdout_mae_levels": baseline_res.holdout_mae,
+        }
+        if baseline_res.cv_rmse is not None:
+            metrics_table[MEAN_BASELINE_CANDIDATE]["cv_rmse_levels"] = baseline_res.cv_rmse
+            metrics_table[MEAN_BASELINE_CANDIDATE]["cv_r2_levels"] = baseline_res.cv_r2
+        if baseline_res.extra and "train_mean" in baseline_res.extra:
+            metrics_table[MEAN_BASELINE_CANDIDATE]["train_mean"] = baseline_res.extra[
+                "train_mean"
+            ]
+        cv_str = ""
+        if baseline_res.cv_rmse is not None:
+            cv_str = f" CV_RMSE={baseline_res.cv_rmse:.4f}"
+            if baseline_res.cv_r2 is not None:
+                cv_str += f" CV_R^2={baseline_res.cv_r2:.4f}"
+        print(
+            f"  {MEAN_BASELINE_CANDIDATE}: holdout RMSE={baseline_res.holdout_rmse:.4f} "
+            f"R^2={baseline_res.holdout_r2:.4f}{cv_str} "
+            f"train_mean={baseline_res.extra.get('train_mean') if baseline_res.extra else 'n/a'}"
+        )
+        for line in model_feature_overview_lines(baseline_res):
+            print(line)
+    except Exception as exc:
+        print(f"  {MEAN_BASELINE_CANDIDATE}: skipped ({exc})")
+
+    competitive = [r for r in results if not is_mean_baseline_candidate(r.name)]
+    if not competitive:
         raise RuntimeError("No models succeeded in tournament")
 
-    ridge_res = next((r for r in results if r.name == "ridge"), None)
-    winner = min(results, key=lambda r: _selection_score(r, config))
+    ridge_res = next((r for r in competitive if r.name == "ridge"), None)
+    winner = min(competitive, key=lambda r: _selection_score(r, config))
     backend = resolve_backend(winner, config)
 
     refit_full = config.model_policy.validation.refit_on_full_data
@@ -1028,14 +1183,16 @@ def run_tournament(
             prefit_design=coeffs_source.extra["milp_design"],
         )
 
-    winner_shap = compute_mean_shap_effects(
-        winner.pipeline,
-        full if refit_full and len(holdout) else train,
-        config.target,
-        feature_cols,
-    )
-    if winner_shap and winner.name in metrics_table:
-        metrics_table[winner.name]["shap_mean_effects"] = winner_shap
+    winner_shap: dict[str, float] | None = None
+    if not is_mean_baseline_candidate(winner.name):
+        winner_shap = compute_mean_shap_effects(
+            winner.pipeline,
+            full if refit_full and len(holdout) else train,
+            config.target,
+            feature_cols,
+        )
+        if winner_shap and winner.name in metrics_table:
+            metrics_table[winner.name]["shap_mean_effects"] = winner_shap
 
     manifest: dict[str, Any] = {
         "winner": winner.name,
@@ -1048,7 +1205,10 @@ def run_tournament(
             full if refit_full and len(holdout) else train
         ).to_dict(),
         "feature_cols": feature_cols,
-        "linear_design": "region + match_type + budget×(region + match) + context_features",
+        "linear_design": (
+            "region + is_broad_match + budget×(region + is_broad_match) + context_features"
+        ),
+        "mean_baseline_candidate": MEAN_BASELINE_CANDIDATE,
         "cv_folds": n_folds if (run_cv or tune) else 0,
         "tune_hyperparams": tune,
         "refit_on_full_data": refit_full,

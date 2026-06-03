@@ -137,14 +137,21 @@ def parse_match_types(match_types: object) -> set[str]:
     return {m.strip().title() for m in str(match_types).replace(";", " ").split() if m.strip()}
 
 
-TREE_SEGMENT_FEATURE_COLS = ["region", "has_broad", "has_phrase", "has_exact"]
+BROAD_ONLY_MATCH_TYPES = frozenset({"Broad"})
+SEGMENT_BROAD_MATCH_COL = "is_broad_match"
+TREE_SEGMENT_FEATURE_COLS = ["region", SEGMENT_BROAD_MATCH_COL]
+
+
+def is_broad_match_campaign(match_types: object) -> bool:
+    """True when the segment campaign config is Broad-only (not Phrase; Exact or mixed)."""
+    return parse_match_types(match_types) == BROAD_ONLY_MATCH_TYPES
 
 
 def add_segment_match_type_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Decompose ``segment`` into region + multi-hot match-type flags for tree models.
+    Decompose ``segment`` into region + ``is_broad_match`` for tree / ridge models.
 
-    ``has_broad``, ``has_phrase``, and ``has_exact`` are 0/1 indicators (one column per type).
+    ``is_broad_match`` is 1 for Broad-only configs and 0 for Phrase; Exact (and other mixes).
     """
     out = df.copy()
     if "match_types" not in out.columns and "segment" in out.columns:
@@ -153,10 +160,9 @@ def add_segment_match_type_indicators(df: pd.DataFrame) -> pd.DataFrame:
         out["match_types"] = parts[1]
     if "region" not in out.columns and "segment" in out.columns:
         out["region"] = out["segment"].astype(str).str.split(" / ", n=1).str[0]
-    parsed = out["match_types"].map(parse_match_types)
-    out["has_broad"] = parsed.map(lambda s: int("Broad" in s))
-    out["has_phrase"] = parsed.map(lambda s: int("Phrase" in s))
-    out["has_exact"] = parsed.map(lambda s: int("Exact" in s))
+    out[SEGMENT_BROAD_MATCH_COL] = out["match_types"].map(
+        lambda m: int(is_broad_match_campaign(m))
+    )
     return out
 
 
@@ -504,17 +510,148 @@ def attach_keyword_set_to_panel(panel: pd.DataFrame, summary: pd.DataFrame) -> p
     return out.merge(version_map, on="campaign_version", how="left")
 
 
+def compute_segment_conv_per_click_rates(panel: pd.DataFrame) -> pd.DataFrame:
+    """
+    Course-wide conv/click per (region, match_types) from all rows in ``panel``.
+
+    Returns columns: region, match_types, conv_per_click.
+    """
+    work = panel.copy()
+    work["clicks"] = pd.to_numeric(work.get("clicks", 0), errors="coerce").fillna(0.0)
+    if "all_conv" not in work.columns:
+        work["conv_per_click"] = 0.0
+        return work[["region", "match_types", "conv_per_click"]].drop_duplicates()
+
+    work["all_conv"] = pd.to_numeric(work["all_conv"], errors="coerce").fillna(0.0)
+    total_clicks = float(work["clicks"].sum())
+    total_conv = float(work["all_conv"].sum())
+    global_rate = total_conv / total_clicks if total_clicks > 0 else 0.0
+
+    seg = (
+        work.groupby(["region", "match_types"], as_index=False)
+        .agg(seg_clicks=("clicks", "sum"), seg_conv=("all_conv", "sum"))
+    )
+    seg["conv_per_click"] = np.where(
+        seg["seg_clicks"] > 0.0,
+        seg["seg_conv"] / seg["seg_clicks"],
+        global_rate,
+    )
+    return seg[["region", "match_types", "conv_per_click"]]
+
+
+def load_course_conv_per_click_rates(course: str) -> pd.DataFrame:
+    """Fixed conv/click per segment from the full processed campaign-day panel."""
+    panel = load_campaign_day_panel(course)
+    return compute_segment_conv_per_click_rates(panel)
+
+
+_version_start_cache: dict[str, dict[object, pd.Timestamp]] = {}
+
+
+def version_start_dates(summary: pd.DataFrame) -> dict[object, pd.Timestamp]:
+    """``campaign_version`` -> version ``start_date``."""
+    if "campaign_version" not in summary.columns or "start_date" not in summary.columns:
+        return {}
+    starts = summary[["campaign_version", "start_date"]].drop_duplicates()
+    return {
+        row["campaign_version"]: pd.Timestamp(row["start_date"])
+        for _, row in starts.iterrows()
+    }
+
+
+def version_start_dates_for_course(course: str) -> dict[object, pd.Timestamp]:
+    if course not in _version_start_cache:
+        _version_start_cache[course] = version_start_dates(load_campaign_summary(course))
+    return _version_start_cache[course]
+
+
+def version_for_segment_on_date(
+    panel: pd.DataFrame,
+    segment: str,
+    on_date: pd.Timestamp,
+) -> object | None:
+    """``campaign_version`` active for ``segment`` on ``on_date`` (latest row on or before date)."""
+    if panel.empty or "campaign_version" not in panel.columns:
+        return None
+    sub = panel.copy()
+    sub["date"] = pd.to_datetime(sub["date"])
+    seg_mask = sub["segment"].astype(str) == str(segment)
+    sub = sub.loc[seg_mask]
+    if sub.empty:
+        return None
+    d = pd.Timestamp(on_date).normalize()
+    on_day = sub[sub["date"] == d]
+    row = on_day.iloc[-1] if not on_day.empty else sub[sub["date"] <= d].sort_values("date").iloc[-1]
+    ver = row.get("campaign_version")
+    return None if pd.isna(ver) else ver
+
+
+def days_since_version_start_value(
+    on_date: pd.Timestamp,
+    campaign_version: object | None,
+    *,
+    course: str | None = None,
+    version_starts: dict[object, pd.Timestamp] | None = None,
+) -> float:
+    if campaign_version is None or pd.isna(campaign_version):
+        return float("nan")
+    starts = version_starts if version_starts is not None else version_start_dates_for_course(course or "")
+    start = starts.get(campaign_version)
+    if start is None:
+        return float("nan")
+    return float((pd.Timestamp(on_date).normalize() - pd.Timestamp(start).normalize()).days)
+
+
+def version_run_vector_for_date(
+    planning_date: pd.Timestamp,
+    *,
+    course: str,
+    campaign_version: object | None = None,
+    segment: str | None = None,
+    panel: pd.DataFrame | None = None,
+) -> dict[str, float]:
+    """Regime features tied to campaign version start (for scoring / MILP rows)."""
+    ver = campaign_version
+    if (ver is None or pd.isna(ver)) and segment is not None and panel is not None:
+        ver = version_for_segment_on_date(panel, segment, planning_date)
+    return {
+        "days_since_version_start": days_since_version_start_value(
+            planning_date, ver, course=course
+        )
+    }
+
+
+def add_version_run_features(panel: pd.DataFrame, summary: pd.DataFrame) -> pd.DataFrame:
+    """Add ``days_since_version_start`` from summary version ``start_date``."""
+    if "campaign_version" not in panel.columns:
+        out = panel.copy()
+        out["days_since_version_start"] = np.nan
+        return out
+    starts = version_start_dates(summary)
+    if not starts:
+        out = panel.copy()
+        out["days_since_version_start"] = np.nan
+        return out
+
+    out = panel.copy()
+    out["date"] = pd.to_datetime(out["date"])
+    start_s = out["campaign_version"].map(starts)
+    out["days_since_version_start"] = (out["date"] - start_s).dt.days.astype(float)
+    return out
+
+
 def add_conversion_scaled_clicks_target(
     panel: pd.DataFrame,
     *,
     target_col: str = "conv_scaled_clicks",
+    rates: pd.DataFrame | None = None,
+    course: str | None = None,
 ) -> pd.DataFrame:
     """
-    Add a clicks target scaled by conversion rate per (region, match_types).
+    Add ``clicks * conv_per_click`` using fixed segment rates.
 
-    The segment scale is:
-      sum(all_conv) / sum(clicks)
-    and target = clicks * segment_scale (with global-rate fallback on zero-click segments).
+    When ``rates`` is omitted, uses ``course`` (full campaign-day panel) if set,
+    otherwise rates from all rows in ``panel``. Rates do not vary by date.
     """
     out = panel.copy()
     if "clicks" not in out.columns:
@@ -525,22 +662,12 @@ def add_conversion_scaled_clicks_target(
         out[target_col] = out["clicks"].astype(float)
         return out
 
-    out["all_conv"] = pd.to_numeric(out["all_conv"], errors="coerce").fillna(0.0)
-    total_clicks = float(out["clicks"].sum())
-    total_conv = float(out["all_conv"].sum())
-    global_rate = total_conv / total_clicks if total_clicks > 0 else 0.0
+    if rates is None:
+        rates = load_course_conv_per_click_rates(course) if course else compute_segment_conv_per_click_rates(out)
 
-    seg = (
-        out.groupby(["region", "match_types"], as_index=False)
-        .agg(seg_clicks=("clicks", "sum"), seg_conv=("all_conv", "sum"))
-    )
-    seg["conv_per_click"] = np.where(
-        seg["seg_clicks"] > 0.0,
-        seg["seg_conv"] / seg["seg_clicks"],
-        global_rate,
-    )
-    out = out.merge(seg[["region", "match_types", "conv_per_click"]], on=["region", "match_types"], how="left")
-    out["conv_per_click"] = out["conv_per_click"].fillna(global_rate)
+    out = out.merge(rates, on=["region", "match_types"], how="left")
+    fallback = float(rates["conv_per_click"].mean()) if len(rates) else 0.0
+    out["conv_per_click"] = out["conv_per_click"].fillna(fallback)
     out[target_col] = out["clicks"] * out["conv_per_click"]
     return out.drop(columns=["conv_per_click"])
 
@@ -560,6 +687,7 @@ def build_modeling_frame(
     panel = add_segment_match_type_indicators(panel)
     summary = load_campaign_summary(course)
     panel = attach_keyword_set_to_panel(panel, summary)
+    panel = add_version_run_features(panel, summary)
 
     set_feats = build_keyword_set_feature_table(course)
     panel = panel.merge(set_feats, on="keyword_set_id", how="left")
@@ -571,7 +699,10 @@ def build_modeling_frame(
         elif include_all_conv_from_summary:
             panel["all_conv"] = np.nan
     elif target_col == "conv_scaled_clicks":
-        panel = add_conversion_scaled_clicks_target(panel, target_col=target_col)
+        rates = load_course_conv_per_click_rates(course)
+        panel = add_conversion_scaled_clicks_target(
+            panel, target_col=target_col, rates=rates, course=course
+        )
 
     if "clicks" not in panel.columns:
         panel["clicks"] = 0

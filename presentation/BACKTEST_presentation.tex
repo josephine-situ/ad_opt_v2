@@ -73,7 +73,7 @@
     \item \textbf{Historical} --- every \texttt{keyword\_set\_id} seen in segment (allowlist-filtered).
     \item \textbf{synthetic\_top\_conv\_n\{10,20,40\}} --- rank \texttt{kw-day-panel} by \texttt{all\_conv} per match type (top volume + efficiency within each type); pad each type from allowlist if needed.
     \item \textbf{synthetic\_allowlist\_n\{10,20,40\}} --- first $N$ allowlist keywords by enrollment count (same match-type filter).
-    \item \textbf{synthetic\_semantic/dispersion/composite\_n\{10,20,40\}} --- top $N$ per match type from allowlist∩region by embedding score; pad from allowlist.
+    \item \textbf{synthetic\_semantic/dispersion/composite\_n\{10,20,40\}} --- top $N$ per match type from allowlist $\cap$ region by embedding score; pad from allowlist.
   \end{itemize}
 
   \textbf{Lists \& features:} \texttt{broad}/\texttt{phrase}/\texttt{exact} ranked per match type; GKP + embeddings on union in \texttt{keyword-set-features.csv}.
@@ -136,11 +136,10 @@
   \vspace{0.35em}
   \textbf{2.\ Evaluation model} --- scores plans only; \textbf{never} chooses budgets/sets
   \begin{itemize}
-    \item Form: \textbf{five-model ensemble} (ridge, power-log, power-level, random forest,
-      XGBoost).
-    \item \textbf{Fit once} on the \textbf{full modeling panel} (2{,}258 segment-days,
-      2024-06-26 $\rightarrow$ 2026-05-25), including the May backtest window itself.
-    \item Weights: inverse tournament CV-RMSE over the five base members (fixed for the window).
+    \item Form: \textbf{three-model ensemble} (ridge, random forest, XGBoost).
+    \item \textbf{Fit once} on the \textbf{full modeling panel} (1{,}484 segment-days,
+      filtered scope; 2024-06-26 $\rightarrow$ 2026-05-25), including the May backtest window.
+    \item Weights: inverse tournament CV-RMSE over ridge / RF / XGB (fixed for the window).
     \item Same $\hat f$ for every May day: a stable scoring ruler (optimizer still walk-forward).
   \end{itemize}
 \end{frame}
@@ -214,7 +213,7 @@ uv run python scripts/backtest_campaign.py \
     \hat f(x_s,\mathbf{z})
       &= \textstyle\sum_m w_m \hat f_m(x_s,\mathbf{z}) \big/ \textstyle\sum_m w_m,
       \quad w_m \propto 1/\mathrm{CV\mbox{-}RMSE}_m,\\
-    \mathcal{M} &= \{\text{ridge},\,\text{power\_log},\,\text{power\_level},\,\text{RF},\,\text{XGB}\}.
+    \mathcal{M} &= \{\text{ridge},\,\text{RF},\,\text{XGB}\}.
   \end{align*}
   \textbf{Backtest columns} (\texttt{plan\_vs\_actual}):
   \texttt{pred\_lift\_raw}$=\hat f(\text{plan})-\hat f(0)$,
@@ -227,14 +226,10 @@ uv run python scripts/backtest_campaign.py \
       $y=\alpha_s+\beta_s x_s+\mathbf{z}^\top\boldsymbol{\gamma}+\varepsilon$ on a
       \textbf{scaled} design matrix ($x_s$ and numeric $\mathbf{z}$ standardized at fit);
       Gurobi uses per-candidate affine levels from \texttt{predict\_design\_frame}.
-    \item \textbf{power\_log}: $\log(1{+}y)=\alpha_s+\beta_s\log x_s+\mathbf{z}^\top\boldsymbol{\gamma}+\varepsilon$;
-      predict $\hat y=\mathrm{expm1}(\cdot)$ (elasticity in log--log space).
-    \item \textbf{power\_level}: $y=\alpha_s+\beta_s\log x_s+\mathbf{z}^\top\boldsymbol{\gamma}+\varepsilon$
-      (Ridge on levels; budget feature $=\log x_s$).
-    \item \textbf{random\_forest / xgboost}: $\hat y = g(\text{region},\,\text{match},\,x_s,\,\mathbf{z})$
+    \item \textbf{random\_forest / xgboost}: $\hat y = g(\text{region},\,\texttt{is\_broad\_match},\,x_s,\,\mathbf{z})$
       (trees on scaled $x_s$, OHE region, numeric/categorical $\mathbf{z}$).
   \end{itemize}
-  {\scriptsize Optimizer MILP: \texttt{ensemble\_ridge\_xgb} (\texttt{tree\_embed}); 5-member ensemble is scoring-only for \texttt{plan\_vs\_actual}.}
+  {\scriptsize Optimizer MILP: \texttt{ensemble\_ridge\_xgb} (\texttt{tree\_embed}); 3-member ensemble is scoring-only for \texttt{plan\_vs\_actual}. Power-law models removed (unstable on holdout).}
 
   \vspace{0.1em}
   \normalsize
@@ -242,9 +237,9 @@ uv run python scripts/backtest_campaign.py \
 
 \begin{frame}{Features and ensemble weights}
   \scriptsize
-  \textbf{Shared context} $\mathbf{z}$ (13 columns; \texttt{campaign\_config.json}):
+  \textbf{Shared context} $\mathbf{z}$ (14 calendar/context cols + match-type set features; \texttt{campaign\_config.json}):
   calendar (\texttt{day\_of\_week}, \texttt{season}, \texttt{is\_weekend}, \texttt{is\_public\_holiday},
-  \texttt{days\_to\_next\_course\_start});
+  \texttt{days\_to\_next\_course\_start}, \texttt{days\_since\_version\_start});
   embeddings (\texttt{embed\_cohesion}, \texttt{embed\_dispersion}, \texttt{embed\_course\_sim\_*},
   \texttt{num\_unique\_keywords});
   GKP (\texttt{last\_month\_searches\_mean}, \texttt{competition\_index\_mean}, \texttt{bid\_low\_mean}).
@@ -253,22 +248,21 @@ uv run python scripts/backtest_campaign.py \
   \textbf{Per-model inputs} (plus $x_s =$ \texttt{daily\_budget}):
   \begin{itemize}
     \item \textbf{ridge} (optimizer + eval): MILP-linear design ---
-      region + \texttt{has\_broad/phrase/exact} + $x_s$ + $x_s\times$(region, match) + $\mathbf{z}$.
-    \item \textbf{power\_log / power\_level} (eval only): ridge on $\log x_s$ or $\log(1{+}y)$ transforms + $\mathbf{z}$.
-    \item \textbf{RF / XGB} (eval; XGB also optimizer): \texttt{region} (OHE), match flags, scaled $x_s$, $\mathbf{z}$.
+      region + \texttt{is\_broad\_match} + $x_s$ + $x_s\times$(region, match) + $\mathbf{z}$.
+    \item \textbf{RF / XGB} (eval; XGB tournament winner; XGB in optimizer blend): \texttt{region} (OHE), \texttt{is\_broad\_match}, scaled $x_s$, $\mathbf{z}$.
   \end{itemize}
 
   \vspace{0.15em}
   \centering
   \setlength{\tabcolsep}{3pt}
-  \begin{tabular}{@{}lrrrrr@{}}
+  \begin{tabular}{@{}lrrr@{}}
     \toprule
-    & ridge & p.\_log & p.\_level & RF & XGB \\
+    & ridge & RF & XGB \\
     \midrule
-    \textbf{5-member eval.} $w_m$ & 0.19 & 0.20 & 0.21 & 0.20 & 0.20 \\
+    \textbf{3-member eval.} $w_m$ & 0.29 & 0.34 & 0.37 \\
     \midrule
-    \multicolumn{6}{@{}l@{}}{\textbf{Optimizer} \texttt{ensemble\_ridge\_xgb}: equal $w{=}0.50$ each (daily refit, CV-tuned $\alpha$/trees)} \\
-    \multicolumn{6}{@{}l@{}}{\textbf{Tournament static} ridge+xgb: $w_{\mathrm{ridge}}{=}0.49$, $w_{\mathrm{XGB}}{=}0.51$ (inverse CV-RMSE)} \\
+    \multicolumn{4}{@{}l@{}}{\textbf{Optimizer} \texttt{ensemble\_ridge\_xgb}: equal $w{=}0.50$ each (daily refit, CV-tuned $\alpha$/trees)} \\
+    \multicolumn{4}{@{}l@{}}{\textbf{Tournament static} ridge+xgb: $w_{\mathrm{ridge}}{=}0.45$, $w_{\mathrm{XGB}}{=}0.55$ (inverse CV-RMSE)} \\
     \bottomrule
   \end{tabular}
 
@@ -353,9 +347,10 @@ uv run python scripts/backtest_campaign.py \
     \toprule
     Metric (ensemble scoring, May 12--25) & Value \\
     \midrule
-    \multicolumn{2}{l}{\textit{Tournament holdout (levels, 159 days):}} \\
-    Ensemble holdout RMSE / $R^2$ / MAE & 1.47 / 0.74 / 1.20 \\
-    \texttt{ensemble\_ridge\_xgb} holdout RMSE / $R^2$ & 1.50 / 0.72 \\
+    \multicolumn{2}{l}{\textit{Tournament holdout (levels, 83 rows / 28 days):}} \\
+    3-member eval.\ ensemble holdout RMSE / $R^2$ / MAE & 0.47 / $-$0.05 / 0.37 \\
+    \texttt{ensemble\_ridge\_xgb} holdout RMSE / $R^2$; CV-$R^2$ & 0.56 / $-$0.44; 0.29 \\
+    Tournament winner \texttt{xgboost} holdout / CV-$R^2$ & 0.20 / 0.36 \\
     \midrule
     Mean RMSE(plan $\hat f$ vs.\ observed \texttt{conv\_scaled}) & 4.48 \\
     Segments at \$0 budget (mean) & 0.0 / 6 \\
@@ -371,7 +366,10 @@ uv run python scripts/backtest_campaign.py \
 
 \begin{frame}{Model tournament metrics}
   \scriptsize
-  \textbf{Setup:} \texttt{conv\_scaled\_clicks}; 2{,}258 segment-days (train 2{,}099 / holdout 159); 3-fold time-series CV; tuned per candidate.
+  \textbf{Setup:} \texttt{conv\_scaled\_clicks} $=$ clicks $\times$ fixed conv/click per (region, match) from full panel;
+  training panel filtered to \texttt{allowed\_match\_types} + non-excluded regions;
+  calendar includes \texttt{days\_since\_version\_start}; 1{,}484 segment-days (train 1{,}401 / holdout 83);
+  3-fold expanding-window time-series CV; tuned per candidate; \texttt{mean\_baseline} reference.
 
   \vspace{0.15em}
   \centering
@@ -382,31 +380,30 @@ uv run python scripts/backtest_campaign.py \
     \toprule
     Candidate & CV-RMSE & CV-$R^2$ & Ho-RMSE & Ho-$R^2$ \\
     \midrule
-    ridge & 2.88 & $-$0.08 & 1.56 & 0.70 \\
-    power\_log & 2.75 & 0.06 & 1.50 & 0.73 \\
-    \textbf{power\_level} & \textbf{2.64} & \textbf{0.10} & 1.82 & 0.60 \\
-    RF & 2.83 & $-$0.16 & 2.51 & 0.23 \\
-    xgboost & 2.73 & $-$0.07 & 2.20 & 0.41 \\
+    ridge & 0.47 & 0.03 & 0.79 & $-$1.90 \\
+    RF & 0.41 & 0.27 & 0.58 & $-$0.59 \\
+    \textbf{xgboost} & \textbf{0.38} & \textbf{0.36} & \textbf{0.42} & \textbf{0.20} \\
     \midrule
-    \textbf{ensemble} (5-mem.) & 2.71 & 0.02 & \textbf{1.47} & \textbf{0.74} \\
-    ens.\ ridge+xgb & 2.80 & $-$0.06 & 1.50 & 0.72 \\
+    ens.\ ridge+xgb & 0.41 & 0.29 & 0.56 & $-$0.44 \\
+    mean baseline & 0.52 & $-$0.11 & 0.54 & $-$0.37 \\
     \bottomrule
   \end{tabular}}
 
   \vspace{0.2em}
   \raggedright
-  \textbf{CV winner:} \texttt{power\_level}.
-  \textbf{Holdout:} best single \texttt{power\_log} (1.50); best overall 5-member \texttt{ensemble} (1.56, MAE 1.25).\\
-  \textbf{Backtest:} stage~1 multi-day + stage~2 daily budget (\texttt{ensemble\_ridge\_xgb}); sets fixed after stage~1; evaluation 5-member on full panel.
+  \textbf{CV winner:} \texttt{xgboost} (lowest CV-RMSE; holdout $R^2{=}0.20$).
+  \textbf{Holdout RMSE:} best single \texttt{xgboost} (0.42). Power-law models dropped from tournament.
+  \textbf{Production:} optimizer \texttt{ensemble\_ridge\_xgb}; evaluation 3-member ensemble (CV-RMSE weights).\\
+  \textbf{Backtest:} stage~1 multi-day + stage~2 daily budget; sets fixed after stage~1.
 
-  {\tiny Source: \texttt{holdout\_metrics.json} (\texttt{fit\_response\_models.py}).}
+  {\tiny Source: \texttt{holdout\_metrics.json}, tournament winner \texttt{xgboost} (\texttt{model\_manifest.json}); filtered 1{,}484-row panel.}
 \end{frame}
 
 \begin{frame}{What we built}
   \begin{enumerate}
     \item \textbf{Panel} --- \texttt{campaign-day-panel}: version-linked budgets, clicks, \texttt{all\_conv} per segment.
-    \item \textbf{Features} --- calendar; keyword-set embeddings; GKP aggregates.
-    \item \textbf{Response tournament} --- ridge, power (log/level), RF, XGB; time-series CV; level-scale RMSE.
+    \item \textbf{Features} --- calendar (incl.\ \texttt{days\_since\_version\_start}); keyword-set embeddings; GKP aggregates.
+    \item \textbf{Response tournament} --- ridge, RF, XGB (+ ridge+XGB optimizer blend); time-series CV; level-scale RMSE.
     \item \textbf{MILP} --- per-segment budget + keyword set; maximize incremental lift at $b_0{=}0$; Gurobi \texttt{tree\_embed}.
     \item \textbf{Backtest} --- two-stage: fixed sets + daily \texttt{plan\_vs\_actual.csv} $\rightarrow$ summaries.
   \end{enumerate}
@@ -414,11 +411,11 @@ uv run python scripts/backtest_campaign.py \
 
 \begin{frame}{Modeling decisions}
   \begin{itemize}
-    \item \textbf{Target:} \texttt{conv\_scaled\_clicks} not raw \texttt{all\_conv} --- conversions are regime-heavy; clicks more stable; scaling weights toward segment conv efficiency.
+    \item \textbf{Target:} \texttt{conv\_scaled\_clicks} $=$ clicks $\times$ fixed segment conv/click (full-panel totals), not raw \texttt{all\_conv}.
     \item \textbf{Lever:} \texttt{daily\_budget} (configured cap), not cost.
     \item \textbf{Validation:} time-series CV (3 folds, $\geq$50\% train fraction).
     \item \textbf{MILP objective:} \texttt{evaluation.objective: levels}; \texttt{apply\_observed\_budget\_floor: true}.
-    \item \textbf{Production path:} \texttt{optimizer\_winner: ensemble\_ridge\_xgb}; evaluation 5-member ensemble with CV-RMSE weights.
+    \item \textbf{Production path:} \texttt{optimizer\_winner: ensemble\_ridge\_xgb}; evaluation 3-member ensemble (ridge, RF, XGB).
   \end{itemize}
 \end{frame}
 
@@ -468,7 +465,7 @@ uv run python scripts/backtest_campaign.py \
 \begin{frame}{Caveats}
   \begin{itemize}
     \item \textbf{$\hat f$ $\neq$ observed:} plan gated $\hat f$ $\sim$24.5 / panel $\hat f$ $\sim$2.5 vs.\ realized \texttt{conv\_scaled} $\sim$2.6; plan level is far above realized in this window.
-    \item \textbf{Scoring vs.\ optimizer mismatch:} MILP uses \texttt{ensemble\_ridge\_xgb}; evaluation uses the 5-member ensemble --- plan $\hat f$ $\gg$ panel $\hat f$ ($+876\%$).
+    \item \textbf{Scoring vs.\ optimizer mismatch:} MILP uses \texttt{ensemble\_ridge\_xgb}; evaluation uses the 3-member ensemble --- plan $\hat f$ $\gg$ panel $\hat f$ ($+876\%$).
     \item \textbf{Fixed synthetic sets:} stage~1 picks \texttt{composite\_n40} (Broad) and \texttt{allowlist\_n40} (Phrase; Exact) per region --- unchanged all 14 days.
     \item \textbf{Budget mode:} two-stage plan uses fixed course cap ${\sim}\$413$/day; panel configured caps ${\sim}\$367$/day for actual rows.
   \end{itemize}

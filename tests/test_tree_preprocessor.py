@@ -29,9 +29,7 @@ def test_tree_preprocessor_keeps_numeric_context_columns():
         {
             "region": ["A", "B"],
             "match_types": ["Broad", "Exact"],
-            "has_broad": [1, 0],
-            "has_phrase": [0, 0],
-            "has_exact": [0, 1],
+            "is_broad_match": [1, 0],
             "daily_budget": [10.0, 20.0],
             "embed_cohesion": [0.38, 0.41],
             "season": ["Fall", "Fall"],

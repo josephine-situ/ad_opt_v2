@@ -1,0 +1,21 @@
+{
+  "n_members": 3,
+  "members": [
+    "ridge",
+    "random_forest",
+    "xgboost"
+  ],
+  "member_weights": {
+    "ridge": 0.2944516774493177,
+    "random_forest": 0.3395774088027538,
+    "xgboost": 0.3659709137479285
+  },
+  "target": "conv_scaled_clicks",
+  "baseline_budget": 0,
+  "weight_by_cv_rmse": true,
+  "cv_rmse_weights": {
+    "ridge": 0.2944516774493177,
+    "random_forest": 0.3395774088027538,
+    "xgboost": 0.3659709137479285
+  }
+}
