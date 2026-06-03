@@ -187,12 +187,36 @@ uv run python scripts/diagnose_budget_response.py --course sys_think --calendar-
 
 Writes `diagnostics/budget/calendar_ablation/calendar_ablation.csv` with CV RMSE and holdout R² per spec.
 
+**Match-type set feature ablation** (counts, shares, per-MT GKP, per-MT cohesion vs baseline context):
+
+```powershell
+uv run python scripts/run_match_type_ablation.py --course sys_think
+uv run python scripts/run_match_type_ablation.py --course sys_think --models ridge --tune
+```
+
+Writes `diagnostics/match_type_ablation/match_type_ablation.csv` (and `match_type_ablation_tuned/` when `--tune`).
+
+**Per-match-type semantic ablation** (cohesion, dispersion, course-sim mean/p90 per broad/phrase/exact list):
+
+```powershell
+uv run python scripts/run_match_type_ablation.py --course sys_think --spec-set semantic
+uv run python scripts/run_match_type_ablation.py --course sys_think --spec-set semantic --models ridge --tune
+```
+
+Writes `diagnostics/semantic_match_type_ablation/` (12 embedding columns per set; see `keyword_set_semantic_per_match_type` in `utils/campaign_features.py`).
+
 ---
 
 ## 5. Fit response models
 
 ```powershell
 uv run python scripts/fit_response_models.py --course sys_think
+```
+
+Runs the tournament, writes `holdout_metrics.json` / `model_manifest.json`, then **automatically** fits and saves `ensemble_model.joblib` (or a single-member evaluation model) using CV-RMSE weights from the fresh metrics. Skip with `--skip-evaluation-ensemble`.
+
+```powershell
+uv run python scripts/fit_response_models.py --course sys_think --skip-evaluation-ensemble
 ```
 
 Tournament (ridge, power, RF, XGB) with **level-scale** metrics; writes `model_manifest.json`, `winner_model.joblib`, `holdout_metrics.json`, and `**linear_coeffs.json`** under `opt_results/<course>/campaign/<exp>/`.
@@ -216,9 +240,22 @@ Tournament (ridge, power, RF, XGB) with **level-scale** metrics; writes `model_m
 3. Holdout metrics logged in `holdout_metrics.json`.
 4. Tournament winner is the lowest CV RMSE (with `time_series_cv`) or lowest holdout RMSE otherwise; `optimizer_backend: auto` uses that model's backend (`linear` | `piecewise_linear` | `tree_embed`).
 
+**CV profiles** (`validation.cv_profile`, holdout unchanged). Full design (phase 1 vs 2, periods, stride, config table): **[docs/cross_validation.md](docs/cross_validation.md)**.
+
+| Profile | Use | Validation window |
+|---------|-----|-------------------|
+| **`phase2_daily`** (default) | Tournament winner, tuning, ensemble weights | Next `phase2_val_days` (default **7**) inside same active period; up to `phase2_cv_folds` (default **15**) folds subsampled every `phase2_fold_stride` days (default **30**) from recent candidates — many val *candidates* exist, but averaging ~15 windows reduces 1-day noise without scoring every day |
+| **`phase1_launch`** | Reported as `phase1_cv_*` in `holdout_metrics.json` | First `phase1_launch_val_days` (default **14**) after each period start; train on all dates before period |
+| `period_tail` | Legacy | Last `min_val_days` inside each period |
+| `legacy_calendar` | Legacy | Expanding windows across full calendar (may span gaps) |
+
+CV run boundaries use **`campaign_version` per segment** (via `run_period_id`), with **`max_calendar_gap_days`** (default 7) splitting off-air holes inside a version. CV fold failures raise `CVFoldError`. Holdout (last `holdout_days`) remains a separate recent-window report.
+
 ---
 
 ## 6. Fit evaluation ensemble (plan vs actual scoring)
+
+Normally done automatically at the end of step 5 (`fit_response_models.py`). Re-run standalone to refresh without re-tournament:
 
 ```powershell
 uv run python scripts/fit_evaluation_ensemble.py --course sys_think
@@ -234,7 +271,7 @@ uv run python scripts/optimize_campaign.py --course sys_think --budget 400
 
 Walk-forward train (`date < planning_date`), **3-fold time-series CV** hyperparameter tuning, then MILP with `optimizer_winner` (default `ensemble_ridge_xgb` / `tree_embed`). Optional `--planning-date YYYY-MM-DD` (default: latest panel date).
 
-`run_campaign_pipeline.py` runs steps **4–5** and **7** only (candidates, GKP features if enabled, tournament, single-day optimize). Run step **6** (`fit_evaluation_ensemble.py`) separately before production monitor or if you want a saved `ensemble_model.joblib` without running a backtest.
+`run_campaign_pipeline.py` runs steps **4–5** and **7** only (candidates, GKP features if enabled, tournament—which now includes step **6**—then single-day optimize). Use `fit_evaluation_ensemble.py` only to refresh the scorer without re-running the tournament.
 
 Or run steps **4–7** manually after step 3 is complete (regenerates panel if missing):
 

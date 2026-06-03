@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from campaign_opt.evaluation import fit_evaluation_model
 from campaign_opt.feature_artifacts import save_modeling_artifacts
 from campaign_opt.features import prepare_modeling_data, train_holdout_split
 from campaign_opt.modeling import model_feature_overview_lines, run_tournament, save_manifest
@@ -20,6 +21,11 @@ def main() -> None:
     parser.add_argument("--course", default="sys_think")
     parser.add_argument("--config", default="")
     parser.add_argument("--exp-name", default="default")
+    parser.add_argument(
+        "--skip-evaluation-ensemble",
+        action="store_true",
+        help="Do not fit/save evaluation ensemble after tournament (default: fit when configured)",
+    )
     args = parser.parse_args()
 
     config_path = Path(args.config) if args.config else default_config_path(args.course, args.exp_name)
@@ -67,6 +73,12 @@ def main() -> None:
         winner, shap_effects=manifest.get("shap_mean_effects")
     ):
         print(line)
+
+    if not args.skip_evaluation_ensemble:
+        print("\n--- Evaluation model (full panel) ---")
+        fit_evaluation_model(config, df, manifest, out_dir)
+    else:
+        print("\nSkipped evaluation ensemble (--skip-evaluation-ensemble).")
 
 
 if __name__ == "__main__":

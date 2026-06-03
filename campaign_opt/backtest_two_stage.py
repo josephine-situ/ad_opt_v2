@@ -16,7 +16,7 @@ from campaign_opt.evaluation import (
     plan_vs_actual_row_metrics,
 )
 from campaign_opt.features import train_before_date
-from campaign_opt.modeling import eval_pipeline_holdout
+from campaign_opt.modeling import eval_pipeline_holdout, warn_if_poor_r2
 from campaign_opt.optimize import require_optimizer_winner
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.two_stage_plan import optimize_budgets_for_day, select_keyword_sets_for_window
@@ -183,7 +183,11 @@ def run_two_stage_backtest(
 
         if not config.evaluation.use_ensemble and eval_model.members:
             ho_metrics = eval_pipeline_holdout(
-                eval_model.members[0].pipeline, holdout, config, feature_cols
+                eval_model.members[0].pipeline,
+                holdout,
+                config,
+                feature_cols,
+                label=f"eval {opt_date.date()}",
             )
             if ho_metrics:
                 day_row.update(ho_metrics)
@@ -223,8 +227,14 @@ def run_two_stage_backtest(
         else None,
     }
     if "holdout_r2" in summary.columns and len(summary):
-        summary_payload["mean_holdout_r2"] = float(summary["holdout_r2"].mean())
+        mean_r2 = float(summary["holdout_r2"].mean())
+        summary_payload["mean_holdout_r2"] = mean_r2
         summary_payload["mean_holdout_rmse"] = float(summary["holdout_rmse"].mean())
+        warn_if_poor_r2(
+            mean_r2,
+            scope="mean backtest holdout",
+            label=f"{len(summary)} days",
+        )
     if "plan_budget_total" in summary.columns and len(summary):
         summary_payload["mean_plan_budget_total"] = float(summary["plan_budget_total"].mean())
     with open(out_dir / "daily_backtest_summary.json", "w", encoding="utf-8") as f:

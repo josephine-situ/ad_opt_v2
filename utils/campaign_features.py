@@ -277,6 +277,189 @@ def keyword_set_semantic_features(
     return pd.DataFrame(rows)
 
 
+def _keywords_from_list_column(raw: object) -> list[str]:
+    if pd.isna(raw) or not str(raw).strip():
+        return []
+    return [k.strip().lower() for k in str(raw).split(";") if k.strip()]
+
+
+def _gkp_means_for_keywords(keywords: list[str], gkp_map: pd.DataFrame) -> dict[str, float]:
+    if not keywords:
+        return {
+            "last_month_searches_mean": float("nan"),
+            "competition_index_mean": float("nan"),
+            "bid_low_mean": float("nan"),
+        }
+    sub = gkp_map.reindex(keywords)
+    return {
+        "last_month_searches_mean": float(sub["last_month_searches"].mean()),
+        "competition_index_mean": float(sub["competition_index"].mean()),
+        "bid_low_mean": float(sub["bid_low"].mean()),
+    }
+
+
+def keyword_set_match_type_count_features(keyword_sets: pd.DataFrame) -> pd.DataFrame:
+    """Per-set keyword counts and shares by match-type column."""
+    rows: list[dict[str, object]] = []
+    for _, row in keyword_sets.iterrows():
+        counts = {
+            f"n_{mt.lower()}": len(_keywords_from_list_column(row.get(col)))
+            for mt, col in MATCH_TYPE_LIST_COLS.items()
+            if col in keyword_sets.columns
+        }
+        for mt in MATCH_TYPE_LIST_COLS:
+            counts.setdefault(f"n_{mt.lower()}", 0)
+        total = sum(int(counts[f"n_{mt.lower()}"]) for mt in MATCH_TYPE_LIST_COLS)
+        rec: dict[str, object] = {"keyword_set_id": row["keyword_set_id"], **counts}
+        for mt in MATCH_TYPE_LIST_COLS:
+            key = f"n_{mt.lower()}"
+            rec[f"share_{mt.lower()}"] = (
+                float(counts[key]) / total if total > 0 else float("nan")
+            )
+        rows.append(rec)
+    return pd.DataFrame(rows)
+
+
+def aggregate_gkp_per_match_type(keyword_sets: pd.DataFrame, gkp_kw: pd.DataFrame) -> pd.DataFrame:
+    """Mean GKP stats per match-type list column (broad / phrase / exact)."""
+    base = keyword_sets[["keyword_set_id"]].drop_duplicates().copy()
+    if gkp_kw.empty:
+        for mt in MATCH_TYPE_LIST_COLS:
+            for stat in ("last_month_searches_mean", "competition_index_mean", "bid_low_mean"):
+                base[f"{mt.lower()}_{stat}"] = np.nan
+        return base
+
+    gkp_map = gkp_kw.set_index("keyword")
+    rows: list[dict[str, object]] = []
+    for _, row in keyword_sets.iterrows():
+        rec: dict[str, object] = {"keyword_set_id": row["keyword_set_id"]}
+        for mt, col in MATCH_TYPE_LIST_COLS.items():
+            keywords = _keywords_from_list_column(row.get(col))
+            means = _gkp_means_for_keywords(keywords, gkp_map)
+            for stat, val in means.items():
+                rec[f"{mt.lower()}_{stat}"] = val
+        rows.append(rec)
+    return pd.DataFrame(rows)
+
+
+def _semantic_stats_for_vectors(
+    vectors: np.ndarray,
+    anchor_matrix: np.ndarray,
+) -> dict[str, float]:
+    """Union-aligned semantic stats for one keyword embedding pool."""
+    nan = float("nan")
+    if len(vectors) == 0:
+        return {
+            "cohesion": nan,
+            "dispersion": nan,
+            "course_sim_mean": nan,
+            "course_sim_p90": nan,
+        }
+    sims = vectors @ anchor_matrix.T
+    max_anchor = sims.max(axis=1)
+    course_mean = float(max_anchor.mean())
+    course_p90 = float(np.percentile(max_anchor, 90))
+    if len(vectors) < 2:
+        return {
+            "cohesion": nan,
+            "dispersion": nan,
+            "course_sim_mean": course_mean,
+            "course_sim_p90": course_p90,
+        }
+    return {
+        "cohesion": _pairwise_mean_cosine(vectors),
+        "dispersion": _pairwise_mean_distance(vectors),
+        "course_sim_mean": course_mean,
+        "course_sim_p90": course_p90,
+    }
+
+
+def keyword_set_semantic_per_match_type(
+    keyword_sets: pd.DataFrame,
+    emb_map: dict[str, np.ndarray],
+) -> pd.DataFrame:
+    """
+    Per-match-type embedding features (mirrors union ``SEMANTIC_FEATURE_COLS`` per type).
+
+    Columns: ``embed_cohesion_{broad|phrase|exact}``, ``embed_dispersion_*``,
+    ``embed_course_sim_mean_*``, ``embed_course_sim_p90_*``.
+    """
+    anchor_matrix = _anchor_matrix(emb_map)
+    rows: list[dict[str, object]] = []
+    for _, row in keyword_sets.iterrows():
+        rec: dict[str, object] = {"keyword_set_id": row["keyword_set_id"]}
+        for mt, col in MATCH_TYPE_LIST_COLS.items():
+            keywords = _keywords_from_list_column(row.get(col))
+            matched = [emb_map[k] for k in keywords if k in emb_map]
+            vectors = np.stack(matched) if matched else np.empty((0, 0))
+            stats = _semantic_stats_for_vectors(vectors, anchor_matrix)
+            prefix = mt.lower()
+            rec[f"embed_cohesion_{prefix}"] = stats["cohesion"]
+            rec[f"embed_dispersion_{prefix}"] = stats["dispersion"]
+            rec[f"embed_course_sim_mean_{prefix}"] = stats["course_sim_mean"]
+            rec[f"embed_course_sim_p90_{prefix}"] = stats["course_sim_p90"]
+        rows.append(rec)
+    return pd.DataFrame(rows)
+
+
+# Columns used in match-type feature ablations (see campaign_opt/match_type_ablation.py).
+MT_COUNT_FEATURE_COLS = ["n_broad", "n_phrase", "n_exact"]
+MT_SHARE_FEATURE_COLS = ["share_broad", "share_phrase", "share_exact"]
+MT_GKP_FEATURE_COLS = [
+    f"{mt.lower()}_{stat}"
+    for mt in MATCH_TYPE_LIST_COLS
+    for stat in ("last_month_searches_mean", "competition_index_mean", "bid_low_mean")
+]
+MT_COHESION_FEATURE_COLS = [f"embed_cohesion_{mt.lower()}" for mt in MATCH_TYPE_LIST_COLS]
+MT_DISPERSION_FEATURE_COLS = [f"embed_dispersion_{mt.lower()}" for mt in MATCH_TYPE_LIST_COLS]
+MT_COURSE_SIM_FEATURE_COLS = [
+    col
+    for mt in MATCH_TYPE_LIST_COLS
+    for col in (f"embed_course_sim_mean_{mt.lower()}", f"embed_course_sim_p90_{mt.lower()}")
+]
+MT_SEMANTIC_FULL_FEATURE_COLS = (
+    list(MT_COHESION_FEATURE_COLS)
+    + list(MT_DISPERSION_FEATURE_COLS)
+    + list(MT_COURSE_SIM_FEATURE_COLS)
+)
+
+
+def build_match_type_set_feature_table(course: str) -> pd.DataFrame:
+    """All optional per-match-type keyword-set features for ablation / experiments."""
+    paths = data_paths(course)
+    keyword_sets = load_keyword_sets_for_features(course)
+
+    counts = keyword_set_match_type_count_features(keyword_sets)
+    gkp_kw = load_gkp_keyword_stats(paths["gkp"])
+    gkp_mt = aggregate_gkp_per_match_type(keyword_sets, gkp_kw)
+
+    all_kw: list[str] = []
+    for col in (*MATCH_TYPE_LIST_COLS.values(), "positive_keywords"):
+        if col not in keyword_sets.columns:
+            continue
+        for raw in keyword_sets[col].dropna():
+            all_kw.extend(_keywords_from_list_column(raw))
+    all_kw.extend(a.lower() for a in COURSE_ANCHORS)
+    cache = paths["cache"] / "keyword_embeddings.parquet"
+    emb_map = load_or_build_embeddings(all_kw, cache)
+    semantic_mt = keyword_set_semantic_per_match_type(keyword_sets, emb_map)
+
+    out = counts.merge(gkp_mt, on="keyword_set_id", how="left").merge(
+        semantic_mt, on="keyword_set_id", how="left"
+    )
+    return out
+
+
+def merge_match_type_set_features(panel: pd.DataFrame, course: str) -> pd.DataFrame:
+    """Attach per-match-type set features to a modeling frame (requires keyword_set_id)."""
+    if "keyword_set_id" not in panel.columns:
+        return panel
+    mt = build_match_type_set_feature_table(course)
+    extra_cols = [c for c in mt.columns if c != "keyword_set_id"]
+    out = panel.drop(columns=[c for c in extra_cols if c in panel.columns], errors="ignore")
+    return out.merge(mt, on="keyword_set_id", how="left")
+
+
 def build_keyword_set_feature_table(course: str) -> pd.DataFrame:
     paths = data_paths(course)
     keyword_sets = load_keyword_sets_for_features(course)

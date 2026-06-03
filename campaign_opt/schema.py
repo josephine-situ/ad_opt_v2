@@ -21,6 +21,18 @@ class ValidationConfig:
     min_val_rows: int = 20
     tune_hyperparams: bool = True
     refit_on_full_data: bool = True  # after selection, refit winner on train+holdout for optimization
+    # CV profile for tournament selection / tuning (phase 2 = short in-run forecast).
+    cv_profile: str = "phase2_daily"  # phase2_daily | phase1_launch | period_tail | legacy_calendar
+    phase2_val_days: int = 7  # short forward window (7 days balances noise vs daily planning)
+    phase2_cv_folds: int | None = None  # default: use cv_folds; set higher for more phase-2 averages
+    phase2_fold_stride: int = 30  # subsample one fold every N candidate val days (limits tuning cost)
+    phase1_launch_val_days: int = 14
+    report_phase1_cv: bool = True
+    phase1_cv_for_selection: bool = False
+    # Legacy period_tail / legacy_calendar+respect: gap-only calendar periods.
+    # phase1/phase2 use run_period_id from (segment, campaign_version) + max_calendar_gap_days.
+    respect_campaign_periods: bool = True
+    max_calendar_gap_days: int = 7
 
 
 @dataclass
@@ -101,6 +113,17 @@ def _parse_model_policy(raw: dict[str, Any]) -> ModelPolicy:
         min_val_rows=int(validation_raw.get("min_val_rows", 20)),
         tune_hyperparams=bool(validation_raw.get("tune_hyperparams", True)),
         refit_on_full_data=bool(validation_raw.get("refit_on_full_data", True)),
+        cv_profile=str(validation_raw.get("cv_profile", "phase2_daily")),
+        phase2_val_days=int(validation_raw.get("phase2_val_days", 7)),
+        phase2_cv_folds=int(validation_raw["phase2_cv_folds"])
+        if validation_raw.get("phase2_cv_folds") is not None
+        else None,
+        phase2_fold_stride=int(validation_raw.get("phase2_fold_stride", 30)),
+        phase1_launch_val_days=int(validation_raw.get("phase1_launch_val_days", 14)),
+        report_phase1_cv=bool(validation_raw.get("report_phase1_cv", True)),
+        phase1_cv_for_selection=bool(validation_raw.get("phase1_cv_for_selection", False)),
+        respect_campaign_periods=bool(validation_raw.get("respect_campaign_periods", True)),
+        max_calendar_gap_days=int(validation_raw.get("max_calendar_gap_days", 7)),
     )
     mp_keys = {f.name for f in fields(ModelPolicy)}
     return ModelPolicy(

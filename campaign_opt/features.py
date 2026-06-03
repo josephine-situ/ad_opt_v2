@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import pandas as pd
 
+from campaign_opt.cv import add_calendar_period_id, add_run_period_id
 from campaign_opt.schema import CampaignOptConfig
 from utils.campaign_features import (
     build_modeling_frame,
     get_context_feature_columns,
+    merge_match_type_set_features,
 )
 
 
@@ -39,6 +41,13 @@ def prepare_modeling_data(config: CampaignOptConfig | str) -> pd.DataFrame:
         lookback_days = config.modeling_lookback_days
 
     df = build_modeling_frame(course, target_col=target)
+    gap_days = 7
+    if isinstance(config, CampaignOptConfig):
+        gap_days = config.model_policy.validation.max_calendar_gap_days
+    df = add_run_period_id(df, max_gap_days=gap_days)
+    df = add_calendar_period_id(df, max_gap_days=gap_days)
+    if isinstance(config, CampaignOptConfig) and config.context_features.get("match_type_set"):
+        df = merge_match_type_set_features(df, course)
     context_cols = get_context_feature_columns(context_features) if context_features else []
     if context_cols:
         for col in context_cols:

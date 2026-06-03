@@ -241,8 +241,33 @@ def fit_evaluation_model(
         member_weights=weights,
         member_hyperparams=manifest.get("best_hyperparams"),
     )
-    save_ensemble(ensemble, out_dir / "ensemble_model.joblib")
+    path = out_dir / "ensemble_model.joblib"
+    save_ensemble(ensemble, path)
+    _write_ensemble_meta(ensemble, config, out_dir / "ensemble_meta.json", weights=weights)
+    print(f"Saved {path}")
     return ensemble
+
+
+def _write_ensemble_meta(
+    ensemble: EnsembleModel,
+    config: CampaignOptConfig,
+    path: Path,
+    *,
+    weights: dict[str, float] | None = None,
+) -> None:
+    path = Path(path)
+    meta: dict[str, Any] = {
+        "n_members": len(ensemble.members),
+        "members": [m.name for m in ensemble.members],
+        "member_weights": {m.name: m.weight for m in ensemble.members},
+        "target": config.target,
+        "baseline_budget": config.evaluation.baseline_budget,
+        "weight_by_cv_rmse": config.evaluation.weight_by_cv_rmse,
+    }
+    if weights is not None:
+        meta["cv_rmse_weights"] = weights
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
 
 
 def load_or_fit_evaluation_model(
