@@ -22,7 +22,11 @@ from campaign_opt.modeling import (
 )
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.train_specs import TrainSpec, get_train_spec
-from utils.campaign_features import build_keyword_set_feature_table, get_context_feature_columns
+from utils.campaign_features import (
+    build_keyword_set_feature_table,
+    get_context_feature_columns,
+    version_run_vector_for_date,
+)
 from utils.date_features import calendar_vector_for_date
 
 
@@ -480,13 +484,19 @@ def _aggregate_campaign_decisions(
     budget = pd.to_numeric(day_df["daily_budget"], errors="coerce")
     if budget.isna().all():
         raise ValueError("daily_budget is all missing on holdout day; cannot score actual campaigns.")
-    return (
-        day_df.groupby(group_cols, as_index=False)
-        .agg(
-            daily_budget=("daily_budget", "median"),
-            keyword_set_id=("keyword_set_id", lambda s: s.mode().iloc[0] if len(s.mode()) else s.iloc[0]),
+    agg: dict[str, tuple[str, Any]] = {
+        "daily_budget": ("daily_budget", "median"),
+        "keyword_set_id": (
+            "keyword_set_id",
+            lambda s: s.mode().iloc[0] if len(s.mode()) else s.iloc[0],
+        ),
+    }
+    if "campaign_version" in day_df.columns:
+        agg["campaign_version"] = (
+            "campaign_version",
+            lambda s: s.mode().iloc[0] if len(s.mode()) else s.iloc[0],
         )
-    )
+    return day_df.groupby(group_cols, as_index=False).agg(**agg)
 
 
 def actual_decisions_by_segment(day_df: pd.DataFrame) -> pd.DataFrame:
@@ -557,6 +567,8 @@ def build_segment_decision_rows(
     set_features: pd.DataFrame,
     course: str,
     feature_cols: list[str],
+    *,
+    panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """One feature row per segment for ensemble prediction."""
     rows: list[dict[str, Any]] = []
@@ -566,12 +578,21 @@ def build_segment_decision_rows(
         seg = str(dec["segment"])
         region = region_of_segment(seg)
         cal = calendar_vector_for_date(planning_date, region, course)
+        ver = dec["campaign_version"] if "campaign_version" in dec.index else None
+        regime = version_run_vector_for_date(
+            planning_date,
+            course=course,
+            campaign_version=ver,
+            segment=seg,
+            panel=panel,
+        )
         row: dict[str, Any] = {
             "segment": seg,
             "region": region,
             "daily_budget": float(dec["daily_budget"]),
             "keyword_set_id": str(dec["keyword_set_id"]),
             **cal,
+            **regime,
         }
         kid = row["keyword_set_id"]
         if kid in set_feats.index:
@@ -669,7 +690,7 @@ def add_optimizer_plan_columns(
     plan_dec["daily_budget"] = pd.to_numeric(plan_dec["daily_budget"], errors="coerce")
 
     decision_rows = build_segment_decision_rows(
-        plan_dec, planning_date, set_features, config.course, feature_cols
+        plan_dec, planning_date, set_features, config.course, feature_cols, panel=panel
     )
     baseline_rows = build_baseline_rows_for_decisions(
         plan_dec,
@@ -786,7 +807,7 @@ def compare_plan_and_actual(
         ensemble.baseline_budget,
     )
     plan_rows = build_segment_decision_rows(
-        plan_dec, planning_date, set_features, config.course, ensemble.feature_cols
+        plan_dec, planning_date, set_features, config.course, ensemble.feature_cols, panel=panel
     )
 
     out = plan_dec.copy()
@@ -829,7 +850,12 @@ def compare_plan_and_actual(
         market_model.baseline_budget,
     )
     market_rows = build_segment_decision_rows(
-        market_dec, planning_date, set_features, config.course, market_model.feature_cols
+        market_dec,
+        planning_date,
+        set_features,
+        config.course,
+        market_model.feature_cols,
+        panel=panel,
     )
     market_scored = market_dec.copy()
     market_scored["row_kind"] = "market"

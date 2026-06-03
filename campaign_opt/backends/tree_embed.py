@@ -38,6 +38,7 @@ from utils.campaign_features import (
     add_segment_match_type_indicators,
     build_keyword_set_feature_table,
     get_context_feature_columns,
+    version_run_vector_for_date,
 )
 from utils.date_features import calendar_vector_for_date
 
@@ -47,6 +48,8 @@ def _build_candidate_feature_rows(
     config: CampaignOptConfig,
     planning_date: pd.Timestamp,
     set_features: pd.DataFrame,
+    *,
+    panel: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, list[tuple[str, str]]]:
     feature_cols = get_context_feature_columns(config.context_features)
     k_map = candidates_by_segment(candidates)
@@ -57,6 +60,9 @@ def _build_candidate_feature_rows(
     for seg in sorted(k_map.keys()):
         region = region_of_segment(seg)
         cal = calendar_vector_for_date(planning_date, region, config.course)
+        regime = version_run_vector_for_date(
+            planning_date, course=config.course, segment=seg, panel=panel
+        )
         for kid in k_map[seg]:
             kid = str(kid)
             row: dict = {
@@ -65,6 +71,7 @@ def _build_candidate_feature_rows(
                 "daily_budget": 0.0,
                 "keyword_set_id": kid,
                 **cal,
+                **regime,
             }
             if kid in set_feats.index:
                 for col in feature_cols:
@@ -756,7 +763,7 @@ def solve_ridge_xgb_embed_campaign_milp(
 
     set_features = build_keyword_set_feature_table(config.course)
     embed_rows, keys = _build_candidate_feature_rows(
-        candidates, config, planning_date, set_features
+        candidates, config, planning_date, set_features, panel=panel
     )
     segments = build_segment_list(candidates)
     k_map = candidates_by_segment(candidates)
@@ -974,7 +981,7 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
     budget_idx_probe, budget_mean_probe, budget_scale_probe = _budget_affine(xgb_member.pipeline)
     # Use first day's embed rows for probing (calendar differences are small)
     embed_rows_probe, keys_probe = _build_candidate_feature_rows(
-        candidates, config, pd.Timestamp(planning_dates[0]), set_features
+        candidates, config, pd.Timestamp(planning_dates[0]), set_features, panel=panel
     )
     for i, (seg, kid) in enumerate(keys_probe):
         lo, hi = bounds[seg]
@@ -1078,7 +1085,7 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
     for t, plan_date in enumerate(planning_dates):
         plan_date = pd.Timestamp(plan_date)
         embed_rows_t, keys_t = _build_candidate_feature_rows(
-            candidates, config, plan_date, set_features
+            candidates, config, plan_date, set_features, panel=panel
         )
         x_vars_t = {seg: x_day_vars[(seg, t)] for seg in segments}
 
@@ -1299,7 +1306,7 @@ def solve_tree_embed_campaign_milp(
     pipeline = joblib.load(model_path)
     set_features = build_keyword_set_feature_table(config.course)
     embed_rows, keys = _build_candidate_feature_rows(
-        candidates, config, planning_date, set_features
+        candidates, config, planning_date, set_features, panel=panel
     )
 
     segments = build_segment_list(candidates)
