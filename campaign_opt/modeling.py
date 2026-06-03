@@ -18,10 +18,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from campaign_opt.cv import (
     cross_validate_model,
-    cross_validate_phase1_launch,
     effective_min_train_days,
-    phase2_cv_fold_count,
-    selection_cv_profile,
     time_series_cv_folds,
     _validation_kw,
 )
@@ -371,7 +368,7 @@ def refit_optimizer_model(
     feature_cols = manifest.get("feature_cols")
     if not feature_cols:
         raise ValueError("manifest missing feature_cols; run fit_response_models.py")
-    n_folds = phase2_cv_fold_count(config)
+    n_folds = val.cv_folds
     empty_holdout = train.iloc[0:0]
 
     if model_name == "ensemble_ridge_xgb":
@@ -844,39 +841,12 @@ def _selection_score(res: ModelResult, config: CampaignOptConfig) -> float:
     metric = config.model_policy.selection_metric
     val_cfg = config.model_policy.validation
     use_cv = val_cfg.scheme == "time_series_cv"
-    if use_cv and val_cfg.phase1_cv_for_selection and res.extra and "phase1_cv_rmse" in res.extra:
-        cv_rmse = res.extra["phase1_cv_rmse"]
-        cv_r2 = res.extra.get("phase1_cv_r2")
-    else:
-        cv_rmse = res.cv_rmse
-        cv_r2 = res.cv_r2
+    cv_rmse = res.cv_rmse
+    cv_r2 = res.cv_r2
     if "r2" in metric:
         val = (cv_r2 if use_cv and cv_r2 is not None else res.holdout_r2) or 0.0
         return -val
     return cv_rmse if use_cv and cv_rmse is not None else res.holdout_rmse
-
-
-def _attach_phase1_cv_metrics(
-    fit_fn: Callable[..., Any],
-    train: pd.DataFrame,
-    config: CampaignOptConfig,
-    feature_cols: list[str],
-    res: ModelResult,
-    *,
-    n_folds: int,
-) -> None:
-    """Optional phase-1 launch-window CV (reporting); stored on ``res.extra``."""
-    if not config.model_policy.validation.report_phase1_cv:
-        return
-    p1 = cross_validate_phase1_launch(fit_fn, train, config, feature_cols, n_folds=n_folds)
-    if not p1:
-        return
-    extra = dict(res.extra or {})
-    extra["phase1_cv_rmse"] = p1["phase1_cv_rmse_levels"]
-    extra["phase1_cv_r2"] = p1["phase1_cv_r2_levels"]
-    extra["phase1_cv_mae"] = p1["phase1_cv_mae_levels"]
-    extra["phase1_cv_n_folds"] = p1["phase1_cv_n_folds"]
-    res.extra = extra
 
 
 def run_tournament(
@@ -894,30 +864,22 @@ def run_tournament(
     if run_cv is None:
         run_cv = config.model_policy.validation.scheme in ("time_series_cv", "cv")
     val_cfg = config.model_policy.validation
-    n_folds = phase2_cv_fold_count(config)
+    n_folds = val_cfg.cv_folds
     tune = val_cfg.tune_hyperparams
     best_hyperparams_all: dict[str, dict[str, Any]] = {}
 
     if run_cv or tune:
-        vk = _validation_kw(config)
-        n_folds_req = int(vk.pop("n_folds", n_folds))
-        vk.pop("config", None)
-        cv_folds = time_series_cv_folds(train, n_folds_req, config=config, **vk)
+        cv_folds = time_series_cv_folds(train, n_folds, **_validation_kw(config))
         n_train_dates = train["date"].nunique()
         min_train_eff = effective_min_train_days(
             n_train_dates,
             min_train_days=val_cfg.min_train_days,
             min_train_fraction=val_cfg.min_train_fraction,
         )
-        cv_prof = selection_cv_profile(config)
         print(
-            f"CV ({cv_prof}): {len(cv_folds)} folds on {n_train_dates} train days "
-            f"(requested={n_folds_req}, min_train>={min_train_eff} days "
-            f"[{val_cfg.min_train_fraction:.0%} of panel], "
-            f"phase2_val_days={val_cfg.phase2_val_days}, "
-            f"phase2_cv_folds={getattr(val_cfg, 'phase2_cv_folds', None) or val_cfg.cv_folds}, "
-            f"phase2_stride={getattr(val_cfg, 'phase2_fold_stride', 1)}, "
-            f"phase1_launch_val_days={val_cfg.phase1_launch_val_days} report={val_cfg.report_phase1_cv})"
+            f"CV (expanding-window): {len(cv_folds)} folds on {n_train_dates} train days "
+            f"(requested={n_folds}, min_train>={min_train_eff} days "
+            f"[{val_cfg.min_train_fraction:.0%} of panel], min_val_days={val_cfg.min_val_days})"
         )
 
     for name in config.model_policy.candidates:
@@ -978,9 +940,6 @@ def run_tournament(
                     res.cv_mae = cv_metrics["cv_mae_levels"]
                     res.best_hyperparams = member_hp or None
                     best_hyperparams_all[name] = member_hp
-                    _attach_phase1_cv_metrics(
-                        _fit_ensemble, train, config, feature_cols, res, n_folds=n_folds
-                    )
                 else:
                     res = _fit_ensemble(train, holdout, config, feature_cols)
                     res.best_hyperparams = member_hp or None
@@ -995,9 +954,6 @@ def run_tournament(
                 res.cv_r2 = cv_metrics["cv_r2_levels"]
                 res.cv_mae = cv_metrics["cv_mae_levels"]
                 res.best_hyperparams = hyperparams or None
-                _attach_phase1_cv_metrics(
-                    fitter, train, config, feature_cols, res, n_folds=n_folds
-                )
             else:
                 res = fitter(train, holdout, config, feature_cols)
                 if run_cv:
@@ -1007,9 +963,6 @@ def run_tournament(
                     res.cv_rmse = cv_metrics["cv_rmse_levels"]
                     res.cv_r2 = cv_metrics["cv_r2_levels"]
                     res.cv_mae = cv_metrics["cv_mae_levels"]
-                    _attach_phase1_cv_metrics(
-                        fitter, train, config, feature_cols, res, n_folds=n_folds
-                    )
             results.append(res)
             metrics_table[name] = {
                 "holdout_rmse_levels": res.holdout_rmse,
@@ -1019,17 +972,6 @@ def run_tournament(
             if res.cv_rmse is not None:
                 metrics_table[name]["cv_rmse_levels"] = res.cv_rmse
                 metrics_table[name]["cv_r2_levels"] = res.cv_r2
-                metrics_table[name]["cv_profile"] = selection_cv_profile(config)
-            if res.extra:
-                p1_map = {
-                    "phase1_cv_rmse": "phase1_cv_rmse_levels",
-                    "phase1_cv_r2": "phase1_cv_r2_levels",
-                    "phase1_cv_mae": "phase1_cv_mae_levels",
-                    "phase1_cv_n_folds": "phase1_cv_n_folds",
-                }
-                for src, dst in p1_map.items():
-                    if src in res.extra:
-                        metrics_table[name][dst] = res.extra[src]
             if res.best_hyperparams:
                 metrics_table[name]["best_hyperparams"] = res.best_hyperparams
             if res.log_r2_diagnostic is not None:
@@ -1039,8 +981,6 @@ def run_tournament(
                 cv_str = f" CV_RMSE={res.cv_rmse:.4f}"
                 if res.cv_r2 is not None:
                     cv_str += f" CV_R^2={res.cv_r2:.4f}"
-                if res.extra and "phase1_cv_rmse" in res.extra:
-                    cv_str += f" P1_CV_RMSE={res.extra['phase1_cv_rmse']:.4f}"
             hp_str = f" params={res.best_hyperparams}" if res.best_hyperparams else ""
             print(
                 f"  {name}: holdout RMSE={res.holdout_rmse:.4f} R^2={res.holdout_r2:.4f}"
@@ -1049,8 +989,6 @@ def run_tournament(
             warn_if_poor_r2(res.holdout_r2, scope="holdout", label=name)
             if res.cv_r2 is not None:
                 warn_if_poor_r2(res.cv_r2, scope="CV", label=name)
-            if res.extra and "phase1_cv_r2" in res.extra:
-                warn_if_poor_r2(res.extra["phase1_cv_r2"], scope="phase-1 CV", label=name)
             shap_effects = compute_mean_shap_effects(
                 res.pipeline, train, config.target, feature_cols
             )

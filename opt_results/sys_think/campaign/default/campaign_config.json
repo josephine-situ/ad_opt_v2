@@ -62,17 +62,10 @@
       "scheme": "time_series_cv",
       "holdout_days": 75,
       "cv_folds": 3,
-      "phase2_cv_folds": 15,
-      "phase2_fold_stride": 30,
       "min_train_fraction": 0.5,
       "min_val_days": 21,
-      "cv_profile": "phase2_daily",
-      "phase2_val_days": 7,
-      "phase1_launch_val_days": 14,
-      "report_phase1_cv": true,
-      "phase1_cv_for_selection": false,
-      "respect_campaign_periods": true,
-      "max_calendar_gap_days": 7
+      "min_train_rows": 50,
+      "min_val_rows": 20
     }
   },
   "evaluation": {

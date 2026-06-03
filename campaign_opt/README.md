@@ -240,16 +240,9 @@ Tournament (ridge, power, RF, XGB) with **level-scale** metrics; writes `model_m
 3. Holdout metrics logged in `holdout_metrics.json`.
 4. Tournament winner is the lowest CV RMSE (with `time_series_cv`) or lowest holdout RMSE otherwise; `optimizer_backend: auto` uses that model's backend (`linear` | `piecewise_linear` | `tree_embed`).
 
-**CV profiles** (`validation.cv_profile`, holdout unchanged). Full design (phase 1 vs 2, periods, stride, config table): **[docs/cross_validation.md](docs/cross_validation.md)**.
+**Cross-validation** uses **expanding-window** folds on the train calendar only (time-respecting; no per-period or per-phase splits). Defaults: `cv_folds: 3`, `min_val_days: 21`, `min_train_fraction: 0.5`. Full design and config table: **[docs/cross_validation.md](docs/cross_validation.md)**.
 
-| Profile | Use | Validation window |
-|---------|-----|-------------------|
-| **`phase2_daily`** (default) | Tournament winner, tuning, ensemble weights | Next `phase2_val_days` (default **7**) inside same active period; up to `phase2_cv_folds` (default **15**) folds subsampled every `phase2_fold_stride` days (default **30**) from recent candidates — many val *candidates* exist, but averaging ~15 windows reduces 1-day noise without scoring every day |
-| **`phase1_launch`** | Reported as `phase1_cv_*` in `holdout_metrics.json` | First `phase1_launch_val_days` (default **14**) after each period start; train on all dates before period |
-| `period_tail` | Legacy | Last `min_val_days` inside each period |
-| `legacy_calendar` | Legacy | Expanding windows across full calendar (may span gaps) |
-
-CV run boundaries use **`campaign_version` per segment** (via `run_period_id`), with **`max_calendar_gap_days`** (default 7) splitting off-air holes inside a version. CV fold failures raise `CVFoldError`. Holdout (last `holdout_days`) remains a separate recent-window report.
+CV fold failures raise `CVFoldError`. Holdout (last `holdout_days`) remains a separate recent-window report.
 
 ---
 
