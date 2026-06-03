@@ -15,7 +15,11 @@ from campaign_opt.backends.tree_embed import (
     solve_tree_embed_campaign_milp,
 )
 from campaign_opt.coefficients import export_linear_solver_coeffs
-from campaign_opt.modeling import is_ensemble_candidate, refit_optimizer_model
+from campaign_opt.modeling import (
+    configured_evaluation_model_name,
+    refit_optimizer_model,
+    warn_if_not_tournament_winner,
+)
 from campaign_opt.evaluation import add_optimizer_plan_columns
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.train_specs import get_train_spec
@@ -89,6 +93,8 @@ def run_optimizer(
     output_dir = Path(output_dir)
     backend = _resolve_backend(config, manifest)
     optimizer_winner = require_optimizer_winner(config)
+
+    warn_if_not_tournament_winner(optimizer_winner, manifest, role="Optimizer")
 
     print(
         f"[Info] optimizer_winner={optimizer_winner!r} "

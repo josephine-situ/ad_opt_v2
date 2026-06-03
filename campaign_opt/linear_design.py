@@ -128,8 +128,9 @@ def template_row_for_segment(sub: pd.DataFrame, segment: str) -> pd.Series:
 
 
 def static_context_columns(config: CampaignOptConfig) -> list[str]:
+    """Keyword-set-varying context columns (excludes calendar, which is planning-date specific)."""
     cols: list[str] = []
-    for group in ("keyword_set_static", "gkp_set"):
+    for group in ("keyword_set_static", "gkp_set", "match_type_set"):
         cols.extend(config.context_features.get(group, []))
     return list(dict.fromkeys(cols))
 

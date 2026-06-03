@@ -8,6 +8,8 @@ from campaign_opt.schema import CampaignOptConfig, ModelPolicy
 
 def test_optimizer_winner_name_from_config():
     config = CampaignOptConfig(
+        exp_name="default",
+        course="sys_think",
         model_policy=ModelPolicy(optimizer_winner="xgboost"),
     )
     assert optimizer_winner_name(config) == "xgboost"

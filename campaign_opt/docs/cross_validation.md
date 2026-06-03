@@ -66,6 +66,7 @@ Example block (see `opt_results/<course>/campaign/default/campaign_config.json`)
 - Tournament start prints fold count, e.g. `CV (expanding-window): 3 folds on 487 train days (...)`.
 - First `cross_validate_model` call prints each fold’s train/val date ranges (`CV fold schedule: …`), once per train panel.
 - Hyperparameter search (`hyperparam_cv.py`) uses the same `_validation_kw()` as the tournament.
+- Default grids live in [`train_specs.py`](../train_specs.py) (ridge `alpha` 10–100; XGB/RF `max_depth` 2–3, `n_estimators` ≤ 20). Rationale and feature-selection context: [feature_selection_and_modeling.md](feature_selection_and_modeling.md).
 
 ## Interpreting metrics
 

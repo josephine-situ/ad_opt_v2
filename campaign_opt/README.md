@@ -24,7 +24,7 @@ More on API pulls and HTML parsing: root `[README.md](../README.md)`.
 
 ## Modeling considerations
 
-Raw `**all_conv**` is a poor default optimization target because of how the panel is built and what we can identify from history. The shipped `default` experiment uses `**conv_scaled_clicks**` (clicks × fixed conv/click per `(region, match_types)`, computed once from the full campaign-day panel); `**clicks**` remains a supported alternative. Calendar context includes `**days_since_version_start**` (days since the active `campaign_version` start in `campaign-summary.csv`).
+Raw `**all_conv**` is a poor default optimization target because of how the panel is built and what we can identify from history. The shipped `default` experiment uses `**conv_scaled_clicks**` (clicks × fixed conv/click per `(region, match_types)`, computed once from the full campaign-day panel); `**clicks**` remains a supported alternative. Calendar context for `default` is lean: `day_of_week`, `season`, `days_to_next_course_start` (see [feature_selection_and_modeling.md](docs/feature_selection_and_modeling.md)).
 
 **Decision lever.** Response models use `**daily_budget`** (the configured cap from change history). `**cost**` is observed spend, not a controllable input, and is excluded from models and budget diagnostics.
 
@@ -35,6 +35,8 @@ Raw `**all_conv**` is a poor default optimization target because of how the pane
 **Clicks are more stable and identifiable.** On identifiable `(segment, keyword_set_id)` cells, within-set budget slopes for clicks are typically **positive**. Clicks respond more directly to auction volume at a given cap, so they are a better proxy for the budget lever even when conversion efficiency moves.
 
 **Implication for config.** Prefer `target: conv_scaled_clicks` or `clicks` over `all_conv` for optimization and MILP objectives. Keep `all_conv` in `secondary_metrics` for reporting and diagnostics. Run `diagnose_budget_response.py` before trusting budget signs in fitted coefficients. Holdout R² on segment-day targets (~0.3–0.7 for tree/ensemble models, depending on target) is expected to stay well below in-sample EDA benchmarks; prioritize correct budget direction and relative ranking over chasing high R².
+
+**Feature set and ablation history** for the shipped `default` experiment (deduped 10 context columns, XGB optimizer, hyperparameter grids): see [`docs/feature_selection_and_modeling.md`](docs/feature_selection_and_modeling.md).
 
 ---
 
@@ -196,6 +198,14 @@ uv run python scripts/run_match_type_ablation.py --course sys_think --models rid
 
 Writes `diagnostics/match_type_ablation/match_type_ablation.csv` (and `match_type_ablation_tuned/` when `--tune`).
 
+**Context feature ablation** (shipped vs deduped vs drop/add groups; see [feature_selection_and_modeling.md](docs/feature_selection_and_modeling.md)):
+
+```powershell
+uv run python scripts/run_feature_ablation.py --course sys_think --tune --models xgboost,ridge
+uv run python scripts/run_shipped_dedup_compare.py --course sys_think --tune
+uv run python scripts/run_lean_gkp_ablation.py --course sys_think --tune
+```
+
 **Per-match-type semantic ablation** (cohesion, dispersion, course-sim mean/p90 per broad/phrase/exact list):
 
 ```powershell
@@ -221,7 +231,7 @@ uv run python scripts/fit_response_models.py --course sys_think --skip-evaluatio
 
 Tournament (ridge, power, RF, XGB) with **level-scale** metrics; writes `model_manifest.json`, `winner_model.joblib`, `holdout_metrics.json`, and `**linear_coeffs.json`** under `opt_results/<course>/campaign/<exp>/`.
 
-**Ridge uses the same design as the linear MILP** (`region + is_broad_match + budget×(region + is_broad_match) + context_features` via `[linear_design.py](linear_design.py)`). The modeling panel is filtered to `constraints.allowed_match_types` and non-`excluded_regions` before the tournament. The tournament always scores a **`mean_baseline`** candidate (training-set mean target) for reference; it cannot be selected as the optimizer winner. Keyword-set selection in the MILP uses `**static_context_lift`** — per-set scores derived from static context-feature coefficients (semantic, GKP), not `keyword_set_id` dummies. Saved debug matrices land in `features/`:
+Ridge uses the same linear design as the linear MILP (`region + is_broad_match + budget×(region + is_broad_match) + context_features` via [`linear_design.py`](linear_design.py)). Keyword-set choice in the **linear** MILP uses `static_context_lift` from **all keyword-set-varying** context columns (`keyword_set_static`, `gkp_set`, `match_type_set` — same as ridge/XGB modeling, excluding calendar). Tree-embed MILP evaluates the fitted pipeline on candidate rows built with the same `build_keyword_set_feature_table()` columns. See [feature_selection_and_modeling.md](docs/feature_selection_and_modeling.md).
 
 
 | File                                   | Purpose                            |

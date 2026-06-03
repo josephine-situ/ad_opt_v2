@@ -18,7 +18,9 @@ from campaign_opt.modeling import (
     _cv_rmse_member_weights,
     _prep_xy,
     base_tournament_candidates,
+    configured_evaluation_model_name,
     pipeline_feature_overview_lines,
+    warn_if_not_tournament_winner,
 )
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.train_specs import TrainSpec, get_train_spec
@@ -212,6 +214,8 @@ def fit_evaluation_model(
     Saves ``ensemble_model.joblib`` (or ``evaluation_{name}.joblib``) under ``out_dir``.
     """
     out_dir = Path(out_dir)
+    eval_model_name = configured_evaluation_model_name(config)
+    warn_if_not_tournament_winner(eval_model_name, manifest, role="Evaluation")
     if not config.evaluation.use_ensemble:
         eval_name = optimizer_winner_name(config)
         print(f"Fitting evaluation model {eval_name!r} on full panel: {len(df)} rows")

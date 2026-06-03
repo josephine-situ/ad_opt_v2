@@ -12,10 +12,12 @@ from campaign_opt.evaluation import fit_evaluation_model
 from campaign_opt.feature_artifacts import save_modeling_artifacts
 from campaign_opt.features import prepare_modeling_data, train_holdout_split
 from campaign_opt.modeling import (
+    configured_evaluation_model_name,
     model_feature_overview_lines,
     print_tournament_metric_summary,
     run_tournament,
     save_manifest,
+    warn_if_not_tournament_winner,
 )
 from campaign_opt.schema import default_config_path, load_campaign_config
 from utils.tee_logging import setup_tee_logging
@@ -78,6 +80,14 @@ def main() -> None:
     if winner.cv_r2 is not None:
         print(f"  Winner CV R^2={winner.cv_r2:.4f} (CV RMSE={winner.cv_rmse:.4f})")
     print_tournament_metric_summary(metrics_table, winner_name=winner.name)
+
+    from campaign_opt.optimize import require_optimizer_winner
+
+    warn_if_not_tournament_winner(require_optimizer_winner(config), manifest, role="Optimizer")
+    warn_if_not_tournament_winner(
+        configured_evaluation_model_name(config), manifest, role="Evaluation"
+    )
+
     for line in model_feature_overview_lines(
         winner, shap_effects=manifest.get("shap_mean_effects")
     ):

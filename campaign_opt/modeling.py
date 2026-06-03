@@ -141,6 +141,37 @@ def warn_if_poor_r2(
     )
 
 
+def tournament_winner_name(manifest: dict) -> str | None:
+    """Tournament-selected model from ``model_manifest.json``."""
+    winner = manifest.get("winner")
+    return str(winner) if winner else None
+
+
+def configured_evaluation_model_name(config: CampaignOptConfig) -> str:
+    """Model used for plan-vs-actual scoring."""
+    if config.evaluation.use_ensemble:
+        return "ensemble"
+    from campaign_opt.optimize import require_optimizer_winner
+
+    return require_optimizer_winner(config)
+
+
+def warn_if_not_tournament_winner(
+    configured_model: str,
+    manifest: dict,
+    *,
+    role: str,
+) -> None:
+    """Warn when optimizer or evaluation uses a model other than the CV tournament winner."""
+    tw = tournament_winner_name(manifest)
+    if not tw or configured_model == tw:
+        return
+    print(
+        f"[Warn] {role} uses {configured_model!r} but tournament winner is {tw!r}; "
+        "consider switching to the tournament winner."
+    )
+
+
 def eval_pipeline_holdout(
     pipeline: Any,
     holdout: pd.DataFrame,

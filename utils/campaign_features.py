@@ -10,7 +10,11 @@ import pandas as pd
 from config import COURSE_CONFIG
 from utils.data_processing import _extract_region_from_campaign
 from utils.date_features import add_calendar_features
-from utils.gkp_features import aggregate_gkp_to_keyword_sets, load_gkp_keyword_stats
+from utils.gkp_features import (
+    aggregate_gkp_to_keyword_sets,
+    gkp_aggregate_column_names,
+    load_gkp_keyword_stats,
+)
 
 EMBED_MODEL_DEFAULT = "sentence-transformers/all-MiniLM-L6-v2"
 COURSE_ANCHORS = [
@@ -289,19 +293,18 @@ def _keywords_from_list_column(raw: object) -> list[str]:
     return [k.strip().lower() for k in str(raw).split(";") if k.strip()]
 
 
-def _gkp_means_for_keywords(keywords: list[str], gkp_map: pd.DataFrame) -> dict[str, float]:
+def _gkp_stats_for_keywords(keywords: list[str], gkp_map: pd.DataFrame) -> dict[str, float]:
+    from utils.gkp_features import _gkp_aggregate_row
+
+    empty = {col: float("nan") for col in gkp_aggregate_column_names()}
     if not keywords:
-        return {
-            "last_month_searches_mean": float("nan"),
-            "competition_index_mean": float("nan"),
-            "bid_low_mean": float("nan"),
-        }
-    sub = gkp_map.reindex(keywords)
-    return {
-        "last_month_searches_mean": float(sub["last_month_searches"].mean()),
-        "competition_index_mean": float(sub["competition_index"].mean()),
-        "bid_low_mean": float(sub["bid_low"].mean()),
-    }
+        return empty
+    return _gkp_aggregate_row(gkp_map.reindex(keywords))
+
+
+def _gkp_means_for_keywords(keywords: list[str], gkp_map: pd.DataFrame) -> dict[str, float]:
+    stats = _gkp_stats_for_keywords(keywords, gkp_map)
+    return {k: v for k, v in stats.items() if k.endswith("_mean")}
 
 
 def keyword_set_match_type_count_features(keyword_sets: pd.DataFrame) -> pd.DataFrame:
@@ -327,11 +330,12 @@ def keyword_set_match_type_count_features(keyword_sets: pd.DataFrame) -> pd.Data
 
 
 def aggregate_gkp_per_match_type(keyword_sets: pd.DataFrame, gkp_kw: pd.DataFrame) -> pd.DataFrame:
-    """Mean GKP stats per match-type list column (broad / phrase / exact)."""
+    """Mean/std/p90 GKP stats per match-type list column (broad / phrase / exact)."""
     base = keyword_sets[["keyword_set_id"]].drop_duplicates().copy()
+    stat_cols = gkp_aggregate_column_names()
     if gkp_kw.empty:
         for mt in MATCH_TYPE_LIST_COLS:
-            for stat in ("last_month_searches_mean", "competition_index_mean", "bid_low_mean"):
+            for stat in stat_cols:
                 base[f"{mt.lower()}_{stat}"] = np.nan
         return base
 
@@ -341,8 +345,8 @@ def aggregate_gkp_per_match_type(keyword_sets: pd.DataFrame, gkp_kw: pd.DataFram
         rec: dict[str, object] = {"keyword_set_id": row["keyword_set_id"]}
         for mt, col in MATCH_TYPE_LIST_COLS.items():
             keywords = _keywords_from_list_column(row.get(col))
-            means = _gkp_means_for_keywords(keywords, gkp_map)
-            for stat, val in means.items():
+            stats = _gkp_stats_for_keywords(keywords, gkp_map)
+            for stat, val in stats.items():
                 rec[f"{mt.lower()}_{stat}"] = val
         rows.append(rec)
     return pd.DataFrame(rows)
@@ -411,11 +415,29 @@ def keyword_set_semantic_per_match_type(
 # Columns used in match-type feature ablations (see campaign_opt/match_type_ablation.py).
 MT_COUNT_FEATURE_COLS = ["n_broad", "n_phrase", "n_exact"]
 MT_SHARE_FEATURE_COLS = ["share_broad", "share_phrase", "share_exact"]
+GKP_SET_MEAN_COLS = [c for c in gkp_aggregate_column_names() if c.endswith("_mean")]
+UNION_GKP_MEAN_COLS = ["last_month_searches_mean", "competition_index_mean"]
+GKP_SET_STD_COLS = [c for c in gkp_aggregate_column_names() if c.endswith("_std")]
+GKP_SET_P90_COLS = [c for c in gkp_aggregate_column_names() if c.endswith("_p90")]
+GKP_SET_ALL_COLS = list(gkp_aggregate_column_names())
+
 MT_GKP_FEATURE_COLS = [
-    f"{mt.lower()}_{stat}"
-    for mt in MATCH_TYPE_LIST_COLS
-    for stat in ("last_month_searches_mean", "competition_index_mean", "bid_low_mean")
+    f"{mt.lower()}_{stat}" for mt in MATCH_TYPE_LIST_COLS for stat in GKP_SET_ALL_COLS
 ]
+MT_GKP_MEAN_NO_BID = [
+    c for c in MT_GKP_FEATURE_COLS if c.endswith("_mean") and "bid_low" not in c
+]
+
+KEYWORD_SET_STATIC_BASELINE_COLS = list(SEMANTIC_FEATURE_COLS) + ["num_unique_keywords"]
+CALENDAR_BASELINE_COLS = [
+    "day_of_week",
+    "season",
+    "is_weekend",
+    "is_public_holiday",
+    "days_to_next_course_start",
+    "days_since_version_start",
+]
+CALENDAR_EXTENDED_COLS = CALENDAR_BASELINE_COLS + ["month_sin", "month_cos"]
 MT_COHESION_FEATURE_COLS = [f"embed_cohesion_{mt.lower()}" for mt in MATCH_TYPE_LIST_COLS]
 MT_DISPERSION_FEATURE_COLS = [f"embed_dispersion_{mt.lower()}" for mt in MATCH_TYPE_LIST_COLS]
 MT_COURSE_SIM_FEATURE_COLS = [
@@ -428,6 +450,23 @@ MT_SEMANTIC_FULL_FEATURE_COLS = (
     + list(MT_DISPERSION_FEATURE_COLS)
     + list(MT_COURSE_SIM_FEATURE_COLS)
 )
+
+# Shipped 20-feat set minus groups with |r| > ~0.85 vs a kept representative (see ablations).
+SHIPPED_DEDUPED_CALENDAR = [
+    "day_of_week",
+    "season",
+    "days_to_next_course_start",
+]
+SHIPPED_DEDUPED_STATIC = ["embed_course_sim_mean", "num_unique_keywords"]
+SHIPPED_DEDUPED_GKP = list(UNION_GKP_MEAN_COLS)
+# MT counts dropped (correlate with num_unique_keywords); union cohesion/dispersion/p90 dropped.
+SHIPPED_DEDUPED_MATCH_TYPE = list(MT_DISPERSION_FEATURE_COLS)
+SHIPPED_DEDUPED_CONTEXT: dict[str, list[str]] = {
+    "calendar": SHIPPED_DEDUPED_CALENDAR,
+    "keyword_set_static": SHIPPED_DEDUPED_STATIC,
+    "gkp_set": SHIPPED_DEDUPED_GKP,
+    "match_type_set": SHIPPED_DEDUPED_MATCH_TYPE,
+}
 
 
 def build_match_type_set_feature_table(course: str) -> pd.DataFrame:
@@ -498,6 +537,10 @@ def build_keyword_set_feature_table(course: str) -> pd.DataFrame:
         sem.merge(gkp_set, on="keyword_set_id", how="left")
         .merge(counts, on="keyword_set_id", how="left")
     )
+    mt = build_match_type_set_feature_table(course)
+    mt_cols = [c for c in mt.columns if c != "keyword_set_id"]
+    if mt_cols:
+        out = out.merge(mt[["keyword_set_id", *mt_cols]], on="keyword_set_id", how="left")
     return out
 
 

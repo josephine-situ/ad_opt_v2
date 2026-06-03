@@ -10,19 +10,19 @@ import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 
-# Ridge / power models: no grid in ad_opt; keep a modest alpha search.
-# Tree models: match ad_opt/scripts/modeling.py XGB grid (small trees, low n_estimators).
+# Tree models: shallow trees, n_estimators capped at 20 (no max_depth=4).
 _AD_OPT_XGB_GRID = {
     "n_estimators": [5, 10, 20],
-    "max_depth": [2, 3, 4],
+    "max_depth": [2, 3],
     "learning_rate": [0.1, 0.3],
 }
 
+_RIDGE_ALPHA_GRID = {"alpha": [10.0, 100.0]}
+
 DEFAULT_HYPERPARAM_GRIDS: dict[str, dict[str, list[Any]]] = {
-    "ridge": {"alpha": [0.01, 0.1, 1.0, 10.0, 100.0]},
-    "power_log": {"alpha": [0.01, 0.1, 1.0, 10.0, 100.0]},
-    "power_level": {"alpha": [0.01, 0.1, 1.0, 10.0, 100.0]},
-    # RF has no grid in ad_opt; use the same small-tree ranges as XGB there.
+    "ridge": dict(_RIDGE_ALPHA_GRID),
+    "power_log": dict(_RIDGE_ALPHA_GRID),
+    "power_level": dict(_RIDGE_ALPHA_GRID),
     "random_forest": {
         "n_estimators": _AD_OPT_XGB_GRID["n_estimators"],
         "max_depth": _AD_OPT_XGB_GRID["max_depth"],

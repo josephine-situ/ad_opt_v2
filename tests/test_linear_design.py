@@ -157,3 +157,40 @@ def test_missing_gkp_zero_fill_matches_design_matrix_and_milp_lift():
     assert refreshed["static_context_lift"]["ks2"] == pytest.approx(
         context_coefs["last_month_searches_mean"] * CONTEXT_MISSING_NUMERIC_FILL
     )
+
+
+def test_static_context_lift_includes_match_type_set():
+    df = pd.DataFrame(
+        {
+            "segment": ["USA / Broad", "USA / Broad"],
+            "keyword_set_id": ["ks1", "ks2"],
+            "daily_budget": [10.0, 20.0],
+            "clicks": [5.0, 10.0],
+            "embed_dispersion_broad": [0.2, 0.8],
+            "day_of_week": ["Monday", "Monday"],
+        }
+    )
+    config = CampaignOptConfig(
+        exp_name="t",
+        course="sys_think",
+        target="clicks",
+        context_features={
+            "calendar": ["day_of_week"],
+            "match_type_set": ["embed_dispersion_broad"],
+        },
+        model_policy=ModelPolicy(),
+    )
+    design = build_linear_milp_design_matrix(df, config)
+    model = Ridge(alpha=10.0)
+    model.fit(design.X.values, design.y)
+    coeffs = coeffs_from_linear_milp_design(model, design, config)
+    assert "embed_dispersion_broad" in coeffs["static_context_columns"]
+    candidates = pd.DataFrame({"keyword_set_id": ["ks1", "ks2"], "segment": ["USA / Broad"] * 2})
+    set_features = pd.DataFrame(
+        {
+            "keyword_set_id": ["ks1", "ks2"],
+            "embed_dispersion_broad": [0.2, 0.8],
+        }
+    )
+    refreshed = refresh_static_context_lift(coeffs, config, candidates, set_features)
+    assert refreshed["static_context_lift"]["ks2"] != refreshed["static_context_lift"]["ks1"]
