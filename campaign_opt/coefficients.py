@@ -22,6 +22,8 @@ from campaign_opt.linear_design import (
     segment_slope_from_model,
     static_context_columns,
     template_row_for_segment,
+    zero_fill_context_columns,
+    zero_fill_context_value,
 )
 from campaign_opt.schema import CampaignOptConfig
 from utils.date_features import calendar_vector_for_date
@@ -54,6 +56,8 @@ def context_contribution(
             val = np.nan
         dummy_cols = [c for c in context_coefs if c.startswith(f"{col}_")]
         if dummy_cols:
+            if pd.isna(val):
+                continue
             for dc in dummy_cols:
                 level = dc[len(col) + 1 :]
                 if str(val) == level:
@@ -61,8 +65,7 @@ def context_contribution(
             continue
         if col not in context_coefs:
             continue
-        if pd.isna(val):
-            continue
+        val = zero_fill_context_value(val)
         try:
             effect += context_coefs[col] * float(val)
         except (TypeError, ValueError):
@@ -103,8 +106,9 @@ def refresh_static_context_lift(
         return coeffs
     out = dict(coeffs)
     set_ids = candidates["keyword_set_id"].astype(str).unique()
+    filled_features = zero_fill_context_columns(set_features, static_cols)
     out["static_context_lift"] = static_context_lift_from_features(
-        context_coefs, static_cols, set_features, set_ids
+        context_coefs, static_cols, filled_features, set_ids
     )
     return out
 
@@ -222,7 +226,7 @@ def _static_lift_from_artifact(
         row_zero = row.copy()
         for col in static_cols:
             if col in row_zero.index:
-                row_zero[col] = 0.0
+                row_zero[col] = zero_fill_context_value(row_zero[col])
         level = float(artifact.predict_design_frame(pd.DataFrame([row]))[0])
         level_zero = float(artifact.predict_design_frame(pd.DataFrame([row_zero]))[0])
         out[str(set_id)] = level - level_zero

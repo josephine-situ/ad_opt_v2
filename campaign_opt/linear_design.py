@@ -21,6 +21,36 @@ SEGMENT_MATCH_COLS = (SEGMENT_BROAD_MATCH_COL,)
 SEGMENT_STRUCTURAL_EXACT = frozenset({"daily_budget", *SEGMENT_MATCH_COLS})
 SEGMENT_STRUCTURAL_PREFIXES = ("region_", "budget_x_region_", "budget_x_")
 RIDGE_NO_SCALE_COLS = frozenset({"is_weekend", "is_public_holiday"})
+CONTEXT_MISSING_NUMERIC_FILL = 0.0
+
+
+def zero_fill_context_value(
+    val: object,
+    *,
+    numeric_fill: float = CONTEXT_MISSING_NUMERIC_FILL,
+) -> object:
+    """Map missing numeric context inputs to the design-matrix fill value."""
+    if val is None or pd.isna(val):
+        return numeric_fill
+    return val
+
+
+def zero_fill_context_columns(
+    df: pd.DataFrame,
+    cols: list[str],
+    *,
+    numeric_fill: float = CONTEXT_MISSING_NUMERIC_FILL,
+) -> pd.DataFrame:
+    """Zero-fill missing numeric context columns (matches ``build_linear_milp_design_matrix``)."""
+    if not cols:
+        return df
+    out = df.copy()
+    numeric_cols, _ = split_context_columns_by_dtype(out, cols)
+    for col in numeric_cols:
+        if col not in out.columns:
+            continue
+        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(numeric_fill)
+    return out
 
 
 @dataclass
@@ -166,9 +196,15 @@ def _encode_context_columns(sub: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     numeric_cols, categorical_cols = split_context_columns_by_dtype(sub, cols)
     parts: list[pd.DataFrame] = []
     for col in numeric_cols:
-        parts.append(sub[[col]].apply(pd.to_numeric, errors="coerce").astype(float))
+        parts.append(
+            sub[[col]]
+            .apply(pd.to_numeric, errors="coerce")
+            .astype(float)
+            .fillna(CONTEXT_MISSING_NUMERIC_FILL)
+        )
     for col in categorical_cols:
-        parts.append(pd.get_dummies(sub[col].astype(str), prefix=col, dtype=float))
+        cat = sub[col].where(sub[col].notna(), "")
+        parts.append(pd.get_dummies(cat.astype(str), prefix=col, dtype=float))
     if not parts:
         return pd.DataFrame(index=sub.index)
     return pd.concat(parts, axis=1)
@@ -301,7 +337,7 @@ def build_linear_milp_design_matrix(
     if columns is not None:
         X = X.reindex(columns=columns, fill_value=0.0)
     # Missing context values (common on holdout) must not reach sklearn.
-    X = X.fillna(0.0)
+    X = X.fillna(CONTEXT_MISSING_NUMERIC_FILL)
 
     x_columns = columns if columns is not None else list(X.columns)
     return LinearMilpDesign(
