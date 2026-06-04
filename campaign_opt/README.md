@@ -215,6 +215,24 @@ uv run python scripts/run_match_type_ablation.py --course sys_think --spec-set s
 
 Writes `diagnostics/semantic_match_type_ablation/` (12 embedding columns per set; see `keyword_set_semantic_per_match_type` in `utils/campaign_features.py`).
 
+**Historical keyword efficiency** (experimental — **not** in production `campaign_config`; keep deduped 10-feat baseline):
+
+```powershell
+uv run python scripts/run_efficiency_ablation.py --course sys_think --spec-set subset
+uv run python scripts/run_efficiency_ablation.py --course sys_think --only-spec add_r7d_per_mt_mean_cost --tune
+uv run python scripts/diagnose_efficiency_vs_lagged_spend.py --course sys_think
+```
+
+What we tried and why it was not shipped: [docs/keyword_efficiency_experiments.md](docs/keyword_efficiency_experiments.md). Summary also in [docs/feature_selection_and_modeling.md](docs/feature_selection_and_modeling.md#historical-keyword-efficiency-tried-not-shipped).
+
+**Efficiency vs lagged spend** (is kw efficiency just a spend-regime proxy?):
+
+```powershell
+uv run python scripts/diagnose_efficiency_vs_lagged_spend.py --course sys_think
+```
+
+Correlates `hist_kw_eff_*` with causal `hist_seg_cost_*` / `hist_seg_budget_*` (previous day or roll 7/14/30d; never same-day spend). Ablation compares lagged segment **cost** vs **keyword efficiency** vs lagged segment **conv_scaled/cost**. Output: `diagnostics/spend_regime/`.
+
 ---
 
 ## 5. Fit response models
@@ -231,7 +249,7 @@ uv run python scripts/fit_response_models.py --course sys_think --skip-evaluatio
 
 Tournament (ridge, power, RF, XGB) with **level-scale** metrics; writes `model_manifest.json`, `winner_model.joblib`, `holdout_metrics.json`, and `**linear_coeffs.json`** under `opt_results/<course>/campaign/<exp>/`.
 
-Ridge uses the same linear design as the linear MILP (`region + is_broad_match + budget×(region + is_broad_match) + context_features` via [`linear_design.py`](linear_design.py)). Keyword-set choice in the **linear** MILP uses `static_context_lift` from **all keyword-set-varying** context columns (`keyword_set_static`, `gkp_set`, `match_type_set` — same as ridge/XGB modeling, excluding calendar). Tree-embed MILP evaluates the fitted pipeline on candidate rows built with the same `build_keyword_set_feature_table()` columns. See [feature_selection_and_modeling.md](docs/feature_selection_and_modeling.md).
+Ridge uses the same linear design as the linear MILP (`region + is_broad_match + budget×(region + is_broad_match) + context_features` via [`linear_design.py`](linear_design.py)). Keyword-set choice in the **linear** MILP uses `static_context_lift` from **all keyword-set-varying** context columns (`keyword_set_static`, `gkp_set`, `match_type_set` — same as ridge/XGB modeling, excluding calendar). Tree-embed MILP evaluates the fitted pipeline on candidate rows built with the same `build_keyword_set_feature_table()` columns. See [feature_selection_and_modeling.md](docs/feature_selection_and_modeling.md). Saved debug matrices land in `features/`:
 
 
 | File                                   | Purpose                            |

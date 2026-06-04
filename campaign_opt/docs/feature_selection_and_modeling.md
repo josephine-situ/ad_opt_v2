@@ -107,6 +107,30 @@ Scripts: `scripts/run_lean_gkp_ablation.py` → `diagnostics/feature_ablation/mt
 
 ---
 
+## Historical keyword efficiency (tried, not shipped)
+
+**Decision:** Keep the **original deduped 10** context features in production. Do **not** add `keyword_efficiency` to `campaign_config.json`.
+
+We tested causal features from `kw-day-panel`: per-keyword `conv_scaled/cost` (or `/ daily_budget`), aggregated over 7/14/30d or last observed day, then mean/std/vol across keywords in the set (union or per match type). Full write-up: [keyword_efficiency_experiments.md](keyword_efficiency_experiments.md).
+
+| Finding | Detail |
+|---------|--------|
+| Best CV candidate | `add_r7d_per_mt_mean_cost` — `hist_kw_eff_r7d_{broad,phrase,exact}_mean_cost` |
+| Tuned XGB CV | 0.309 vs baseline 0.362 (−0.053 RMSE) |
+| Tuned XGB holdout R² | **0.096** vs baseline **0.248** → not shipped |
+| Lagged segment `cost` | Does not explain the lift; not recommended |
+| Volatility (`vol`) | No benefit vs mean-only |
+| `_cost` suffix | Denominator for **efficiency ratio**, not raw spend |
+
+```powershell
+uv run python scripts/run_efficiency_ablation.py --course sys_think --only-spec add_r7d_per_mt_mean_cost --tune
+uv run python scripts/diagnose_efficiency_vs_lagged_spend.py --course sys_think
+```
+
+Code: `utils/keyword_efficiency_features.py`, `campaign_opt/efficiency_ablation.py`. Saved runs under `diagnostics/efficiency_ablation/` and `efficiency_ablation_tuned/`.
+
+---
+
 ## Model and hyperparameter policy
 
 ### Optimizer and evaluation
@@ -143,6 +167,8 @@ With `scheme: time_series_cv`, the tournament ranks candidates by **CV RMSE** ev
 | [`scripts/run_match_type_ablation.py`](../../scripts/run_match_type_ablation.py) | MT counts, GKP, semantic | `diagnostics/match_type_ablation/` |
 | [`scripts/run_lean_gkp_ablation.py`](../../scripts/run_lean_gkp_ablation.py) | Union vs MT GKP on lean/deduped base | `diagnostics/feature_ablation/mt_gkp_lean/` |
 | [`scripts/run_shipped_dedup_compare.py`](../../scripts/run_shipped_dedup_compare.py) | Shipped 20 vs deduped 10 vs lean 7 | `diagnostics/feature_ablation/shipped_deduped/` |
+| [`scripts/run_efficiency_ablation.py`](../../scripts/run_efficiency_ablation.py) | Historical kw efficiency (subset/full; `--only-spec`; `--tune`) | `diagnostics/efficiency_ablation/` — **not in production config** |
+| [`scripts/diagnose_efficiency_vs_lagged_spend.py`](../../scripts/diagnose_efficiency_vs_lagged_spend.py) | Efficiency vs lagged segment cost / budget confound | `diagnostics/spend_regime/` |
 
 Example:
 
@@ -187,3 +213,4 @@ Approximate results on the full panel (~1484 rows, 75-day holdout). Use as orien
 - **New keyword sets** with more variation across broad/phrase/exact lists → re-check MT dispersion and MT GKP swaps.
 - **Regime change** in holdout window → prefer holdout-aligned tuning or nested validation, not CV-only grids.
 - **Ridge MILP set choice** → if GKP signal in set ranking matters, avoid moving GKP exclusively into `match_type_set`.
+- **Keyword efficiency** → only if holdout/backtest improve with the 3-column per-MT r7d spec; see [keyword_efficiency_experiments.md](keyword_efficiency_experiments.md).

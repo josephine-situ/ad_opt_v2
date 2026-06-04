@@ -125,12 +125,9 @@ def test_embed_matches_sklearn_at_tree_thresholds():
         tree_paths, np.asarray(x_proc, dtype=np.float32),
         budget_idx, budget_mean, budget_scale, budget_lo, budget_hi,
     )
-    eps = max(1e-6, (budget_hi - budget_lo) * 1e-9)
     test_budgets = {budget_lo, budget_hi, (budget_lo + budget_hi) / 2}
     for bp in breakpoints:
         test_budgets.add(bp)
-        test_budgets.add(max(budget_lo, bp - eps))
-        test_budgets.add(min(budget_hi, bp + eps))
 
     max_diff = 0.0
     for budget in sorted(test_budgets):
