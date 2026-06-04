@@ -9,20 +9,59 @@ import numpy as np
 import pandas as pd
 import pytest
 
+_SYNTHETIC_PANEL_FILES = (
+    "campaign-day-panel.csv",
+    "campaign-summary.csv",
+    "campaign-keyword-sets.csv",
+    "kw-day-panel.csv",
+)
 
-def copy_synthetic_to_repo(synthetic_course: Path, root: Path) -> None:
-    src = synthetic_course / "sys_think" / "processed"
-    dst = root / "data" / "sys_think" / "processed"
+
+def install_synthetic_sys_think_data(
+    monkeypatch: pytest.MonkeyPatch,
+    synthetic_course: Path,
+    tmp_path: Path,
+    *,
+    course: str = "sys_think",
+) -> Path:
+    """
+    Copy synthetic processed CSVs into ``tmp_path`` and redirect ``data_paths``.
+
+    Never writes into the repo's tracked ``data/<course>/processed`` tree.
+    """
+    src = synthetic_course / course / "processed"
+    dst = tmp_path / "data" / course / "processed"
     dst.mkdir(parents=True, exist_ok=True)
-    for name in (
-        "campaign-day-panel.csv",
-        "campaign-summary.csv",
-        "campaign-keyword-sets.csv",
-        "kw-day-panel.csv",
-    ):
-        p = src / name
-        if p.exists():
-            shutil.copy(p, dst / name)
+    for name in _SYNTHETIC_PANEL_FILES:
+        path = src / name
+        if path.exists():
+            shutil.copy(path, dst / name)
+
+    def _data_paths(course_name: str) -> dict[str, Path]:
+        base = tmp_path / "data" / course_name
+        return {
+            "processed": base / "processed",
+            "gkp": base / "gkp",
+            "cache": base / "cache",
+        }
+
+    monkeypatch.setattr("utils.campaign_features.data_paths", _data_paths)
+    monkeypatch.setattr(
+        "utils.keyword_allowlist.load_enrollment_keyword_allowlist",
+        lambda _course: None,
+    )
+
+    import utils.campaign_features as campaign_features
+
+    campaign_features._version_start_cache.pop(course, None)
+    return dst
+
+
+@pytest.fixture
+def synthetic_sys_think_data(monkeypatch, synthetic_course, tmp_path):
+    """Isolated synthetic ``sys_think`` panels (does not touch repo ``data/``)."""
+    install_synthetic_sys_think_data(monkeypatch, synthetic_course, tmp_path)
+    return tmp_path
 
 
 @pytest.fixture(scope="module")

@@ -12,8 +12,6 @@ from campaign_opt.modeling import fit_ridge, model_feature_overview_lines
 from campaign_opt.schema import CampaignOptConfig, ModelPolicy, ValidationConfig
 from campaign_opt.train_specs import DEFAULT_HYPERPARAM_GRIDS
 
-from tests.conftest import copy_synthetic_to_repo
-
 
 def test_iter_param_grid():
     grid = {"alpha": [0.1, 1.0], "beta": [2, 3]}
@@ -22,10 +20,9 @@ def test_iter_param_grid():
     assert {"alpha": 0.1, "beta": 2} in combos
 
 
-def test_tune_ridge_alpha(monkeypatch, synthetic_course):
+def test_tune_ridge_alpha(monkeypatch, synthetic_sys_think_data):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    copy_synthetic_to_repo(synthetic_course, root)
     config = CampaignOptConfig(
         exp_name="test",
         course="sys_think",
@@ -46,10 +43,9 @@ def test_tune_ridge_alpha(monkeypatch, synthetic_course):
     assert cv["cv_rmse_levels"] < float("inf")
 
 
-def test_model_feature_overview_ridge(monkeypatch, synthetic_course):
+def test_model_feature_overview_ridge(monkeypatch, synthetic_sys_think_data):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    copy_synthetic_to_repo(synthetic_course, root)
     config = CampaignOptConfig(exp_name="test", course="sys_think", target="clicks")
     df = prepare_modeling_data(config)
     if df.empty:

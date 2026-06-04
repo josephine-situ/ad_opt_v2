@@ -21,6 +21,7 @@ class ValidationConfig:
     min_val_rows: int = 20
     tune_hyperparams: bool = True
     refit_on_full_data: bool = True  # after selection, refit winner on train+holdout for optimization
+    recency_half_life_days: float | None = None  # exponential sample weights; None = uniform
 
 
 @dataclass
@@ -101,6 +102,11 @@ def _parse_model_policy(raw: dict[str, Any]) -> ModelPolicy:
         min_val_rows=int(validation_raw.get("min_val_rows", 20)),
         tune_hyperparams=bool(validation_raw.get("tune_hyperparams", True)),
         refit_on_full_data=bool(validation_raw.get("refit_on_full_data", True)),
+        recency_half_life_days=(
+            float(validation_raw["recency_half_life_days"])
+            if validation_raw.get("recency_half_life_days") is not None
+            else None
+        ),
     )
     mp_keys = {f.name for f in fields(ModelPolicy)}
     return ModelPolicy(

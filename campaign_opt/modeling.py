@@ -31,6 +31,11 @@ from campaign_opt.linear_design import (
     fit_linear_milp_ridge,
     split_context_columns_by_dtype,
 )
+from campaign_opt.recency_weights import (
+    recency_half_life_days,
+    recency_sample_weights,
+    training_row_recency_weights,
+)
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.shap_effects import compute_mean_shap_effects, format_top_shap_effects
 from campaign_opt.train_specs import build_estimator, get_train_spec
@@ -215,6 +220,18 @@ def _ensure_tree_segment_features(df: pd.DataFrame) -> pd.DataFrame:
     return add_segment_match_type_indicators(df)
 
 
+def _training_subframe(
+    df: pd.DataFrame,
+    target: str,
+    *,
+    y_col: str | None = None,
+) -> pd.DataFrame:
+    y_name = y_col or target
+    return _ensure_tree_segment_features(
+        df.dropna(subset=[y_name, "daily_budget", "region"]).copy()
+    )
+
+
 def _prep_xy(
     df: pd.DataFrame,
     target: str,
@@ -223,9 +240,7 @@ def _prep_xy(
     y_col: str | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     y_name = y_col or target
-    sub = _ensure_tree_segment_features(
-        df.dropna(subset=[y_name, "daily_budget", "region"]).copy()
-    )
+    sub = _training_subframe(df, target, y_col=y_col)
     numeric_ctx, _ = split_context_columns_by_dtype(sub, feature_cols)
     for col in numeric_ctx:
         sub[col] = pd.to_numeric(sub[col], errors="coerce").fillna(0.0)
@@ -286,7 +301,13 @@ def _fit_and_evaluate(
         X_hold = X_hold.rename(columns={budget_col: "daily_budget"})
 
     pipe = Pipeline([("prep", _build_preprocessor(feature_cols, tr)), ("model", estimator)])
-    pipe.fit(X_train, y_train)
+    fit_kw: dict[str, Any] = {}
+    sample_weight = training_row_recency_weights(
+        tr, config, y_col=fit_y_col, date_col="date"
+    )
+    if sample_weight is not None:
+        fit_kw["model__sample_weight"] = sample_weight
+    pipe.fit(X_train, y_train, **fit_kw)
     if len(X_hold) == 0:
         # Train-only refit (e.g. optimizer_winner); metrics are undefined.
         return ModelResult(
@@ -362,7 +383,11 @@ def fit_ridge(train, holdout, config, feature_cols, *, hyperparams: dict[str, An
     del feature_cols  # ridge uses MILP-linear design (region + match + budget interactions + context)
     alpha = float((hyperparams or {}).get("alpha", 1.0))
     train_design = build_linear_milp_design_matrix(train, config)
-    artifact = fit_linear_milp_ridge(train_design, config, alpha=alpha)
+    half_life = recency_half_life_days(config)
+    sample_weight = recency_sample_weights(train_design.sub, half_life_days=half_life)
+    artifact = fit_linear_milp_ridge(
+        train_design, config, alpha=alpha, sample_weight=sample_weight
+    )
 
     holdout_design = build_linear_milp_design_matrix(
         holdout, config, columns=train_design.x_columns
@@ -401,7 +426,11 @@ def fit_ridge_full(
     """Fit aligned ridge on all training rows (ensemble / production)."""
     alpha = float((hyperparams or {}).get("alpha", 1.0))
     design = build_linear_milp_design_matrix(train, config)
-    return fit_linear_milp_ridge(design, config, alpha=alpha)
+    half_life = recency_half_life_days(config)
+    sample_weight = recency_sample_weights(design.sub, half_life_days=half_life)
+    return fit_linear_milp_ridge(
+        design, config, alpha=alpha, sample_weight=sample_weight
+    )
 
 
 def fit_random_forest(
@@ -573,7 +602,11 @@ def refit_winner_on_data(
     if winner.name == "ridge":
         alpha = float((winner.best_hyperparams or {}).get("alpha", 1.0))
         design = build_linear_milp_design_matrix(df, config)
-        pipeline = fit_linear_milp_ridge(design, config, alpha=alpha)
+        half_life = recency_half_life_days(config)
+        sample_weight = recency_sample_weights(design.sub, half_life_days=half_life)
+        pipeline = fit_linear_milp_ridge(
+            design, config, alpha=alpha, sample_weight=sample_weight
+        )
         extra = {"milp_model": pipeline.model, "milp_design": design}
     else:
         target = config.target
@@ -585,7 +618,13 @@ def refit_winner_on_data(
         pipeline = Pipeline(
             [("prep", _build_preprocessor(feature_cols, sub)), ("model", spec.estimator)]
         )
-        pipeline.fit(X, y)
+        fit_kw: dict[str, Any] = {}
+        sample_weight = training_row_recency_weights(
+            tr, config, y_col=spec.fit_y_col, date_col="date"
+        )
+        if sample_weight is not None:
+            fit_kw["model__sample_weight"] = sample_weight
+        pipeline.fit(X, y, **fit_kw)
         extra = winner.extra
 
     return ModelResult(

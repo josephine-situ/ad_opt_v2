@@ -35,12 +35,9 @@ def tiny_config():
     )
 
 
-def test_incremental_zero_budget_baseline(tiny_config, synthetic_course, monkeypatch):
+def test_incremental_zero_budget_baseline(tiny_config, synthetic_sys_think_data, monkeypatch):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    from tests.conftest import copy_synthetic_to_repo
-
-    copy_synthetic_to_repo(synthetic_course, root)
     from campaign_opt.features import prepare_modeling_data
 
     df = prepare_modeling_data(tiny_config)
@@ -84,12 +81,9 @@ def test_incremental_zero_budget_baseline(tiny_config, synthetic_course, monkeyp
     assert len(lift) == len(segments)
 
 
-def test_gated_baseline_zero_when_below_observed_min(tiny_config, synthetic_course, monkeypatch):
+def test_gated_baseline_zero_when_below_observed_min(tiny_config, synthetic_sys_think_data, monkeypatch):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    from tests.conftest import copy_synthetic_to_repo
-
-    copy_synthetic_to_repo(synthetic_course, root)
     from campaign_opt.features import prepare_modeling_data
 
     tiny_config.evaluation.apply_observed_budget_floor = True

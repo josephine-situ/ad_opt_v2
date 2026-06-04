@@ -15,8 +15,6 @@ from campaign_opt.modeling import run_tournament
 from campaign_opt.optimize import _resolve_backend, _resolve_optimizer_winner
 from campaign_opt.schema import CampaignOptConfig, ModelPolicy, load_campaign_config
 
-from tests.conftest import copy_synthetic_to_repo
-
 
 def test_optimizer_winner_resolves_tree_embed_backend():
     config = CampaignOptConfig(
@@ -37,10 +35,9 @@ def test_config_load():
     assert cfg.course == "sys_think"
 
 
-def test_tournament_on_synthetic(monkeypatch, synthetic_course, tmp_path):
+def test_tournament_on_synthetic(monkeypatch, synthetic_sys_think_data):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    copy_synthetic_to_repo(synthetic_course, root)
     config_path = Path("opt_results/sys_think/campaign/default/campaign_config.json")
     if not config_path.exists():
         pytest.skip("config missing")
@@ -63,10 +60,9 @@ def test_tournament_on_synthetic(monkeypatch, synthetic_course, tmp_path):
     assert "ridge" in metrics
 
 
-def test_linear_coeffs_export(monkeypatch, synthetic_course, tmp_path):
+def test_linear_coeffs_export(monkeypatch, synthetic_sys_think_data, tmp_path):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    copy_synthetic_to_repo(synthetic_course, root)
     config_path = Path("opt_results/sys_think/campaign/default/campaign_config.json")
     if not config_path.exists():
         pytest.skip("config missing")

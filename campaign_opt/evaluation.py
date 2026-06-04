@@ -127,7 +127,15 @@ def fit_member_on_train(
 
     estimator = build_estimator(spec.name, hyperparams) if hyperparams else spec.estimator
     pipe = Pipeline([("prep", _build_preprocessor(feature_cols, tr)), ("model", estimator)])
-    pipe.fit(X, y)
+    from campaign_opt.recency_weights import training_row_recency_weights
+
+    fit_kw: dict[str, Any] = {}
+    sample_weight = training_row_recency_weights(
+        tr, config, y_col=spec.fit_y_col, date_col="date"
+    )
+    if sample_weight is not None:
+        fit_kw["model__sample_weight"] = sample_weight
+    pipe.fit(X, y, **fit_kw)
     return FittedMember(spec.name, pipe, spec)
 
 

@@ -268,6 +268,7 @@ def fit_linear_milp_ridge(
     config: CampaignOptConfig,
     *,
     alpha: float = 1.0,
+    sample_weight: np.ndarray | None = None,
 ) -> LinearMilpRidgeModel:
     """
     Fit ridge on the MILP design; standardize continuous columns when present.
@@ -281,14 +282,14 @@ def fit_linear_milp_ridge(
     )
     if not scale_cols:
         model = Ridge(alpha=alpha)
-        model.fit(design.X.values, design.y)
+        model.fit(design.X.values, design.y, sample_weight=sample_weight)
         return LinearMilpRidgeModel(model, design.x_columns, config)
 
     X_scaled, scaler = scale_milp_design_matrix(
         design.X, scale_cols, fit_scaler=True
     )
     fitted = Ridge(alpha=alpha)
-    fitted.fit(X_scaled.values, design.y)
+    fitted.fit(X_scaled.values, design.y, sample_weight=sample_weight)
     return LinearMilpRidgeModel(
         fitted,
         design.x_columns,
