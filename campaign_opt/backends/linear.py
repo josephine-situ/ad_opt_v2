@@ -41,6 +41,7 @@ def solve_linear_campaign_milp(
     fixed_budgets: dict[str, float] | None = None,
     planning_dates: list[pd.Timestamp] | None = None,
     train: pd.DataFrame | None = None,
+    gating_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     segments = build_segment_list(candidates)
     dates = [pd.Timestamp(d) for d in planning_dates] if planning_dates else None
@@ -74,4 +75,5 @@ def solve_linear_campaign_milp(
         train=train,
         solver_coeffs=coeffs,
         planning_calendar_offsets=planning_calendar_offsets,
+        gating_panel=gating_panel,
     )

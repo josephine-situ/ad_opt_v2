@@ -978,6 +978,40 @@ def model_feature_overview_lines(
     return lines
 
 
+def report_model_fit_diagnostics(
+    res: ModelResult,
+    train: pd.DataFrame,
+    config: CampaignOptConfig,
+    feature_cols: list[str],
+    *,
+    shap_effects: dict[str, float] | None = None,
+) -> dict[str, float] | None:
+    """Print tournament-style holdout metrics, warnings, and feature/SHAP overview."""
+    cv_str = ""
+    if res.cv_rmse is not None:
+        cv_str = f" CV_RMSE={res.cv_rmse:.4f}"
+        if res.cv_r2 is not None:
+            cv_str += f" CV_R^2={res.cv_r2:.4f}"
+    hp_str = f" params={res.best_hyperparams}" if res.best_hyperparams else ""
+    if np.isfinite(res.holdout_rmse):
+        print(
+            f"  {res.name}: holdout RMSE={res.holdout_rmse:.4f} R^2={res.holdout_r2:.4f}"
+            f"{cv_str}{hp_str}"
+        )
+    else:
+        print(f"  {res.name}: refit on full panel (no holdout metrics){hp_str}")
+    warn_if_poor_r2(res.holdout_r2, scope="holdout", label=res.name)
+    if res.cv_r2 is not None:
+        warn_if_poor_r2(res.cv_r2, scope="CV", label=res.name)
+    if shap_effects is None and not is_mean_baseline_candidate(res.name):
+        shap_effects = compute_mean_shap_effects(
+            res.pipeline, train, config.target, feature_cols
+        )
+    for line in model_feature_overview_lines(res, shap_effects=shap_effects):
+        print(line)
+    return shap_effects
+
+
 def resolve_backend(winner: ModelResult, config: CampaignOptConfig) -> str:
     policy = config.model_policy
     if policy.optimizer_backend != "auto":
@@ -1161,26 +1195,9 @@ def run_tournament(
                 metrics_table[name]["best_hyperparams"] = res.best_hyperparams
             if res.log_r2_diagnostic is not None:
                 metrics_table[name]["log_r2_diagnostic"] = res.log_r2_diagnostic
-            cv_str = ""
-            if res.cv_rmse is not None:
-                cv_str = f" CV_RMSE={res.cv_rmse:.4f}"
-                if res.cv_r2 is not None:
-                    cv_str += f" CV_R^2={res.cv_r2:.4f}"
-            hp_str = f" params={res.best_hyperparams}" if res.best_hyperparams else ""
-            print(
-                f"  {name}: holdout RMSE={res.holdout_rmse:.4f} R^2={res.holdout_r2:.4f}"
-                f"{cv_str}{hp_str}"
+            shap_effects = report_model_fit_diagnostics(
+                res, train, config, feature_cols
             )
-            warn_if_poor_r2(res.holdout_r2, scope="holdout", label=name)
-            if res.cv_r2 is not None:
-                warn_if_poor_r2(res.cv_r2, scope="CV", label=name)
-            shap_effects = None
-            if not is_mean_baseline_candidate(name):
-                shap_effects = compute_mean_shap_effects(
-                    res.pipeline, train, config.target, feature_cols
-                )
-            for line in model_feature_overview_lines(res, shap_effects=shap_effects):
-                print(line)
             if shap_effects:
                 metrics_table[name]["shap_mean_effects"] = shap_effects
         except Exception as exc:

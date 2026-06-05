@@ -201,6 +201,7 @@ def run_two_stage_backtest(
             opt_date,
             set_features,
             scoring_panel=train,
+            floor_panel=panel,
         )
         comp.to_csv(day_dir / "plan_vs_actual.csv", index=False)
         day_row.update(plan_vs_actual_row_metrics(comp, config.target))

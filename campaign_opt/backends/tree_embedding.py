@@ -153,6 +153,17 @@ def _processed_to_raw_budget(
     return float(thr) + float(budget_mean)
 
 
+def _tree_split_ok(val: Any, op: str, thr: float) -> bool:
+    """Match XGBoost leaf routing: compare in float32, not promoted float64."""
+    v = np.float32(val)
+    t = np.float32(thr)
+    if op == "lt":
+        return bool(v < t)
+    if op == "ge":
+        return bool(v >= t)
+    raise ValueError(f"unknown split op {op!r}")
+
+
 def _static_feasible_leaf(
     conds: list[tuple[int, str, float]],
     x_proc_row: np.ndarray,
@@ -161,11 +172,7 @@ def _static_feasible_leaf(
     for feat_idx, op, thr in conds:
         if feat_idx == budget_idx:
             continue
-        val = float(x_proc_row[feat_idx])
-        thr = float(thr)
-        if op == "lt" and not (val < thr):
-            return False
-        if op == "ge" and not (val >= thr):
+        if not _tree_split_ok(x_proc_row[feat_idx], op, thr):
             return False
     return True
 
@@ -581,10 +588,7 @@ def embed_tree_prediction(
             for feat_idx, op, thr in conds:
                 if feat_idx == budget_idx:
                     dynamic_conds.append((op, thr))
-                elif op == "lt" and not (float(x_proc_row[feat_idx]) < float(thr)):
-                    feasible = False
-                    break
-                elif op == "ge" and not (float(x_proc_row[feat_idx]) >= float(thr)):
+                elif not _tree_split_ok(x_proc_row[feat_idx], op, thr):
                     feasible = False
                     break
 

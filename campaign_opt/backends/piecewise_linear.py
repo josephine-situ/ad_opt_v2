@@ -43,6 +43,7 @@ def solve_piecewise_campaign_milp(
     fixed_budgets: dict[str, float] | None = None,
     planning_dates: list[pd.Timestamp] | None = None,
     train: pd.DataFrame | None = None,
+    gating_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     if planning_dates and len(planning_dates) > 1:
         return solve_linear_campaign_milp(
@@ -58,6 +59,7 @@ def solve_piecewise_campaign_milp(
             fixed_budgets=fixed_budgets,
             planning_dates=planning_dates,
             train=train,
+            gating_panel=gating_panel,
         )
     segments = build_segment_list(candidates)
     enriched = build_piecewise_coeffs(panel, segments, _prepare_linear_coeffs(config, coeffs, candidates), config.piecewise_budget_knots)
@@ -85,6 +87,7 @@ def solve_piecewise_campaign_milp(
             fixed_budgets=fixed_budgets,
             train=train,
             solver_coeffs=enriched,
+            gating_panel=gating_panel,
         )
     except Exception as exc:
         print(f"[Warn] Piecewise solve failed ({exc}); falling back to linear.")
@@ -101,4 +104,5 @@ def solve_piecewise_campaign_milp(
             fixed_budgets=fixed_budgets,
             planning_dates=planning_dates,
             train=train,
+            gating_panel=gating_panel,
         )

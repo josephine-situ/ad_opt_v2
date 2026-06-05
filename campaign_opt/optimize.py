@@ -13,10 +13,13 @@ from campaign_opt.backends.tree_embed import (
     solve_ridge_xgb_embed_campaign_milp,
     solve_ridge_xgb_embed_multiday_campaign_milp,
     solve_tree_embed_campaign_milp,
+    solve_tree_embed_multiday_campaign_milp,
 )
 from campaign_opt.coefficients import export_linear_solver_coeffs
+from campaign_opt.decisions import optimizer_gating_panel
 from campaign_opt.modeling import (
     configured_evaluation_model_name,
+    is_ensemble_candidate,
     refit_optimizer_model,
     warn_if_not_tournament_winner,
 )
@@ -105,30 +108,32 @@ def run_optimizer(
     if dates is None and planning_date is not None:
         dates = [pd.Timestamp(planning_date)]
     multi_day = dates is not None and len(dates) > 1
-    _MULTIDAY_BACKENDS = _LINEAR_BACKENDS | frozenset({"ridge_xgb_embed"})
+    _MULTIDAY_BACKENDS = _LINEAR_BACKENDS | frozenset({"ridge_xgb_embed", "tree_embed"})
     if multi_day or fixed_budgets is not None:
         if backend not in _MULTIDAY_BACKENDS:
             raise ValueError(
                 f"backend {backend!r} does not support multi-day or fixed-budget optimization; "
-                "use strategy two_stage or a linear/ridge_xgb_embed backend."
+                "use a linear, tree_embed, or ridge_xgb_embed backend."
             )
 
     if planning_date is None and (dates is None or len(dates) == 0):
         raise ValueError("planning_date or planning_dates is required")
+
+    plan_date = pd.Timestamp(planning_date) if planning_date is not None else pd.Timestamp(dates[0])
+    gating_panel = optimizer_gating_panel(panel, plan_date)
 
     milp_kwargs = dict(
         fixed_keyword_sets=fixed_keyword_sets,
         fixed_budgets=fixed_budgets,
         planning_dates=dates,
         train=train,
+        gating_panel=gating_panel,
     )
 
     if backend in _LINEAR_BACKENDS:
         coeffs_path = output_dir / "linear_coeffs.json"
         coeffs = export_linear_solver_coeffs(train, config, coeffs_path)
         print(f"[Info] Exported linear coeffs to {coeffs_path}")
-
-    plan_date = pd.Timestamp(planning_date) if planning_date is not None else pd.Timestamp(dates[0])
 
     def _finalize_plan(plan: pd.DataFrame, embed_path: Path | None = None) -> pd.DataFrame:
         if not config.evaluation.apply_observed_budget_floor:
@@ -151,6 +156,7 @@ def run_optimizer(
             plan_date,
             set_features,
             candidates=candidates,
+            gating_panel=gating_panel,
         )
         if write_outputs:
             plan.to_csv(output_dir / "campaign_plan.csv", index=False)
@@ -184,6 +190,26 @@ def run_optimizer(
         embed_path = _fit_and_save_embed_model(
             config, manifest, train, output_dir, tune=tune_optimizer
         )
+        if multi_day:
+            if fixed_budgets:
+                raise ValueError(
+                    "fixed_budgets is not supported with multi-day tree_embed; "
+                    "per-day budgets are optimized jointly in the MILP."
+                )
+            plan = solve_tree_embed_multiday_campaign_milp(
+                config,
+                embed_path,
+                train,
+                candidates,
+                panel,
+                total_budget=total_budget,
+                output_dir=output_dir,
+                planning_dates=dates,
+                write_outputs=write_outputs,
+                fixed_keyword_sets=fixed_keyword_sets,
+                gating_panel=gating_panel,
+            )
+            return _finalize_plan(plan, embed_path)
         plan = solve_tree_embed_campaign_milp(
             config,
             embed_path,
@@ -196,6 +222,7 @@ def run_optimizer(
             write_outputs=write_outputs,
             fixed_keyword_sets=fixed_keyword_sets,
             fixed_budgets=fixed_budgets,
+            gating_panel=gating_panel,
         )
         return _finalize_plan(plan, embed_path)
     if backend == "ridge_xgb_embed":
@@ -219,6 +246,7 @@ def run_optimizer(
                 planning_dates=dates,
                 write_outputs=write_outputs,
                 fixed_keyword_sets=fixed_keyword_sets,
+                gating_panel=gating_panel,
             )
             return _finalize_plan(plan, embed_path)
         plan = solve_ridge_xgb_embed_campaign_milp(
@@ -233,6 +261,7 @@ def run_optimizer(
             write_outputs=write_outputs,
             fixed_keyword_sets=fixed_keyword_sets,
             fixed_budgets=fixed_budgets,
+            gating_panel=gating_panel,
         )
         return _finalize_plan(plan, embed_path)
     raise ValueError(f"Unknown backend: {backend}")

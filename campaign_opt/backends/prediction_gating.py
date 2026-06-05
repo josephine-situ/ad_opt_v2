@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 import gurobipy as gp
+import numpy as np
 import pandas as pd
 from gurobipy import GRB
 
 from campaign_opt.decisions import observed_min_daily_budget
+from campaign_opt.optimizer_prediction import round_budgets_for_floor
 from campaign_opt.schema import CampaignOptConfig
 
 
@@ -97,12 +99,16 @@ def apply_gated_baseline_levels(
     baseline_level_by_key: dict[tuple[str, str], float],
     baseline_budget: float,
     min_by_segment: dict[str, float],
+    *,
+    budget_atol: float = 0.01,
 ) -> dict[tuple[str, str], float]:
     """Zero baseline levels when baseline budget is below observed min for that segment."""
     out: dict[tuple[str, str], float] = {}
+    bb = float(round_budgets_for_floor(np.array([baseline_budget]))[0])
+    atol = max(float(budget_atol), 0.0)
     for (seg, kid), level in baseline_level_by_key.items():
         bmin = float(min_by_segment.get(str(seg), min_by_segment.get(seg, 0.0)))
-        if float(baseline_budget) < bmin:
+        if bmin > 0.0 and bb + atol < bmin:
             out[(seg, kid)] = 0.0
         else:
             out[(seg, kid)] = float(level)
@@ -135,13 +141,15 @@ def gate_level_expr(
     ub = max(float(level_ub), 1e-6)
     m_b = max(float(budget_big_m), 1.0)
     atol = max(float(budget_atol), 0.0)
+    # Cent-aligned activation threshold (matches round_budgets_for_floor + atol in numpy).
+    active_threshold = round(float(budget_min) - atol, 2)
     active = model.addVar(vtype=GRB.BINARY, name=f"{name_prefix}_active")
     # Symmetric bounds so active=1 can represent negative tree/ridge blends above the floor.
     gated = model.addVar(lb=-ub, ub=ub, name=f"{name_prefix}_gated")
     if selection_var is not None:
         model.addConstr(active <= selection_var, name=f"{name_prefix}_sel")
     model.addConstr(
-        x_var >= float(budget_min) - atol - m_b * (1 - active),
+        x_var >= active_threshold - m_b * (1 - active),
         name=f"{name_prefix}_act",
     )
     model.addGenConstrIndicator(
@@ -163,6 +171,7 @@ def gate_pred_vars_if_enabled(
     bounds: dict[str, tuple[float, float]],
     panel: pd.DataFrame,
     *,
+    gating_panel: pd.DataFrame | None = None,
     solver_coeffs: dict[str, Any] | None = None,
     n_planning_days: int = 1,
     calendar_offsets: dict[tuple[str, int], float] | None = None,
@@ -173,9 +182,11 @@ def gate_pred_vars_if_enabled(
 
     Returns ``observed_min_daily_budget`` map (for baseline gating).
     """
-    mins = observed_min_daily_budget(panel, segments)
+    floor_panel = gating_panel if gating_panel is not None else panel
+    mins = observed_min_daily_budget(floor_panel, segments)
     if not config.evaluation.apply_observed_budget_floor:
         return mins
+    floor_atol = float(config.evaluation.budget_floor_atol)
     for seg in segments:
         bmin = mins.get(seg, 0.0)
         if bmin <= 0.0:
@@ -203,6 +214,6 @@ def gate_pred_vars_if_enabled(
             level_ub=level_ub,
             budget_big_m=m_b,
             name_prefix=f"gate_{safe}",
-            budget_atol=float(config.evaluation.budget_floor_atol),
+            budget_atol=floor_atol,
         )
     return mins

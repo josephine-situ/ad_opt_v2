@@ -11,7 +11,7 @@ import pytest
 
 from campaign_opt.backends.milp_core import make_linear_segment_predictor, solve_campaign_milp
 from campaign_opt.backends.prediction_gating import budget_big_m_from_bounds, gate_level_expr
-from campaign_opt.decisions import observed_min_daily_budget
+from campaign_opt.decisions import observed_min_daily_budget, optimizer_gating_panel, panel_before_date
 from campaign_opt.optimizer_prediction import apply_observed_budget_floor
 from campaign_opt.schema import CampaignOptConfig, EvaluationConfig
 
@@ -44,15 +44,36 @@ def test_apply_observed_budget_floor_numpy():
 
 
 def test_budget_floor_atol_treats_gurobi_cent_slop_as_active():
-    """13.529999999999998 vs min 13.53: strict < floors; atol=0.01 does not."""
+    """13.529999999999998 rounds to 13.53 and passes min 13.53 with atol=0.01."""
     levels = np.array([0.72])
     budgets = np.array([13.529999999999998])
     segments = np.array(["A / Broad"])
     mins = {"A / Broad": 13.53}
-    strict = apply_observed_budget_floor(levels, budgets, segments, mins, budget_atol=0.0)
+    strict = apply_observed_budget_floor(
+        levels, np.array([13.519999999999927]), segments, mins, budget_atol=0.0
+    )
     assert strict[0] == 0.0
     loose = apply_observed_budget_floor(levels, budgets, segments, mins, budget_atol=0.01)
     assert loose[0] == pytest.approx(0.72)
+
+
+def test_cent_round_before_floor_treats_displayed_cents_as_active():
+    """13.519999999999927 displays as 13.52 and should pass min 13.53 with atol=0.01."""
+    levels = np.array([0.255748])
+    budgets = np.array([13.519999999999927])
+    segments = np.array(["A / Broad"])
+    mins = {"A / Broad": 13.53}
+    out = apply_observed_budget_floor(levels, budgets, segments, mins, budget_atol=0.01)
+    assert out[0] == pytest.approx(0.255748)
+
+
+def test_cent_round_still_floors_clearly_below_min():
+    levels = np.array([1.0])
+    budgets = np.array([13.51])
+    segments = np.array(["A / Broad"])
+    mins = {"A / Broad": 13.53}
+    out = apply_observed_budget_floor(levels, budgets, segments, mins, budget_atol=0.01)
+    assert out[0] == 0.0
 
 
 def test_gate_level_expr_at_boundary():
@@ -125,3 +146,47 @@ def test_linear_milp_levels_objective_with_floor(tmp_path: Path):
     usa_pred = float(plan.loc[plan["segment"] == seg_a, "milp_pred"].iloc[0])
     if usa_budget < 50.0:
         assert usa_pred == pytest.approx(0.0, abs=1e-4)
+
+
+def test_optimizer_gating_panel_uses_history_before_planning_date():
+    seg = "USA / Phrase; Exact"
+    panel = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-01-01", "2025-06-01"]),
+            "segment": [seg, seg],
+            "daily_budget": [200.0, 120.0],
+        }
+    )
+    gating = optimizer_gating_panel(panel, pd.Timestamp("2025-01-09"))
+    assert len(gating) == 1
+    assert observed_min_daily_budget(gating, [seg])[seg] == pytest.approx(200.0)
+    assert observed_min_daily_budget(panel, [seg])[seg] == pytest.approx(120.0)
+
+
+def test_predict_levels_optimizer_respects_separate_floor_panel():
+    from campaign_opt.optimizer_prediction import predict_levels_optimizer
+
+    seg = "USA / Phrase; Exact"
+    full = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-01-01", "2025-06-01"]),
+            "segment": [seg, seg],
+            "daily_budget": [200.0, 120.0],
+        }
+    )
+    gating = panel_before_date(full, pd.Timestamp("2025-01-09"))
+    rows = pd.DataFrame({"segment": [seg], "daily_budget": [120.0], "clicks": [1.0]})
+
+    class _Stub:
+        feature_cols = ["daily_budget"]
+
+        def predict(self, X):
+            return np.full(len(X), 5.0)
+
+    config = CampaignOptConfig(
+        evaluation=EvaluationConfig(apply_observed_budget_floor=True, budget_floor_atol=0.01)
+    )
+    gated_walkforward = predict_levels_optimizer(_Stub(), rows, full, config, floor_panel=gating)
+    gated_full = predict_levels_optimizer(_Stub(), rows, full, config, floor_panel=full)
+    assert gated_walkforward[0] == 0.0
+    assert gated_full[0] == pytest.approx(5.0)

@@ -24,12 +24,24 @@ from campaign_opt.backends.tree_embedding import (
     get_tree_path_sets,
 )
 from campaign_opt.coefficients import ridge_embed_coeffs
-from campaign_opt.decisions import build_segment_list, candidates_by_segment, region_of_segment
+from campaign_opt.decisions import (
+    build_segment_list,
+    candidates_by_segment,
+    observed_min_daily_budget,
+    region_of_segment,
+)
 from campaign_opt.evaluation import (
     EnsembleModel,
     baseline_levels_for_candidate_sets,
     build_baseline_rows_for_decisions,
+    build_plan_prediction_rows,
     build_segment_decision_rows,
+    feature_rows_at_plan_budgets,
+)
+from campaign_opt.optimizer_prediction import (
+    apply_observed_budget_floor,
+    predict_incremental_optimizer,
+    predict_levels_optimizer,
 )
 from campaign_opt.linear_design import LinearMilpRidgeModel, build_linear_milp_design_matrix
 from campaign_opt.modeling import _prep_xy
@@ -319,20 +331,137 @@ def _max_milp_ensemble_level_diff(
     config: CampaignOptConfig,
     planning_date: pd.Timestamp,
     set_features: pd.DataFrame,
+    panel: pd.DataFrame,
+    *,
+    candidates: pd.DataFrame | None = None,
+    gating_panel: pd.DataFrame | None = None,
 ) -> tuple[float, pd.DataFrame, np.ndarray, np.ndarray]:
     feature_cols = get_context_feature_columns(config.context_features)
     target = config.target
     plan_dec = _plan_decision_frame(plan)
-    decision_rows = build_segment_decision_rows(
-        plan_dec, planning_date, set_features, config.course, feature_cols
+    decision_rows = build_plan_prediction_rows(
+        plan_dec,
+        config,
+        planning_date,
+        set_features,
+        panel,
+        candidates=candidates,
     )
     if target not in decision_rows.columns:
         decision_rows[target] = 0.0
-    expected = ensemble.predict_levels(decision_rows)
+    if config.evaluation.apply_observed_budget_floor:
+        floor_kw = {"floor_panel": gating_panel} if gating_panel is not None else {}
+        expected = predict_levels_optimizer(
+            ensemble, decision_rows, panel, config, **floor_kw
+        )
+    else:
+        expected = ensemble.predict_levels(decision_rows)
     milp = np.clip(pd.to_numeric(plan["milp_pred"], errors="coerce").values, 0, None)
     diff = np.abs(milp - expected)
     max_diff = float(np.nanmax(diff)) if len(diff) else 0.0
     return max_diff, plan_dec, milp, expected
+
+
+def diagnose_plan_sklearn_path_gap(
+    plan: pd.DataFrame,
+    pipeline: Any,
+    config: CampaignOptConfig,
+    planning_date: pd.Timestamp,
+    set_features: pd.DataFrame,
+    panel: pd.DataFrame,
+    candidates: pd.DataFrame,
+    *,
+    tol: float = 0.01,
+    gating_panel: pd.DataFrame | None = None,
+) -> None:
+    """
+    Explain MILP vs sklearn mismatch: embed-row path (MILP-aligned) vs decision-row path.
+    """
+    if plan.empty or "milp_pred" not in plan.columns:
+        return
+    feature_cols = get_context_feature_columns(config.context_features)
+    target = config.target
+    plan_dec = _plan_decision_frame(plan)
+    embed_rows, keys = _build_candidate_feature_rows(
+        candidates, config, planning_date, set_features, panel=panel
+    )
+    embed_path_rows = feature_rows_at_plan_budgets(plan_dec, embed_rows, keys, target)
+    decision_path_rows = build_segment_decision_rows(
+        plan_dec, planning_date, set_features, config.course, feature_cols, panel=panel
+    )
+    if target not in embed_path_rows.columns:
+        embed_path_rows[target] = 0.0
+    if target not in decision_path_rows.columns:
+        decision_path_rows[target] = 0.0
+
+    floor_segments = build_segment_list(candidates)
+    floor_panel = gating_panel if gating_panel is not None else panel
+    mins = observed_min_daily_budget(floor_panel, floor_segments)
+    floor_atol = float(config.evaluation.budget_floor_atol)
+    budgets = plan_dec["daily_budget"].to_numpy()
+    segments = plan_dec["segment"].to_numpy()
+
+    def _gated(raw: np.ndarray) -> np.ndarray:
+        return apply_observed_budget_floor(
+            raw, budgets, segments, mins, budget_atol=floor_atol
+        )
+
+    if isinstance(pipeline, EnsembleModel):
+        raw_embed = pipeline.predict_levels(embed_path_rows)
+        raw_decision = pipeline.predict_levels(decision_path_rows)
+    else:
+        X_embed, _ = _prep_xy(embed_path_rows, target, feature_cols)
+        X_decision, _ = _prep_xy(decision_path_rows, target, feature_cols)
+        raw_embed = np.asarray(pipeline.predict(X_embed), dtype=float)
+        raw_decision = np.asarray(pipeline.predict(X_decision), dtype=float)
+
+    gated_embed = _gated(raw_embed)
+    gated_decision = _gated(raw_decision)
+    milp = pd.to_numeric(plan["milp_pred"], errors="coerce").values
+    ext = pd.to_numeric(plan.get("external_model_pred"), errors="coerce").values
+    diff = np.abs(milp - ext)
+    valid = np.isfinite(diff)
+    if not valid.any():
+        return
+    worst = int(np.where(valid)[0][int(np.argmax(diff))])
+    row = plan_dec.iloc[worst]
+    seg = str(row["segment"])
+    print(
+        f"[Diag] MILP/sklearn gap on {seg!r} "
+        f"(budget={float(row['daily_budget']):.4f}, keyword_set={row['keyword_set_id']!r}):\n"
+        f"  milp_pred={float(milp[worst]):.6g}  external(gated)={float(ext[worst]):.6g}\n"
+        f"  sklearn embed-path: raw={float(raw_embed[worst]):.6g} gated={float(gated_embed[worst]):.6g}\n"
+        f"  sklearn decision-path: raw={float(raw_decision[worst]):.6g} "
+        f"gated={float(gated_decision[worst]):.6g}\n"
+        f"  segment min observed budget={float(mins.get(seg, 0.0)):.4g}"
+    )
+    feat_cols = sorted(set(feature_cols) | {"daily_budget", "days_since_version_start"})
+    e_row = embed_path_rows.iloc[worst]
+    d_row = decision_path_rows.iloc[worst]
+    diffs = []
+    for col in feat_cols:
+        if col not in e_row.index or col not in d_row.index:
+            continue
+        ev, dv = e_row[col], d_row[col]
+        if pd.isna(ev) and pd.isna(dv):
+            continue
+        if isinstance(ev, (int, float)) and isinstance(dv, (int, float)):
+            if not np.isclose(float(ev), float(dv), rtol=0, atol=1e-9):
+                diffs.append(f"    {col}: embed={ev!r} decision={dv!r}")
+        elif str(ev) != str(dv):
+            diffs.append(f"    {col}: embed={ev!r} decision={dv!r}")
+    if diffs:
+        print("  feature diffs (embed vs decision row):\n" + "\n".join(diffs))
+    elif abs(float(gated_embed[worst]) - float(milp[worst])) <= tol:
+        print(
+            "  embed-path gated sklearn matches milp_pred; "
+            "external used decision-path rows (now fixed when candidates are passed)."
+        )
+    elif abs(float(raw_embed[worst]) - float(milp[worst])) > tol:
+        print(
+            "  embed-path raw sklearn still differs from milp_pred "
+            "(tree big-M vs sklearn tolerance at this budget)."
+        )
 
 
 def warn_milp_matches_ensemble_levels(
@@ -341,12 +470,22 @@ def warn_milp_matches_ensemble_levels(
     config: CampaignOptConfig,
     planning_date: pd.Timestamp,
     set_features: pd.DataFrame,
+    panel: pd.DataFrame,
     *,
+    candidates: pd.DataFrame | None = None,
     tol: float = 0.05,
+    gating_panel: pd.DataFrame | None = None,
 ) -> float:
     """Warn if embedded level predictions differ from ``EnsembleModel.predict_levels``."""
     max_diff, plan_dec, milp, expected = _max_milp_ensemble_level_diff(
-        plan, ensemble, config, planning_date, set_features
+        plan,
+        ensemble,
+        config,
+        planning_date,
+        set_features,
+        panel,
+        candidates=candidates,
+        gating_panel=gating_panel,
     )
     if max_diff > tol:
         worst = int(np.nanargmax(np.abs(milp - expected)))
@@ -364,12 +503,14 @@ def assert_milp_matches_ensemble_levels(
     config: CampaignOptConfig,
     planning_date: pd.Timestamp,
     set_features: pd.DataFrame,
+    panel: pd.DataFrame,
     *,
+    candidates: pd.DataFrame | None = None,
     tol: float = 1e-4,
 ) -> None:
     """Raise if embedded level predictions differ from ``EnsembleModel.predict_levels``."""
     max_diff, plan_dec, milp, expected = _max_milp_ensemble_level_diff(
-        plan, ensemble, config, planning_date, set_features
+        plan, ensemble, config, planning_date, set_features, panel, candidates=candidates
     )
     if max_diff > tol:
         worst = int(np.nanargmax(np.abs(milp - expected)))
@@ -481,13 +622,24 @@ def warn_milp_matches_ensemble_plan(
     config: CampaignOptConfig,
     planning_date: pd.Timestamp,
     set_features: pd.DataFrame,
+    panel: pd.DataFrame,
     *,
+    candidates: pd.DataFrame | None = None,
     level_tol: float = 0.05,
     incremental_tol: float = 0.05,
+    gating_panel: pd.DataFrame | None = None,
 ) -> None:
     """Warn when MILP levels / incremental differ from the optimizer ensemble (tree big-M embed)."""
     warn_milp_matches_ensemble_levels(
-        plan, ensemble, config, planning_date, set_features, tol=level_tol
+        plan,
+        ensemble,
+        config,
+        planning_date,
+        set_features,
+        panel,
+        candidates=candidates,
+        tol=level_tol,
+        gating_panel=gating_panel,
     )
     warn_milp_matches_ensemble_incremental(
         plan, ensemble, config, planning_date, set_features, tol=incremental_tol
@@ -501,13 +653,22 @@ def assert_milp_matches_ensemble_plan(
     config: CampaignOptConfig,
     planning_date: pd.Timestamp,
     set_features: pd.DataFrame,
+    panel: pd.DataFrame,
     *,
+    candidates: pd.DataFrame | None = None,
     level_tol: float = 1e-4,
     incremental_tol: float = 1e-4,
 ) -> None:
     """Level and incremental predictions vs the optimizer ensemble (strict; tests)."""
     assert_milp_matches_ensemble_levels(
-        plan, ensemble, config, planning_date, set_features, tol=level_tol
+        plan,
+        ensemble,
+        config,
+        planning_date,
+        set_features,
+        panel,
+        candidates=candidates,
+        tol=level_tol,
     )
     assert_milp_matches_ensemble_incremental(
         plan, ensemble, config, planning_date, set_features, tol=incremental_tol
@@ -604,11 +765,13 @@ def _diagnose_milp_vs_sklearn_at_solved_budgets(
     *,
     w_ridge: float,
     w_xgb: float,
+    gating_panel: pd.DataFrame | None = None,
 ) -> None:
     """Post-solve: compare embed-path sklearn vs validation-path ensemble at solved budgets."""
     feature_cols = get_context_feature_columns(config.context_features)
     target = config.target
     key_to_idx = {k: i for i, k in enumerate(keys)}
+    floor_panel = gating_panel if gating_panel is not None else panel
 
     for _, row in plan.iterrows():
         seg = str(row["segment"])
@@ -637,7 +800,7 @@ def _diagnose_milp_vs_sklearn_at_solved_budgets(
         from campaign_opt.decisions import observed_min_daily_budget
         from campaign_opt.optimizer_prediction import apply_observed_budget_floor
 
-        mins = observed_min_daily_budget(panel, [seg])
+        mins = observed_min_daily_budget(floor_panel, [seg])
         floor_blend = float(
             apply_observed_budget_floor(
                 np.array([blend_embed]),
@@ -681,54 +844,65 @@ def _diagnose_milp_vs_sklearn_at_solved_budgets(
 def _external_incremental_pred_by_segment(
     plan: pd.DataFrame,
     pipeline: Any,
-    train: pd.DataFrame,
+    panel: pd.DataFrame,
     config: CampaignOptConfig,
     planning_date: pd.Timestamp,
     set_features: pd.DataFrame,
+    *,
+    candidates: pd.DataFrame | None = None,
+    gating_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Independent model check: same plan features, returning f(plan) and f(plan)-f(0)."""
-    feature_cols = get_context_feature_columns(config.context_features)
-    target = config.target
-    plan_dec = plan[["segment", "daily_budget", "keyword_set_id"]].copy()
-    plan_dec["segment"] = plan_dec["segment"].astype(str)
-    plan_dec["keyword_set_id"] = plan_dec["keyword_set_id"].astype(str)
-    plan_dec["daily_budget"] = pd.to_numeric(plan_dec["daily_budget"], errors="coerce")
+    """Independent sklearn check: gated f(plan) and f(plan)-f(0), aligned with MILP floor."""
+    plan_dec = _plan_decision_frame(plan)
     segments = plan_dec["segment"].tolist()
-    _ = train  # train no longer needed for plan-matched f(0)
-
-    decision_rows = build_segment_decision_rows(
-        plan_dec, planning_date, set_features, config.course, feature_cols
+    decision_rows = build_plan_prediction_rows(
+        plan_dec,
+        config,
+        planning_date,
+        set_features,
+        panel,
+        candidates=candidates,
     )
     baseline_rows = build_baseline_rows_for_decisions(
         plan_dec,
         planning_date,
         set_features,
         config.course,
-        feature_cols,
+        get_context_feature_columns(config.context_features),
         float(config.evaluation.baseline_budget),
+        panel=panel,
+        config=config,
+        candidates=candidates,
     )
+    target = config.target
     if target not in decision_rows.columns:
         decision_rows[target] = 0.0
     if target not in baseline_rows.columns:
         baseline_rows[target] = 0.0
-    if "region" not in decision_rows.columns:
-        decision_rows["region"] = decision_rows["segment"].astype(str).map(region_of_segment)
-    if "region" not in baseline_rows.columns:
-        baseline_rows["region"] = baseline_rows["segment"].astype(str).map(region_of_segment)
 
-    if isinstance(pipeline, EnsembleModel):
+    if config.evaluation.apply_observed_budget_floor:
+        floor_kw = {"floor_panel": gating_panel} if gating_panel is not None else {}
+        pred_dec = predict_levels_optimizer(
+            pipeline, decision_rows, panel, config, **floor_kw
+        )
+        pred_lift = predict_incremental_optimizer(
+            pipeline, decision_rows, baseline_rows, panel, config, **floor_kw
+        )
+    elif isinstance(pipeline, EnsembleModel):
         pred_dec = pipeline.predict_levels(decision_rows)
-        pred_zero = pipeline.predict_levels(baseline_rows)
+        pred_lift = pipeline.predict_incremental_raw(decision_rows, baseline_rows)
     else:
+        feature_cols = get_context_feature_columns(config.context_features)
         X_dec, _ = _prep_xy(decision_rows, target, feature_cols)
         X_zero, _ = _prep_xy(baseline_rows, target, feature_cols)
         pred_dec = np.asarray(pipeline.predict(X_dec), dtype=float)
         pred_zero = np.asarray(pipeline.predict(X_zero), dtype=float)
+        pred_lift = pred_dec - pred_zero
     return pd.DataFrame(
         {
             "segment": segments,
             "external_model_pred": pred_dec,
-            "pred_over_base": pred_dec - pred_zero,
+            "pred_over_base": pred_lift,
         }
     )
 
@@ -747,6 +921,7 @@ def solve_ridge_xgb_embed_campaign_milp(
     write_outputs: bool = True,
     fixed_keyword_sets: dict[str, str] | None = None,
     fixed_budgets: dict[str, float] | None = None,
+    gating_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Blend ridge (linear MILP coeffs) and XGB (exact tree embed) in the objective."""
     pipeline = joblib.load(model_path)
@@ -899,21 +1074,31 @@ def solve_ridge_xgb_embed_campaign_milp(
         train=train,
         baseline_level_by_key=baseline_level_by_key,
         level_ub_overrides=level_ub_overrides,
+        gating_panel=gating_panel,
     )
     # Post-solve: re-probe embedding at actual solved budgets to localize discrepancy.
     _diagnose_milp_vs_sklearn_at_solved_budgets(
         plan, pipeline, embed_rows, keys, ridge_artifact, xgb_member.pipeline,
         bounds, config, planning_date, set_features, panel,
-        w_ridge=w_ridge, w_xgb=w_xgb,
+        w_ridge=w_ridge, w_xgb=w_xgb, gating_panel=gating_panel,
     )
     # pred_over_base from Gurobi can differ slightly from sklearn on tree embed; use ensemble lift.
     ext_pred = _external_incremental_pred_by_segment(
-        plan, pipeline, train, config, planning_date, set_features
+        plan, pipeline, panel, config, planning_date, set_features,
+        candidates=candidates, gating_panel=gating_panel,
     )
     plan = plan.drop(columns=["external_model_pred", "pred_over_base"], errors="ignore")
     plan = plan.merge(ext_pred, on="segment", how="left")
     warn_milp_matches_ensemble_plan(
-        plan, pipeline, config, planning_date, set_features, level_tol=0.05
+        plan,
+        pipeline,
+        config,
+        planning_date,
+        set_features,
+        panel,
+        candidates=candidates,
+        level_tol=0.05,
+        gating_panel=gating_panel,
     )
     if write_outputs:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -934,6 +1119,7 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
     time_limit: int = 600,
     write_outputs: bool = True,
     fixed_keyword_sets: dict[str, str] | None = None,
+    gating_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Multi-day ridge+XGB embed MILP: shared keyword set selection, per-day budgets.
@@ -962,6 +1148,7 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
     k_map = candidates_by_segment(candidates)
     bounds = historical_budget_bounds(panel, segments)
     bounds = _relax_bounds_for_feasibility(bounds, segments, total_budget)
+    floor_panel = gating_panel if gating_panel is not None else panel
     feature_cols = get_context_feature_columns(config.context_features)
     target = config.target
 
@@ -1146,7 +1333,7 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
         )
         from campaign_opt.decisions import observed_min_daily_budget
 
-        min_budgets = observed_min_daily_budget(panel, segments)
+        min_budgets = observed_min_daily_budget(floor_panel, segments)
         budget_atol = float(config.evaluation.budget_floor_atol)
         for t in range(n_days):
             for seg in segments:
@@ -1182,9 +1369,12 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
             )
             from campaign_opt.decisions import observed_min_daily_budget
 
-            min_budgets = observed_min_daily_budget(panel, segments)
+            min_budgets = observed_min_daily_budget(floor_panel, segments)
             baseline_for_obj = apply_gated_baseline_levels(
-                baseline_level_by_key, baseline_budget, min_budgets
+                baseline_level_by_key,
+                baseline_budget,
+                min_budgets,
+                budget_atol=float(config.evaluation.budget_floor_atol),
             )
         baseline_terms = []
         for seg in segments:
@@ -1287,6 +1477,341 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
     return plan
 
 
+def solve_tree_embed_multiday_campaign_milp(
+    config: CampaignOptConfig,
+    model_path: Path,
+    train: pd.DataFrame,
+    candidates: pd.DataFrame,
+    panel: pd.DataFrame,
+    *,
+    total_budget: float,
+    output_dir: Path,
+    planning_dates: list[pd.Timestamp],
+    time_limit: int = 100,
+    write_outputs: bool = True,
+    fixed_keyword_sets: dict[str, str] | None = None,
+    gating_panel: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """
+    Multi-day tree-embed MILP: shared keyword set selection, per-day budgets.
+
+    Multi-day variant of :func:`solve_tree_embed_campaign_milp` with shared keyword-set
+    binaries and per-day budget variables. Used as stage 1 of the two-stage backtest
+    when ``optimizer_winner`` is a tree model (e.g. xgboost).
+    """
+    from campaign_opt.decisions import parse_regional_order
+
+    pipeline = joblib.load(model_path)
+    if isinstance(pipeline, EnsembleModel):
+        raise TypeError(
+            f"Expected a single tree pipeline at {model_path}, got EnsembleModel; "
+            "use solve_ridge_xgb_embed_multiday_campaign_milp for ensemble_ridge_xgb."
+        )
+
+    set_features = build_keyword_set_feature_table(config.course)
+    segments = build_segment_list(candidates)
+    k_map = candidates_by_segment(candidates)
+    bounds = historical_budget_bounds(panel, segments)
+    bounds = _relax_bounds_for_feasibility(bounds, segments, total_budget)
+    floor_panel = gating_panel if gating_panel is not None else panel
+    feature_cols = get_context_feature_columns(config.context_features)
+    target = config.target
+
+    n_days = len(planning_dates)
+    print(
+        f"[Info] Multi-day tree-embed MILP: {n_days} days, "
+        f"{len(segments)} segments, budget_cap={total_budget}"
+    )
+
+    level_ub_overrides: dict[str, float] = {}
+    tree_paths_probe, _, _ = get_tree_path_sets(pipeline)
+    budget_idx_probe, budget_mean_probe, budget_scale_probe = _budget_affine(pipeline)
+    embed_rows_probe, keys_probe = _build_candidate_feature_rows(
+        candidates, config, pd.Timestamp(planning_dates[0]), set_features, panel=panel
+    )
+    for i, (seg, kid) in enumerate(keys_probe):
+        lo, hi = bounds[seg]
+        probe_budgets = [lo, hi, (lo + hi) / 2]
+        r0 = embed_rows_probe.iloc[i: i + 1].copy()
+        r0["daily_budget"] = 0.0
+        if target not in r0.columns:
+            r0[target] = 0.0
+        X0, _ = _prep_xy(r0, target, feature_cols)
+        x_proc_0 = np.asarray(
+            pipeline[:-1].transform(X0), dtype=np.float32
+        ).ravel()
+        bps = _raw_budget_breakpoints_from_trees(
+            tree_paths_probe, x_proc_0, budget_idx_probe,
+            budget_mean_probe, budget_scale_probe, lo, hi
+        )
+        probe_budgets.extend(bps)
+        max_pred = 0.0
+        for b in probe_budgets:
+            b = max(lo, min(hi, float(b)))
+            r = embed_rows_probe.iloc[i: i + 1].copy()
+            r["daily_budget"] = b
+            if target not in r.columns:
+                r[target] = 0.0
+            X_b, _ = _prep_xy(r, target, feature_cols)
+            max_pred = max(max_pred, float(pipeline.predict(X_b)[0]))
+        cur = level_ub_overrides.get(seg, 0.0)
+        level_ub_overrides[seg] = max(cur, max_pred * 1.1)
+
+    baseline_budget = float(config.evaluation.baseline_budget)
+    baseline_level_by_key: dict[tuple[str, str], float] = {}
+    for plan_date in planning_dates:
+        day_baselines = baseline_levels_for_candidate_sets(
+            pipeline, k_map, config, pd.Timestamp(plan_date), set_features,
+            baseline_budget=baseline_budget,
+        )
+        for key, val in day_baselines.items():
+            baseline_level_by_key[key] = baseline_level_by_key.get(key, 0.0) + val
+
+    model = gp.Model("campaign_tree_embed_multiday")
+    model.setParam("OutputFlag", 1)
+    model.setParam("TimeLimit", time_limit)
+
+    y_vars: dict[tuple[str, str], Any] = {}
+    for seg in segments:
+        for k in k_map.get(seg, []):
+            y_vars[(seg, k)] = model.addVar(vtype=GRB.BINARY, name=f"y_{seg}_{k}")
+        model.addConstr(
+            gp.quicksum(y_vars[(seg, k)] for k in k_map.get(seg, [])) == 1,
+            name=f"one_set_{seg}",
+        )
+    if fixed_keyword_sets:
+        for seg in segments:
+            chosen = str(fixed_keyword_sets.get(seg, ""))
+            for k in k_map.get(seg, []):
+                fix_val = 1.0 if str(k) == chosen else 0.0
+                y_vars[(seg, k)].lb = fix_val
+                y_vars[(seg, k)].ub = fix_val
+
+    x_day_vars: dict[tuple[str, int], Any] = {}
+    for t in range(n_days):
+        for seg in segments:
+            lo, hi = bounds[seg]
+            x_day_vars[(seg, t)] = model.addVar(
+                lb=lo, ub=hi, name=f"x_{seg}_d{t}"
+            )
+        model.addConstr(
+            gp.quicksum(x_day_vars[(seg, t)] for seg in segments) <= total_budget,
+            name=f"budget_day_{t}",
+        )
+
+    regional_order = parse_regional_order(config.constraints)
+    if len(regional_order) >= 2:
+        for t in range(n_days):
+            region_spend: dict[str, Any] = {}
+            for region in regional_order:
+                segs = [s for s in segments if region_of_segment(s) == region]
+                if segs:
+                    region_spend[region] = gp.quicksum(x_day_vars[(s, t)] for s in segs)
+            for i in range(len(regional_order) - 1):
+                r_hi, r_lo = regional_order[i], regional_order[i + 1]
+                if r_hi in region_spend and r_lo in region_spend:
+                    model.addConstr(
+                        region_spend[r_hi] >= region_spend[r_lo],
+                        name=f"order_{r_hi}_{r_lo}_d{t}",
+                    )
+
+    day_pred_exprs: list[dict[tuple[str, str], Any]] = []
+    for t, plan_date in enumerate(planning_dates):
+        plan_date = pd.Timestamp(plan_date)
+        embed_rows_t, keys_t = _build_candidate_feature_rows(
+            candidates, config, plan_date, set_features, panel=panel
+        )
+        x_vars_t = {seg: x_day_vars[(seg, t)] for seg in segments}
+        tree_pred_t = _embed_candidate_predictions(
+            model, pipeline, embed_rows_t, keys_t, x_vars_t, bounds, config,
+            name_suffix=f"_d{t}",
+        )
+        day_pred_exprs.append(tree_pred_t)
+
+    always_pruned: set[tuple[str, str]] = set()
+    for seg in segments:
+        for k in k_map.get(seg, []):
+            key = (seg, str(k))
+            if all(key not in day_pred_exprs[t] for t in range(n_days)):
+                always_pruned.add(key)
+                model.addConstr(y_vars[(seg, k)] == 0, name=f"pruned_{seg}_{k}")
+        if not any(
+            (seg, str(k)) not in always_pruned for k in k_map.get(seg, [])
+        ):
+            raise RuntimeError(f"Segment {seg!r}: all keyword sets pruned on every day")
+
+    seg_day_preds: dict[tuple[str, int], Any] = {}
+    for t in range(n_days):
+        tree_pred_t = day_pred_exprs[t]
+        for seg in segments:
+            seg_pred = model.addVar(
+                lb=-GRB.INFINITY, name=f"seg_pred_{seg.replace(' ', '_')}_d{t}"
+            )
+            for k in k_map.get(seg, []):
+                key = (seg, str(k))
+                if key in tree_pred_t:
+                    model.addGenConstrIndicator(
+                        y_vars[(seg, k)], 1,
+                        seg_pred - tree_pred_t[key], GRB.EQUAL, 0.0,
+                        name=f"ind_{seg.replace(' ', '_')}_{k}_d{t}",
+                    )
+                else:
+                    model.addGenConstrIndicator(
+                        y_vars[(seg, k)], 1,
+                        seg_pred, GRB.EQUAL, 0.0,
+                        name=f"ind_{seg.replace(' ', '_')}_{k}_d{t}_pruned",
+                    )
+            seg_day_preds[(seg, t)] = seg_pred
+
+    if config.evaluation.apply_observed_budget_floor:
+        from campaign_opt.backends.prediction_gating import (
+            budget_big_m_from_bounds,
+            gate_level_expr,
+        )
+        from campaign_opt.decisions import observed_min_daily_budget
+
+        min_budgets = observed_min_daily_budget(floor_panel, segments)
+        budget_atol = float(config.evaluation.budget_floor_atol)
+        for t in range(n_days):
+            for seg in segments:
+                bmin = float(min_budgets.get(seg, 0.0))
+                if bmin <= 0.0:
+                    continue
+                lo, hi = bounds[seg]
+                level_ub = float(level_ub_overrides.get(seg, 1.0))
+                m_b = budget_big_m_from_bounds(lo, hi)
+                safe = str(seg).replace(" ", "_").replace("/", "_")
+                seg_day_preds[(seg, t)] = gate_level_expr(
+                    model,
+                    seg_day_preds[(seg, t)],
+                    x_day_vars[(seg, t)],
+                    budget_min=bmin,
+                    level_ub=level_ub,
+                    budget_big_m=m_b,
+                    name_prefix=f"gate_{safe}_d{t}",
+                    budget_atol=budget_atol,
+                )
+
+    objective_mode = str(config.evaluation.objective or "incremental").strip().lower()
+    level_sum = gp.quicksum(
+        seg_day_preds[(seg, t)] for seg in segments for t in range(n_days)
+    )
+
+    if objective_mode == "incremental":
+        baseline_for_obj = baseline_level_by_key
+        if config.evaluation.apply_observed_budget_floor:
+            from campaign_opt.backends.prediction_gating import (
+                apply_gated_baseline_levels,
+            )
+            from campaign_opt.decisions import observed_min_daily_budget
+
+            min_budgets = observed_min_daily_budget(floor_panel, segments)
+            baseline_for_obj = apply_gated_baseline_levels(
+                baseline_level_by_key,
+                baseline_budget,
+                min_budgets,
+                budget_atol=float(config.evaluation.budget_floor_atol),
+            )
+        baseline_terms = []
+        for seg in segments:
+            for k in k_map.get(seg, []):
+                key = (seg, str(k))
+                if key not in y_vars:
+                    continue
+                f0 = float(baseline_for_obj.get(key, 0.0))
+                baseline_terms.append(f0 * y_vars[key])
+        if baseline_terms:
+            objective_expr = level_sum - gp.quicksum(baseline_terms)
+        else:
+            objective_expr = level_sum
+    else:
+        objective_expr = level_sum
+
+    penalty = float((config.constraints or {}).get("budget_tiebreak_penalty", 1e-8))
+    if penalty > 0:
+        budget_sum = gp.quicksum(
+            x_day_vars[(seg, t)] for seg in segments for t in range(n_days)
+        )
+        model.setObjective(objective_expr - penalty * budget_sum, GRB.MAXIMIZE)
+    else:
+        model.setObjective(objective_expr, GRB.MAXIMIZE)
+
+    model.update()
+    print(
+        f"[Info] Multi-day MILP ({objective_mode}): "
+        f"{model.NumVars} vars, {model.NumConstrs} constrs "
+        f"({model.NumIntVars} integer)",
+        flush=True,
+    )
+    model.optimize()
+
+    if model.Status not in (GRB.OPTIMAL, GRB.SUBOPTIMAL, GRB.TIME_LIMIT):
+        status_name = {
+            GRB.INFEASIBLE: "INFEASIBLE",
+            GRB.INF_OR_UNBD: "INFEASIBLE_OR_UNBOUNDED",
+            GRB.UNBOUNDED: "UNBOUNDED",
+        }.get(int(model.Status), str(model.Status))
+        raise RuntimeError(
+            f"Multi-day Gurobi solve failed: {status_name} ({int(model.Status)})"
+        )
+
+    has_solution = model.SolCount > 0
+    rows = []
+    for seg in segments:
+        if fixed_keyword_sets and seg in fixed_keyword_sets:
+            chosen_k = str(fixed_keyword_sets[seg])
+        elif has_solution:
+            chosen_k = next(
+                (k for k in k_map.get(seg, []) if y_vars[(seg, k)].X > 0.5),
+                None,
+            )
+        else:
+            chosen_k = None
+
+        day_budgets = []
+        for t in range(n_days):
+            day_budgets.append(
+                float(x_day_vars[(seg, t)].X) if has_solution else 0.0
+            )
+        avg_budget = sum(day_budgets) / n_days if n_days else 0.0
+
+        rows.append({
+            "segment": seg,
+            "region": region_of_segment(seg),
+            "daily_budget": avg_budget,
+            "keyword_set_id": chosen_k,
+            "n_planning_days": n_days,
+            "day_budgets": json.dumps(day_budgets),
+        })
+
+    plan = pd.DataFrame(rows)
+
+    if write_outputs and output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plan.to_csv(output_dir / "campaign_plan.csv", index=False)
+        status_payload: dict[str, Any] = {
+            "status": int(model.Status),
+            "obj_val": float(model.ObjVal) if has_solution else None,
+            "objective": objective_mode,
+            "n_days": n_days,
+            "n_segments": len(segments),
+            "total_budget_per_day": total_budget,
+        }
+        if has_solution and len(plan):
+            bud = pd.to_numeric(plan["daily_budget"], errors="coerce")
+            status_payload["avg_daily_budget_sum"] = float(bud.sum())
+            status_payload["tiebreak_penalty"] = penalty
+        with open(output_dir / "solver_status.json", "w", encoding="utf-8") as f:
+            json.dump(status_payload, f, indent=2)
+
+    print(
+        f"[Info] Multi-day MILP solved: status={model.Status}, "
+        f"obj={model.ObjVal if has_solution else 'N/A'}"
+    )
+    return plan
+
+
 def solve_tree_embed_campaign_milp(
     config: CampaignOptConfig,
     model_path: Path,
@@ -1301,6 +1826,7 @@ def solve_tree_embed_campaign_milp(
     write_outputs: bool = True,
     fixed_keyword_sets: dict[str, str] | None = None,
     fixed_budgets: dict[str, float] | None = None,
+    gating_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Embed winner tree model in Gurobi via big-M leaf formulation."""
     pipeline = joblib.load(model_path)
@@ -1396,18 +1922,51 @@ def solve_tree_embed_campaign_milp(
         train=train,
         baseline_level_by_key=baseline_level_by_key,
         level_ub_overrides=level_ub_overrides,
+        gating_panel=gating_panel,
     )
     ext_pred = _external_incremental_pred_by_segment(
-        plan, pipeline, train, config, planning_date, set_features
+        plan,
+        pipeline,
+        panel,
+        config,
+        planning_date,
+        set_features,
+        candidates=candidates,
+        gating_panel=gating_panel,
     )
     plan = plan.drop(columns=["external_model_pred", "pred_over_base"], errors="ignore")
     plan = plan.merge(ext_pred, on="segment", how="left")
     if isinstance(pipeline, EnsembleModel):
         warn_milp_matches_ensemble_plan(
-            plan, pipeline, config, planning_date, set_features, level_tol=0.05
+            plan,
+            pipeline,
+            config,
+            planning_date,
+            set_features,
+            panel,
+            candidates=candidates,
+            level_tol=0.05,
+            gating_panel=gating_panel,
         )
     else:
         _warn_if_milp_external_pred_mismatch(plan, tol=0.05)
+        max_diff = _max_milp_external_level_diff(plan)
+        if (
+            max_diff is not None
+            and max_diff > float(config.evaluation.milp_external_level_tol)
+            and candidates is not None
+        ):
+            diagnose_plan_sklearn_path_gap(
+                plan,
+                pipeline,
+                config,
+                planning_date,
+                set_features,
+                panel,
+                candidates,
+                tol=float(config.evaluation.milp_external_level_tol),
+                gating_panel=gating_panel,
+            )
     if write_outputs:
         output_dir.mkdir(parents=True, exist_ok=True)
         plan.to_csv(output_dir / "campaign_plan.csv", index=False)

@@ -63,6 +63,20 @@ def test_actual_campaign_budget_total():
     assert total_excl == 300.0
 
 
+def test_actual_campaign_budget_total_sums_segments_not_regional_median():
+    """Two segments per region: cap is sum of segment budgets, not median(region)."""
+    panel = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-01-08"] * 2),
+            "region": ["A", "A"],
+            "segment": ["A / Broad", "A / Phrase; Exact"],
+            "match_types": ["Broad", "Phrase; Exact"],
+            "daily_budget": [13.53, 50.0],
+        }
+    )
+    assert actual_campaign_budget_total(panel, pd.Timestamp("2025-01-08")) == pytest.approx(63.53)
+
+
 def test_load_fit_manifest_requires_optimizer_winner():
     config = CampaignOptConfig(exp_name="t", course="sys_think")
     with pytest.raises(ValueError, match="optimizer_winner"):

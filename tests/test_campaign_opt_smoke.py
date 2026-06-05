@@ -12,7 +12,7 @@ import pytest
 from campaign_opt.coefficients import export_linear_solver_coeffs
 from campaign_opt.features import prepare_modeling_data, train_holdout_split
 from campaign_opt.modeling import run_tournament
-from campaign_opt.optimize import _resolve_backend, _resolve_optimizer_winner
+from campaign_opt.optimize import _resolve_backend, require_optimizer_winner
 from campaign_opt.schema import CampaignOptConfig, ModelPolicy, load_campaign_config
 
 
@@ -23,7 +23,7 @@ def test_optimizer_winner_resolves_tree_embed_backend():
         model_policy=ModelPolicy(optimizer_winner="xgboost"),
     )
     manifest = {"winner": "power_level", "backend": "piecewise_linear"}
-    assert _resolve_optimizer_winner(config, manifest) == "xgboost"
+    assert require_optimizer_winner(config) == "xgboost"
     assert _resolve_backend(config, manifest) == "tree_embed"
 
 

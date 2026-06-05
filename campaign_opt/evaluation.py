@@ -13,13 +13,17 @@ import pandas as pd
 from sklearn.metrics import mean_squared_error, r2_score
 
 from campaign_opt.decisions import build_segment_list, observed_min_daily_budget, region_of_segment
+from campaign_opt.features import train_holdout_split
 from campaign_opt.modeling import (
     _build_preprocessor,
     _cv_rmse_member_weights,
     _prep_xy,
+    FITTERS,
     base_tournament_candidates,
     configured_evaluation_model_name,
+    hyperparams_from_manifest,
     pipeline_feature_overview_lines,
+    report_model_fit_diagnostics,
     warn_if_not_tournament_winner,
 )
 from campaign_opt.schema import CampaignOptConfig
@@ -337,9 +341,10 @@ def fit_single_model_evaluation(
     Separate from the MILP optimizer (``optimizer_*.joblib``): the optimizer is refit
     walk-forward on ``date < t`` each day; this model is typically fit **once** on the
     full modeling panel passed into the backtest (all rows in ``fit_df``).
-    """
-    from campaign_opt.modeling import hyperparams_from_manifest
 
+    Diagnostics (holdout R², SHAP) use the same train/holdout split and reporting as
+    ``run_tournament``; the returned model is always refit on all of ``fit_df``.
+    """
     from campaign_opt.modeling import (
         ENSEMBLE_MEMBER_GROUPS,
         fit_ensemble_tournament,
@@ -350,13 +355,26 @@ def fit_single_model_evaluation(
     feature_cols = feature_cols or manifest.get("feature_cols") or get_context_feature_columns(
         config.context_features
     )
+    holdout_days = config.model_policy.validation.holdout_days
+    train, holdout = train_holdout_split(fit_df, holdout_days)
+
     if model_name == "ensemble_ridge_xgb":
         member_names = ENSEMBLE_MEMBER_GROUPS[model_name]
         member_hp = {
             m: hyperparams_from_manifest(manifest, m) or {}
             for m in member_names
         }
-        ensemble = fit_ensemble_tournament(
+        diag = fit_ensemble_tournament(
+            model_name,
+            member_names,
+            train,
+            holdout,
+            config,
+            feature_cols,
+            member_hyperparams=member_hp,
+        )
+        report_model_fit_diagnostics(diag, train, config, feature_cols)
+        return fit_ensemble_tournament(
             model_name,
             member_names,
             fit_df,
@@ -365,19 +383,18 @@ def fit_single_model_evaluation(
             feature_cols,
             member_hyperparams=member_hp,
         ).pipeline
-        for member in ensemble.members:
-            for line in pipeline_feature_overview_lines(member.pipeline):
-                print(line)
-        return ensemble
     if is_ensemble_candidate(model_name):
         raise ValueError(f"Evaluation model {model_name!r} is not supported for plan_vs_actual")
     hp = hyperparams_from_manifest(manifest, model_name)
+    fitter = FITTERS.get(model_name)
+    if fitter is None:
+        raise ValueError(f"Unknown evaluation model: {model_name!r}")
+    diag = fitter(train, holdout, config, feature_cols, hyperparams=hp)
+    report_model_fit_diagnostics(diag, train, config, feature_cols)
     spec = get_train_spec(model_name, hp)
     if spec is None:
         raise ValueError(f"Unknown evaluation model: {model_name!r}")
     member = fit_member_on_train(spec, fit_df, config, feature_cols, hyperparams=hp)
-    for line in pipeline_feature_overview_lines(member.pipeline):
-        print(line)
     return EnsembleModel(
         members=[member],
         feature_cols=feature_cols,
@@ -573,6 +590,20 @@ def baseline_levels_for_candidate_sets(
     }
 
 
+def _raw_predict_levels(
+    model: EnsembleModel | Any,
+    rows: pd.DataFrame,
+    *,
+    target: str,
+    feature_cols: list[str],
+) -> np.ndarray:
+    """Unfloored level predictions for ensemble or single sklearn pipeline."""
+    if isinstance(model, EnsembleModel):
+        return model.predict_levels(rows)
+    X, _ = _prep_xy(rows, target, feature_cols)
+    return np.asarray(model.predict(X), dtype=float)
+
+
 def build_segment_decision_rows(
     decisions: pd.DataFrame,
     planning_date: pd.Timestamp,
@@ -627,13 +658,86 @@ def build_baseline_rows_for_decisions(
     course: str,
     feature_cols: list[str],
     baseline_budget: float,
+    *,
+    panel: pd.DataFrame | None = None,
+    config: CampaignOptConfig | None = None,
+    candidates: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """f(0): ``baseline_budget`` with each row's ``keyword_set_id`` (plan or market campaign)."""
     base_dec = decisions[["segment", "keyword_set_id"]].copy()
     base_dec["segment"] = base_dec["segment"].astype(str)
     base_dec["keyword_set_id"] = base_dec["keyword_set_id"].astype(str)
     base_dec["daily_budget"] = float(baseline_budget)
-    return build_segment_decision_rows(base_dec, planning_date, set_features, course, feature_cols)
+    if config is not None:
+        return build_plan_prediction_rows(
+            base_dec,
+            config,
+            planning_date,
+            set_features,
+            panel if panel is not None else pd.DataFrame(),
+            candidates=candidates,
+        )
+    return build_segment_decision_rows(
+        base_dec, planning_date, set_features, course, feature_cols, panel=panel
+    )
+
+
+def feature_rows_at_plan_budgets(
+    plan_dec: pd.DataFrame,
+    embed_rows: pd.DataFrame,
+    keys: list[tuple[str, str]],
+    target: str,
+) -> pd.DataFrame:
+    """One feature row per plan decision using the tree-MILP embed row template."""
+    key_to_idx = {k: i for i, k in enumerate(keys)}
+    chunks: list[pd.DataFrame] = []
+    for _, dec in plan_dec.iterrows():
+        seg = str(dec["segment"])
+        kid = str(dec["keyword_set_id"])
+        key = (seg, kid)
+        if key not in key_to_idx:
+            raise KeyError(f"Plan keyword set {key!r} not in embed candidate keys")
+        row = embed_rows.iloc[key_to_idx[key]: key_to_idx[key] + 1].copy()
+        row["daily_budget"] = float(dec["daily_budget"])
+        if target not in row.columns:
+            row[target] = 0.0
+        chunks.append(row)
+    return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
+
+
+def build_plan_prediction_rows(
+    plan_dec: pd.DataFrame,
+    config: CampaignOptConfig,
+    planning_date: pd.Timestamp,
+    set_features: pd.DataFrame,
+    panel: pd.DataFrame,
+    *,
+    candidates: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """
+    Feature rows for post-solve sklearn checks.
+
+    When ``candidates`` is provided, rows match the tree embed MILP path
+    (``_build_candidate_feature_rows`` + solved budgets). Otherwise falls back
+    to ``build_segment_decision_rows``.
+    """
+    feature_cols = get_context_feature_columns(config.context_features)
+    target = config.target
+    if candidates is not None and not candidates.empty:
+        from campaign_opt.backends.tree_embed import _build_candidate_feature_rows
+
+        embed_rows, keys = _build_candidate_feature_rows(
+            candidates, config, planning_date, set_features, panel=panel
+        )
+        return feature_rows_at_plan_budgets(plan_dec, embed_rows, keys, target)
+    return build_segment_decision_rows(
+        plan_dec,
+        planning_date,
+        set_features,
+        config.course,
+        feature_cols,
+        panel=panel,
+    )
 
 
 def _predict_levels_for_scoring(
@@ -641,12 +745,19 @@ def _predict_levels_for_scoring(
     rows: pd.DataFrame,
     panel: pd.DataFrame,
     config: CampaignOptConfig,
+    *,
+    floor_panel: pd.DataFrame | None = None,
 ) -> np.ndarray:
     if config.evaluation.apply_observed_budget_floor:
         from campaign_opt.optimizer_prediction import predict_levels_optimizer
 
-        return predict_levels_optimizer(model, rows, panel, config)
-    return model.predict_levels(rows)
+        return predict_levels_optimizer(
+            model, rows, panel, config, floor_panel=floor_panel
+        )
+    feature_cols = (
+        model.feature_cols if isinstance(model, EnsembleModel) else get_context_feature_columns(config.context_features)
+    )
+    return _raw_predict_levels(model, rows, target=config.target, feature_cols=feature_cols)
 
 
 def _predict_incremental_raw_for_scoring(
@@ -655,11 +766,15 @@ def _predict_incremental_raw_for_scoring(
     baseline_rows: pd.DataFrame,
     panel: pd.DataFrame,
     config: CampaignOptConfig,
+    *,
+    floor_panel: pd.DataFrame | None = None,
 ) -> np.ndarray:
     if config.evaluation.apply_observed_budget_floor:
         from campaign_opt.optimizer_prediction import predict_incremental_optimizer
 
-        return predict_incremental_optimizer(model, decision_rows, baseline_rows, panel, config)
+        return predict_incremental_optimizer(
+            model, decision_rows, baseline_rows, panel, config, floor_panel=floor_panel
+        )
     return model.predict_incremental_raw(decision_rows, baseline_rows)
 
 
@@ -673,6 +788,7 @@ def add_optimizer_plan_columns(
     *,
     candidates: pd.DataFrame | None = None,
     level_tol: float | None = None,
+    gating_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Attach gated ``external_model_pred`` / ``pred_over_base`` and warn on MILP mismatch.
@@ -701,8 +817,13 @@ def add_optimizer_plan_columns(
     plan_dec["keyword_set_id"] = plan_dec["keyword_set_id"].astype(str)
     plan_dec["daily_budget"] = pd.to_numeric(plan_dec["daily_budget"], errors="coerce")
 
-    decision_rows = build_segment_decision_rows(
-        plan_dec, planning_date, set_features, config.course, feature_cols, panel=panel
+    decision_rows = build_plan_prediction_rows(
+        plan_dec,
+        config,
+        planning_date,
+        set_features,
+        panel,
+        candidates=candidates,
     )
     baseline_rows = build_baseline_rows_for_decisions(
         plan_dec,
@@ -711,6 +832,9 @@ def add_optimizer_plan_columns(
         config.course,
         feature_cols,
         float(config.evaluation.baseline_budget),
+        panel=panel,
+        config=config,
+        candidates=candidates,
     )
     if target not in decision_rows.columns:
         decision_rows[target] = 0.0
@@ -725,10 +849,12 @@ def add_optimizer_plan_columns(
         if candidates is not None and not candidates.empty
         else sorted(plan_dec["segment"].astype(str).unique().tolist())
     )
-    min_budget_by_seg = observed_min_daily_budget(panel, floor_segments)
+    min_budget_by_seg = observed_min_daily_budget(
+        gating_panel if gating_panel is not None else panel, floor_segments
+    )
 
-    raw_dec = model.predict_levels(decision_rows)
-    raw_zero = model.predict_levels(baseline_rows)
+    raw_dec = _raw_predict_levels(model, decision_rows, target=target, feature_cols=feature_cols)
+    raw_zero = _raw_predict_levels(model, baseline_rows, target=target, feature_cols=feature_cols)
     floor_atol = float(config.evaluation.budget_floor_atol)
     pred_dec = apply_observed_budget_floor(
         raw_dec,
@@ -769,6 +895,20 @@ def add_optimizer_plan_columns(
                     "(per-segment level summed in objective; 0 below min observed budget): "
                     f"max|milp_pred - external_model_pred| = {max_diff:.6g} > {tol}"
                 )
+                if candidates is not None and not candidates.empty:
+                    from campaign_opt.backends.tree_embed import diagnose_plan_sklearn_path_gap
+
+                    diagnose_plan_sklearn_path_gap(
+                        out,
+                        model,
+                        config,
+                        planning_date,
+                        set_features,
+                        panel,
+                        candidates,
+                        tol=tol,
+                        gating_panel=gating_panel,
+                    )
     return out
 
 
@@ -783,6 +923,7 @@ def compare_plan_and_actual(
     *,
     market_ensemble: EnsembleModel | None = None,
     scoring_panel: pd.DataFrame | None = None,
+    floor_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Score optimizer plan vs historical market campaigns on this day.
@@ -790,6 +931,11 @@ def compare_plan_and_actual(
     Uses ``ensemble`` for optimizer plan rows. Market rows use ``market_ensemble`` when
     provided (defaults to ``ensemble``), so panel counterfactuals stay stable when the
     plan scorer is a wider tournament ensemble.
+
+    Walk-forward ``scoring_panel`` supplies feature/version context; ``floor_panel`` (when
+    set) supplies observed-min budget floors — typically the full campaign panel so
+    evaluation gating matches all historical spend levels.
+
       - ``pred_lift``: f(plan budget, plan keyword set) - f(baseline_budget, plan keyword set)
       - ``actual_model_lift``: f(actual campaign budget, actual keyword set)
         - f(baseline_budget, actual keyword set) on panel campaign rows
@@ -799,7 +945,8 @@ def compare_plan_and_actual(
     reference. Market rows use ``row_kind='market'``.
     """
     target = config.target
-    panel = scoring_panel if scoring_panel is not None else train
+    feature_panel = scoring_panel if scoring_panel is not None else train
+    floor_panel = floor_panel if floor_panel is not None else feature_panel
     market_model = market_ensemble or ensemble
     market_dec = actual_decisions_by_segment(day_df)
     if market_dec.empty:
@@ -819,17 +966,21 @@ def compare_plan_and_actual(
         ensemble.baseline_budget,
     )
     plan_rows = build_segment_decision_rows(
-        plan_dec, planning_date, set_features, config.course, ensemble.feature_cols, panel=panel
+        plan_dec, planning_date, set_features, config.course, ensemble.feature_cols, panel=feature_panel
     )
 
     out = plan_dec.copy()
     out["row_kind"] = "plan"
     out["pred_lift_raw"] = _predict_incremental_raw_for_scoring(
-        ensemble, plan_rows, plan_baseline_rows, panel, config
+        ensemble, plan_rows, plan_baseline_rows, feature_panel, config, floor_panel=floor_panel
     )
     out["pred_lift"] = np.clip(out["pred_lift_raw"], 0, None)
-    out["f_plan_level"] = _predict_levels_for_scoring(ensemble, plan_rows, panel, config)
-    out["f_zero"] = _predict_levels_for_scoring(ensemble, plan_baseline_rows, panel, config)
+    out["f_plan_level"] = _predict_levels_for_scoring(
+        ensemble, plan_rows, feature_panel, config, floor_panel=floor_panel
+    )
+    out["f_zero"] = _predict_levels_for_scoring(
+        ensemble, plan_baseline_rows, feature_panel, config, floor_panel=floor_panel
+    )
     out["actual_model_lift"] = np.nan
     out["actual_model_lift_raw"] = np.nan
 
@@ -867,21 +1018,21 @@ def compare_plan_and_actual(
         set_features,
         config.course,
         market_model.feature_cols,
-        panel=panel,
+        panel=feature_panel,
     )
     market_scored = market_dec.copy()
     market_scored["row_kind"] = "market"
     market_scored["pred_lift"] = np.nan
     market_scored["pred_lift_raw"] = np.nan
     market_scored["actual_model_lift_raw"] = _predict_incremental_raw_for_scoring(
-        market_model, market_rows, market_baseline_rows, panel, config
+        market_model, market_rows, market_baseline_rows, feature_panel, config, floor_panel=floor_panel
     )
     market_scored["actual_model_lift"] = np.clip(market_scored["actual_model_lift_raw"], 0, None)
     market_scored["f_plan_level"] = _predict_levels_for_scoring(
-        market_model, market_rows, panel, config
+        market_model, market_rows, feature_panel, config, floor_panel=floor_panel
     )
     market_scored["f_zero"] = _predict_levels_for_scoring(
-        market_model, market_baseline_rows, panel, config
+        market_model, market_baseline_rows, feature_panel, config, floor_panel=floor_panel
     )
     market_scored["campaign_budget"] = market_scored["daily_budget"]
     market_scored["actual_budget"] = market_scored["daily_budget"]

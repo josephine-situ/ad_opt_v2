@@ -469,6 +469,7 @@ def solve_campaign_milp(
     baseline_level_by_key: dict[tuple[str, str], float] | None = None,
     planning_calendar_offsets: dict[tuple[str, int], float] | None = None,
     level_ub_overrides: dict[str, float] | None = None,
+    gating_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Single entry point for segment budget + keyword-set MILPs.
@@ -554,6 +555,7 @@ def solve_campaign_milp(
         n_planning_days=n_planning_days,
         calendar_offsets=planning_calendar_offsets,
         level_ub_overrides=level_ub_overrides,
+        gating_panel=gating_panel,
     )
 
     model.addConstr(gp.quicksum(x_vars[s] for s in segments) <= total_budget, name="total_budget")
@@ -581,7 +583,10 @@ def solve_campaign_milp(
 
     if baseline_level_by_key is not None and config.evaluation.apply_observed_budget_floor:
         baseline_level_by_key = apply_gated_baseline_levels(
-            baseline_level_by_key, baseline_budget, min_budgets
+            baseline_level_by_key,
+            baseline_budget,
+            min_budgets,
+            budget_atol=float(config.evaluation.budget_floor_atol),
         )
 
     level_sum = gp.quicksum(pred_vars[s] for s in segments)
@@ -640,13 +645,34 @@ def solve_campaign_milp(
             )
         else:
             chosen_k = None
+        budget_raw = float(x_vars[seg].X) if has_solution else None
+        budget_out = round(budget_raw, 2) if budget_raw is not None else None
+        milp_raw = _predicted_value(pred_vars[seg])
+        milp_out = milp_raw
+        if (
+            config.evaluation.apply_observed_budget_floor
+            and budget_raw is not None
+            and milp_raw is not None
+            and min_budgets.get(seg, 0.0) > 0.0
+        ):
+            from campaign_opt.optimizer_prediction import apply_observed_budget_floor
+
+            milp_out = float(
+                apply_observed_budget_floor(
+                    np.array([milp_raw]),
+                    np.array([budget_raw]),
+                    np.array([seg]),
+                    min_budgets,
+                    budget_atol=float(config.evaluation.budget_floor_atol),
+                )[0]
+            )
         rows.append(
             {
                 "segment": seg,
                 "region": region_of_segment(seg),
-                "daily_budget": x_vars[seg].X if model.SolCount else None,
+                "daily_budget": budget_out,
                 "keyword_set_id": chosen_k,
-                "milp_pred": _predicted_value(pred_vars[seg]),
+                "milp_pred": milp_out,
                 "pred_over_base": _plan_incremental_pred(
                     model,
                     seg,
