@@ -1,0 +1,3 @@
+scenario,target,n_days,conversions,conversions_se,budget,budget_se,conversions_per_dollar,improvement_conversions_pct,improvement_conversions_per_dollar_pct,lift_source,n_missing_days,missing_days
+Model,conv_scaled_clicks,14,3.154917243335928,0.02825533402587695,401.4335714285715,0.4792480455546722,0.007859126560114551,0.3859861703699177,0.6151563057180268,raw,0,
+Actual,conv_scaled_clicks,14,3.1427865219967708,0.027041950176909656,402.3500000000001,1.576552779810155e-14,0.007811076232128173,,,raw,0,
