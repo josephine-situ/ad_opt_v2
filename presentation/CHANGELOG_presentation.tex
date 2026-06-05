@@ -1,0 +1,206 @@
+% System Thinking Ads — changes since 74e1c4d (high-level changelog)
+% Compile from this directory (artifacts go to build/):
+%   latexmk CHANGELOG_presentation.tex
+% or: pdflatex -output-directory=build CHANGELOG_presentation.tex (twice)
+\documentclass[11pt]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+
+\setbeamertemplate{footline}{%
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=\paperwidth,ht=2.5ex,dp=1.125ex,center]{author in head/foot}%
+      \usebeamerfont{footline}\insertframenumber/\inserttotalframenumber
+    \end{beamercolorbox}%
+  }%
+}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{microtype}
+
+\title{Changes since \texttt{74e1c4d}}
+\author{System Thinking Ads}
+\date{June 2026}
+
+\begin{document}
+
+\begin{frame}{Scope}
+
+  \vspace{0.75em}
+  \begin{enumerate}
+    \item MILP \& optimizer correctness
+    \item Two-stage backtest architecture
+    \item Keyword set pipeline
+    \item Modeling, CV \& feature
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{MILP \& optimizer correctness}
+  \footnotesize
+
+  \begin{itemize}
+    \item \textbf{XGB-only} --- modeling moved from ridge+XGB embed to a single \textbf{XGBoost} model for both optimization and evaluation.
+    \item \textbf{Level objective} --- MILP maximizes $\sum_s f_s(x_s)$, not incremental lift $f(x)-f(0)$. Incremental penalizes segments with large intercepts; levels align predicted conversions more closely with actuals.
+    \item \textbf{Observed-budget prediction floors} --- predict zero when below each segment's historical minimum \texttt{daily\_budget}.
+  \end{itemize}
+  \normalsize
+\end{frame}
+
+\begin{frame}{Two-stage backtest architecture}
+    \textbf{Goal:} keyword sets tend to stay mostly stable over the backtest window, so we can optimize them once and then re-optimize budgets daily. Also aligns with current practices.
+  \begin{itemize}
+    \item \textbf{Stage~1:} optimize one keyword set per segment over the full backtest window via a multi-day \textbf{XGB tree-embed} MILP with per-day budgets.
+    \item \textbf{Stage~2:} fix stage-1 keyword sets and re-optimize budgets daily with walk-forward refit.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Keyword set pipeline}
+  \textbf{Goal:} richer candidate generation and tighter filtering so model doesn't extrapolate too much.
+
+  \begin{itemize}
+    \item \textbf{Enrollment allowlist} gates which keywords enter the candidate pool based on historically successful keywords (~50 keywords).
+    \item Replaced click-ranked synthetics with \textbf{top-conversion} and \textbf{allowlist-based} synthetic sets.
+    \item \textbf{Per-match-type synthetics} generated from the region panel with verification.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Modeling, CV \& features}
+  \footnotesize
+  \textbf{Goal:} tighten how models are trained, validated, and wired into the optimizer.
+
+  \begin{itemize}
+    \item \textbf{Expanding-window time-series CV} on the training calendar (3 folds, $\geq$50\% train fraction); fold date logging retained.
+    \item Training panel filtered to allowed optimization segments; \texttt{is\_broad\_match} replaces multi-hot match flags.
+    \item Ablations and tighter CV tuning grids.
+    \item Optional recency half-life sample weights.
+  \end{itemize}
+  \normalsize
+\end{frame}
+
+\begin{frame}{Production feature set}
+  \footnotesize
+  \textbf{Structural} (every model; not in \texttt{context\_features}):
+
+  \vspace{0.35em}
+  \begin{itemize}
+    \item \texttt{daily\_budget}, \texttt{region} (USA / A / B), \texttt{is\_broad\_match}
+    \item Ridge / linear MILP also fit \texttt{budget}$\times$\texttt{(region + is\_broad\_match)} interactions (tree-embed XGB does not).
+  \end{itemize}
+
+  \vspace{0.35em}
+  \textbf{Context} (10 in \texttt{context\_features}):
+  \begin{columns}[T]
+    \column{0.48\textwidth}
+    \textbf{Calendar} (3)
+    \begin{itemize}
+      \item \texttt{day\_of\_week}, \texttt{season}, \texttt{days\_to\_next\_course\_start}
+    \end{itemize}
+    \textbf{Keyword set} (2)
+    \begin{itemize}
+      \item \texttt{embed\_course\_sim\_mean}, \texttt{num\_unique\_keywords}
+    \end{itemize}
+
+    \column{0.48\textwidth}
+    \textbf{GKP union} (2)
+    \begin{itemize}
+      \item \texttt{last\_month\_searches\_mean}, \texttt{competition\_index\_mean}
+    \end{itemize}
+    \textbf{Match-type dispersion} (3)
+    \begin{itemize}
+      \item \texttt{embed\_dispersion\_broad}, \texttt{embed\_dispersion\_phrase}, \texttt{embed\_dispersion\_exact}
+    \end{itemize}
+  \end{columns}
+
+  \vspace{0.35em}
+  {\scriptsize Dropped from 20-feat baseline: weekend/holiday flags, \texttt{days\_since\_version\_start}, union cohesion/dispersion/p90, MT counts, \texttt{bid\_low\_mean} (redundant or no CV lift).}
+  \normalsize
+\end{frame}
+
+\begin{frame}{Model $R^2$ results (XGB, tuned)}
+  \footnotesize
+  \texttt{conv\_scaled\_clicks}; deduped 10-feat; 75-day holdout; 3-fold expanding-window CV.
+
+  \vspace{0.5em}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    Panel / change & CV $R^2$ & Ho $R^2$ \\
+    \midrule
+    Full panel (12 segments, incl.\ out-of-scope) & $-$0.09 & 0.79 \\
+    Optimization scope (6 segments), old grid & 0.41 & 0.15 \\
+    Optimization scope, \textbf{current grid} & \textbf{0.42} & \textbf{0.25} \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.5em}
+  \begin{itemize}
+    \item \textbf{Scope filter} --- drop region~C and non-optimized match-type configs; training panel matches the 6-segment MILP. Full panel gave \textbf{negative CV $R^2$} with \textbf{misleading positive holdout}.
+    \item \textbf{Grid tightening} --- old grid (\texttt{max\_depth=4}) inflated CV ($\sim$0.41) while holdout collapsed ($\sim$0.15); current grid (\texttt{max\_depth} $\in\{2,3\}$, \texttt{n\_estimators} $\leq 20$) is more balanced.
+  \end{itemize}
+  \normalsize
+\end{frame}
+
+\begin{frame}{Backtest results}
+  \scriptsize
+  Two-stage backtest; \texttt{xgboost}; actual campaign budgets; target \texttt{conv\_scaled\_clicks}.
+  $\Delta$conv / $\Delta$conv/\$: model plan vs.\ actual panel $\hat f$ (same model, panel budgets).
+  Budget-share $\Delta$ columns: \textbf{optimizer plan $-$ actual panel} (pp).
+
+  \vspace{0.25em}
+  \centering
+  \setlength{\tabcolsep}{3pt}
+  \renewcommand{\arraystretch}{1.05}
+  \resizebox{0.98\textwidth}{!}{%
+  \begin{tabular}{@{}l|rr|rrr|rr@{}}
+    \toprule
+    & \multicolumn{2}{c|}{Lift vs.\ panel} &
+    \multicolumn{3}{c|}{Regional budget $\Delta$} &
+    \multicolumn{2}{c}{Match-type budget $\Delta$} \\
+    \cmidrule(lr){2-3} \cmidrule(lr){4-6} \cmidrule(lr){7-8}
+    Period & $\Delta$conv & $\Delta$conv/\$ &
+    $\Delta$USA & $\Delta$A & $\Delta$B &
+    $\Delta$Broad & $\Delta$Ph./Ex. \\
+    \midrule
+    2025-01-08 -- 01-21 &
+    $+$0.4\% & $+$0.6\% &
+    $+$0.2 & $-$0.5 & $+$0.3 &
+    $-$0.6 & $+$0.6 \\
+    2025-09-11 -- 09-24 &
+    $+$21.5\% & $+$23.0\% &
+    $+$2.9 & $-$9.3 & $+$6.4 &
+    $+$10.0 & $-$10.0 \\
+    2026-05-12 -- 05-25 &
+    $+$37.2\% & $+$39.2\% &
+    $-$14.4 & $+$5.6 & $+$8.8 &
+    $+$15.7 & $-$15.7 \\
+    \bottomrule
+  \end{tabular}}
+
+  \vspace{0.35em}
+  \raggedright
+  \textbf{Active panel segments} (budget ${>}0$ in campaign-day panel):
+  \begin{itemize}
+    \item \textbf{Jan 2025} --- all six: USA/A/B $\times$ Broad and \texttt{Phrase; Exact}.
+    \item \textbf{Sep 2025} --- four: USA Broad, USA \texttt{Phrase; Exact}, A/B \texttt{Phrase; Exact} (no A/B Broad).
+    \item \textbf{May 2026} --- three: USA, A, B \texttt{Phrase; Exact} only (optimizer still plans six scope segments; Broad absent from panel).
+  \end{itemize}
+
+  \vspace{0.15em}
+  {\scriptsize Positive $\Delta$USA / $\Delta$Broad: plan over-weights USA Broad vs.\ what ran in Sep/May. May plan assigns ${\sim}$16 pp to Broad segments not in the panel.}
+  \normalsize
+\end{frame}
+
+\begin{frame}{Next steps}
+  \begin{itemize}
+    \item Add more keywords to the allowlist based on HubSpot data. Add some exploration?
+    \item Clean code before shipping.
+    \item Add monitoring while we run the experiment (e.g., $R^2$, predictions).
+  \end{itemize}
+\end{frame}
+
+\end{document}
