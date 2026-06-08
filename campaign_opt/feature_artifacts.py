@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from campaign_opt.linear_design import build_linear_milp_design_matrix
-from campaign_opt.modeling import _prep_xy
+from campaign_opt.training_matrix import prep_xy
 from campaign_opt.schema import CampaignOptConfig
 from utils.campaign_features import get_context_feature_columns
 
@@ -49,8 +49,8 @@ def save_modeling_artifacts(
 
     feature_cols = get_context_feature_columns(config.context_features)
     if feature_cols and config.target in train.columns:
-        ctx_train, _ = _prep_xy(train, config.target, feature_cols)
-        ctx_holdout, _ = _prep_xy(holdout, config.target, feature_cols)
+        ctx_train, _ = prep_xy(train, config.target, feature_cols)
+        ctx_holdout, _ = prep_xy(holdout, config.target, feature_cols)
         ctx_train_path = feat_dir / "context_design_train.csv"
         ctx_holdout_path = feat_dir / "context_design_holdout.csv"
         ctx_train.to_csv(ctx_train_path, index=False)

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
+from campaign_opt.paths import gkp_dir, require_enrollment_allowlist
 from utils.keyword_allowlist import (
     clean_keyword_text,
     enrollment_allowlist_keywords,
@@ -93,3 +95,19 @@ def test_load_enrollment_keyword_allowlist_sys_think():
     assert "what is system thinking" in allowlist
     # 56 unique after collapsing internal whitespace (xlsx had duplicate spellings).
     assert len(allowlist) == 56
+
+
+def test_require_enrollment_allowlist_finds_file():
+    path = require_enrollment_allowlist("sys_think")
+    assert path.is_file()
+    assert "Enrollments" in path.name or "Keywords" in path.name
+    assert path.parent == gkp_dir("sys_think")
+
+
+def test_require_enrollment_allowlist_raises_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "campaign_opt.paths.gkp_dir",
+        lambda _course="sys_think": tmp_path / "empty_gkp",
+    )
+    with pytest.raises(FileNotFoundError, match="Required enrollment allowlist"):
+        require_enrollment_allowlist("sys_think")

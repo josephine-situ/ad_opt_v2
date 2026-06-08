@@ -10,7 +10,6 @@ import pandas as pd
 from campaign_opt.decisions import apply_candidate_region_policy, parse_allowed_match_types, parse_excluded_regions
 from campaign_opt.features import prepare_modeling_data
 from campaign_opt.optimize import require_optimizer_winner
-from campaign_opt.paths import exp_dir
 from campaign_opt.schema import CampaignOptConfig
 from utils.campaign_features import add_segment_column, load_campaign_day_panel
 from utils.keyword_candidates import ensure_segment_keyword_candidates
@@ -24,7 +23,7 @@ def load_fit_manifest(config: CampaignOptConfig) -> dict:
 def optimizer_manifest_for_backtest(config: CampaignOptConfig) -> dict:
     """Load ``model_manifest.json``; required for backtest and optimizer metadata."""
     require_optimizer_winner(config)
-    path = exp_dir(config.exp_name) / "model_manifest.json"
+    path = config.exp_dir() / "model_manifest.json"
     if not path.exists():
         raise FileNotFoundError(
             f"Missing {path}. Run fit-models before backtest."

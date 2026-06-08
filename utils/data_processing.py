@@ -42,13 +42,18 @@ def _clean_campaign(campaign: pd.Series) -> pd.Series:
     return campaign.astype("string").str.replace(r"\[.*?\]", "", regex=True).str.strip()
 
 
-def _clean_keyword(keyword: pd.Series) -> pd.Series:
+def clean_keyword_series(keyword: pd.Series) -> pd.Series:
+    """Strip bracket/quote artifacts, lowercase, and trim whitespace (vectorized)."""
     return (
         keyword.astype("string")
         .str.replace(r'["\[\]]', "", regex=True)
         .str.lower()
         .str.strip()
     )
+
+
+# Backward-compatible alias.
+_clean_keyword = clean_keyword_series
 
 
 def _clean_match_type(match_type: pd.Series) -> pd.Series:

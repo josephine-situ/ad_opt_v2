@@ -12,6 +12,7 @@ from campaign_opt.evaluation import (
     EnsembleModel,
     build_baseline_rows_for_decisions,
     build_segment_decision_rows,
+    evaluation_ensemble_weights,
     fit_ensemble,
 )
 from campaign_opt.decisions import observed_min_daily_budget
@@ -110,3 +111,25 @@ def test_gated_baseline_zero_when_below_observed_min(tiny_config, synthetic_sys_
     gated = predict_levels_optimizer(ensemble, rows, panel, tiny_config)
     assert float(raw[0]) >= 0
     assert float(gated[0]) == 0.0
+
+
+def test_evaluation_ensemble_weights_from_cv_rmse():
+    config = CampaignOptConfig(
+        exp_name="t",
+        course="sys_think",
+        model_policy=ModelPolicy(
+            candidates=["ridge", "power_log", "power_level", "random_forest", "xgboost", "ensemble"],
+        ),
+        evaluation=EvaluationConfig(weight_by_cv_rmse=True),
+    )
+    metrics = {
+        "ridge": {"cv_rmse_levels": 2.80},
+        "power_log": {"cv_rmse_levels": 2.75},
+        "power_level": {"cv_rmse_levels": 2.64},
+        "random_forest": {"cv_rmse_levels": 2.83},
+        "xgboost": {"cv_rmse_levels": 2.73},
+    }
+    weights = evaluation_ensemble_weights(config, metrics)
+    assert abs(sum(weights.values()) - 1.0) < 1e-9
+    assert weights["power_level"] == max(weights.values())
+    assert weights["power_level"] == pytest.approx(0.208, abs=0.01)

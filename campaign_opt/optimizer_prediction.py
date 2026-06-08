@@ -82,11 +82,11 @@ def predict_levels_optimizer(
     if not config.evaluation.apply_observed_budget_floor:
         if isinstance(model, EnsembleModel):
             return model.predict_levels(rows)
-        from campaign_opt.evaluation import _prep_xy
+        from campaign_opt.training_matrix import prep_xy
 
         target = config.target
         feature_cols = _optimizer_feature_cols(model, config)
-        X, _ = _prep_xy(rows, target, feature_cols)
+        X, _ = prep_xy(rows, target, feature_cols)
         return np.asarray(model.predict(X), dtype=float)
 
     segments = rows["segment"].astype(str).unique().tolist()
@@ -94,11 +94,11 @@ def predict_levels_optimizer(
     if isinstance(model, EnsembleModel):
         raw = model.predict_levels(rows)
     else:
-        from campaign_opt.evaluation import _prep_xy
+        from campaign_opt.training_matrix import prep_xy
 
         target = config.target
         feature_cols = _optimizer_feature_cols(model, config)
-        X, _ = _prep_xy(rows, target, feature_cols)
+        X, _ = prep_xy(rows, target, feature_cols)
         raw = np.asarray(model.predict(X), dtype=float)
     return apply_observed_budget_floor(
         raw,

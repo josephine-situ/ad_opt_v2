@@ -10,17 +10,15 @@ from typing import Any, Callable
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from campaign_opt.cv import (
     cross_validate_model,
     effective_min_train_days,
     time_series_cv_folds,
-    _validation_kw,
+    validation_cv_kwargs,
 )
 from campaign_opt.coefficients import export_linear_solver_coeffs, extract_context_feature_coefs
 from campaign_opt.hyperparam_cv import tune_hyperparams
@@ -29,7 +27,6 @@ from campaign_opt.linear_design import (
     LinearMilpRidgeModel,
     build_linear_milp_design_matrix,
     fit_linear_milp_ridge,
-    split_context_columns_by_dtype,
 )
 from campaign_opt.recency_weights import (
     recency_half_life_days,
@@ -39,10 +36,14 @@ from campaign_opt.recency_weights import (
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.shap_effects import compute_mean_shap_effects, format_top_shap_effects
 from campaign_opt.train_specs import build_estimator, get_train_spec
+from campaign_opt.training_matrix import (
+    build_preprocessor,
+    ensure_tree_segment_features,
+    prep_xy,
+    training_subframe,
+)
 from utils.campaign_features import (
     SEGMENT_BROAD_MATCH_COL,
-    TREE_SEGMENT_FEATURE_COLS,
-    add_segment_match_type_indicators,
     get_context_feature_columns,
 )
 from utils.shrinkage import segment_budget_level_counts
@@ -214,62 +215,11 @@ def eval_pipeline_holdout(
     }
 
 
-def _ensure_tree_segment_features(df: pd.DataFrame) -> pd.DataFrame:
-    if all(col in df.columns for col in TREE_SEGMENT_FEATURE_COLS):
-        return df
-    return add_segment_match_type_indicators(df)
-
-
-def _training_subframe(
-    df: pd.DataFrame,
-    target: str,
-    *,
-    y_col: str | None = None,
-) -> pd.DataFrame:
-    y_name = y_col or target
-    return _ensure_tree_segment_features(
-        df.dropna(subset=[y_name, "daily_budget", "region"]).copy()
-    )
-
-
-def _prep_xy(
-    df: pd.DataFrame,
-    target: str,
-    feature_cols: list[str],
-    *,
-    y_col: str | None = None,
-) -> tuple[pd.DataFrame, np.ndarray]:
-    y_name = y_col or target
-    sub = _training_subframe(df, target, y_col=y_col)
-    numeric_ctx, _ = split_context_columns_by_dtype(sub, feature_cols)
-    for col in numeric_ctx:
-        sub[col] = pd.to_numeric(sub[col], errors="coerce").fillna(0.0)
-    use_cols = [*TREE_SEGMENT_FEATURE_COLS, "daily_budget", *feature_cols]
-    return sub[use_cols], sub[y_name].astype(float).values
-
-
-def _build_preprocessor(feature_cols: list[str], sample: pd.DataFrame) -> ColumnTransformer:
-    ctx_numeric, ctx_cat = split_context_columns_by_dtype(sample, feature_cols)
-    transformers: list[tuple[str, Any, list[str]]] = [
-        ("num", StandardScaler(), ["daily_budget"]),
-        (
-            "region",
-            OneHotEncoder(handle_unknown="ignore", sparse_output=False),
-            ["region"],
-        ),
-        ("match", "passthrough", [SEGMENT_BROAD_MATCH_COL]),
-    ]
-    if ctx_numeric:
-        transformers.append(("ctx_num", "passthrough", ctx_numeric))
-    if ctx_cat:
-        transformers.append(
-            (
-                "ctx_cat",
-                OneHotEncoder(handle_unknown="ignore", sparse_output=False),
-                ctx_cat,
-            )
-        )
-    return ColumnTransformer(transformers)
+# Backward-compatible aliases — canonical definitions live in training_matrix.py.
+_ensure_tree_segment_features = ensure_tree_segment_features
+_training_subframe = training_subframe
+_prep_xy = prep_xy
+_build_preprocessor = build_preprocessor
 
 
 def _fit_and_evaluate(
@@ -1088,7 +1038,7 @@ def run_tournament(
     best_hyperparams_all: dict[str, dict[str, Any]] = {}
 
     if run_cv or tune:
-        cv_folds = time_series_cv_folds(train, n_folds, **_validation_kw(config))
+        cv_folds = time_series_cv_folds(train, n_folds, **validation_cv_kwargs(config))
         n_train_dates = train["date"].nunique()
         min_train_eff = effective_min_train_days(
             n_train_dates,

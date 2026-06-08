@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import argparse
 
-from campaign_opt.paths import PROCESSED_DIR, data_path
+from campaign_opt.cli.course_arg import add_course_arg
+from campaign_opt.paths import data_path, processed_dir
 from utils.data_processing import generate_campaign_day_panel
 
 
@@ -13,6 +14,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate active campaign-day aggregates and campaign summary."
     )
+    add_course_arg(parser)
     parser.add_argument(
         "--kw-day-panel-file",
         default="",
@@ -35,9 +37,11 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    kw_path = args.kw_day_panel_file or str(data_path("processed", "kw-day-panel.csv"))
-    summary_path = args.campaign_summary_file or str(PROCESSED_DIR / "campaign-summary.csv")
-    panel_out = args.campaign_day_output_file or str(data_path("processed", "campaign-day-panel.csv"))
+    kw_path = args.kw_day_panel_file or str(data_path(args.course, "processed", "kw-day-panel.csv"))
+    summary_path = args.campaign_summary_file or str(processed_dir(args.course) / "campaign-summary.csv")
+    panel_out = args.campaign_day_output_file or str(
+        data_path(args.course, "processed", "campaign-day-panel.csv")
+    )
     summary_out = args.campaign_summary_output_file or None
 
     generate_campaign_day_panel(

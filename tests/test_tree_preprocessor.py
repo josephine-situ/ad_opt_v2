@@ -6,7 +6,7 @@ import pandas as pd
 from sklearn.compose import ColumnTransformer
 
 from campaign_opt.linear_design import split_context_columns_by_dtype
-from campaign_opt.modeling import _build_preprocessor, _prep_xy
+from campaign_opt.training_matrix import build_preprocessor, prep_xy
 
 
 def test_split_context_columns_by_dtype():
@@ -38,8 +38,8 @@ def test_tree_preprocessor_keeps_numeric_context_columns():
         }
     )
     feature_cols = ["embed_cohesion", "season"]
-    prep: ColumnTransformer = _build_preprocessor(feature_cols, df)
-    X, _ = _prep_xy(df, "clicks", feature_cols)
+    prep: ColumnTransformer = build_preprocessor(feature_cols, df)
+    X, _ = prep_xy(df, "clicks", feature_cols)
     prep.fit(X)
     out_names = list(prep.get_feature_names_out())
     assert "ctx_num__embed_cohesion" in out_names

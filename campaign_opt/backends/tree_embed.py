@@ -44,7 +44,7 @@ from campaign_opt.optimizer_prediction import (
     predict_levels_optimizer,
 )
 from campaign_opt.linear_design import LinearMilpRidgeModel, build_linear_milp_design_matrix
-from campaign_opt.modeling import _prep_xy
+from campaign_opt.training_matrix import prep_xy
 from campaign_opt.schema import CampaignOptConfig
 from utils.campaign_features import (
     add_segment_match_type_indicators,
@@ -55,7 +55,7 @@ from utils.campaign_features import (
 from utils.date_features import calendar_vector_for_date
 
 
-def _build_candidate_feature_rows(
+def build_candidate_feature_rows(
     candidates: pd.DataFrame,
     config: CampaignOptConfig,
     planning_date: pd.Timestamp,
@@ -218,7 +218,7 @@ def _embed_candidate_predictions(
     probe = embed_rows.copy()
     if target not in probe.columns:
         probe[target] = 0.0
-    X_raw, _ = _prep_xy(probe, target, feature_cols)
+    X_raw, _ = prep_xy(probe, target, feature_cols)
     X_proc = pipeline[:-1].transform(X_raw)
     base_preds = pipeline.predict(X_raw)
     tree_paths, base_or_n, kind = get_tree_path_sets(pipeline)
@@ -382,7 +382,7 @@ def diagnose_plan_sklearn_path_gap(
     feature_cols = get_context_feature_columns(config.context_features)
     target = config.target
     plan_dec = _plan_decision_frame(plan)
-    embed_rows, keys = _build_candidate_feature_rows(
+    embed_rows, keys = build_candidate_feature_rows(
         candidates, config, planning_date, set_features, panel=panel
     )
     embed_path_rows = feature_rows_at_plan_budgets(plan_dec, embed_rows, keys, target)
@@ -410,8 +410,8 @@ def diagnose_plan_sklearn_path_gap(
         raw_embed = pipeline.predict_levels(embed_path_rows)
         raw_decision = pipeline.predict_levels(decision_path_rows)
     else:
-        X_embed, _ = _prep_xy(embed_path_rows, target, feature_cols)
-        X_decision, _ = _prep_xy(decision_path_rows, target, feature_cols)
+        X_embed, _ = prep_xy(embed_path_rows, target, feature_cols)
+        X_decision, _ = prep_xy(decision_path_rows, target, feature_cols)
         raw_embed = np.asarray(pipeline.predict(X_embed), dtype=float)
         raw_decision = np.asarray(pipeline.predict(X_decision), dtype=float)
 
@@ -716,7 +716,7 @@ def _probe_ridge_xgb_embed_on_embed_rows(
             r["daily_budget"] = budget
             if target not in r.columns:
                 r[target] = 0.0
-            X, _ = _prep_xy(r, target, feature_cols)
+            X, _ = prep_xy(r, target, feature_cols)
             return X
 
         for budget in probe_budgets:
@@ -788,7 +788,7 @@ def _diagnose_milp_vs_sklearn_at_solved_budgets(
         r["daily_budget"] = budget
         if target not in r.columns:
             r[target] = 0.0
-        X_embed, _ = _prep_xy(r, target, feature_cols)
+        X_embed, _ = prep_xy(r, target, feature_cols)
         sk_xgb_embed = float(xgb_pipeline.predict(X_embed)[0])
 
         # Embed-path: ridge prediction at solved budget
@@ -821,7 +821,7 @@ def _diagnose_milp_vs_sklearn_at_solved_budgets(
         ensemble_pred = float(ensemble.predict_levels(dec_rows)[0])
 
         # Validation-path: per-component
-        X_val, _ = _prep_xy(dec_rows, target, feature_cols)
+        X_val, _ = prep_xy(dec_rows, target, feature_cols)
         sk_xgb_val = float(xgb_pipeline.predict(X_val)[0])
         ridge_val = float(ridge_artifact.predict_design_frame(dec_rows)[0])
 
@@ -893,8 +893,8 @@ def _external_incremental_pred_by_segment(
         pred_lift = pipeline.predict_incremental_raw(decision_rows, baseline_rows)
     else:
         feature_cols = get_context_feature_columns(config.context_features)
-        X_dec, _ = _prep_xy(decision_rows, target, feature_cols)
-        X_zero, _ = _prep_xy(baseline_rows, target, feature_cols)
+        X_dec, _ = prep_xy(decision_rows, target, feature_cols)
+        X_zero, _ = prep_xy(baseline_rows, target, feature_cols)
         pred_dec = np.asarray(pipeline.predict(X_dec), dtype=float)
         pred_zero = np.asarray(pipeline.predict(X_zero), dtype=float)
         pred_lift = pred_dec - pred_zero
@@ -937,7 +937,7 @@ def solve_ridge_xgb_embed_campaign_milp(
     w_xgb = xgb_member.weight / total_w
 
     set_features = build_keyword_set_feature_table(config.course)
-    embed_rows, keys = _build_candidate_feature_rows(
+    embed_rows, keys = build_candidate_feature_rows(
         candidates, config, planning_date, set_features, panel=panel
     )
     segments = build_segment_list(candidates)
@@ -1018,7 +1018,7 @@ def solve_ridge_xgb_embed_campaign_milp(
         r0["daily_budget"] = 0.0
         if target not in r0.columns:
             r0[target] = 0.0
-        X0, _ = _prep_xy(r0, target, feature_cols)
+        X0, _ = prep_xy(r0, target, feature_cols)
         x_proc_0 = np.asarray(xgb_member.pipeline[:-1].transform(X0), dtype=np.float32).ravel()
         tree_paths, _, _ = get_tree_path_sets(xgb_member.pipeline)
         budget_idx, budget_mean, budget_scale = _budget_affine(xgb_member.pipeline)
@@ -1034,7 +1034,7 @@ def solve_ridge_xgb_embed_campaign_milp(
             r["daily_budget"] = b
             if target not in r.columns:
                 r[target] = 0.0
-            X_b, _ = _prep_xy(r, target, feature_cols)
+            X_b, _ = prep_xy(r, target, feature_cols)
             xgb_b = float(xgb_member.pipeline.predict(X_b)[0])
             ridge_b = float(ridge_artifact.predict_design_frame(
                 pd.DataFrame([{**embed_rows.iloc[i].to_dict(), "daily_budget": b, target: 0.0}])
@@ -1167,7 +1167,7 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
     tree_paths_probe, _, _ = get_tree_path_sets(xgb_member.pipeline)
     budget_idx_probe, budget_mean_probe, budget_scale_probe = _budget_affine(xgb_member.pipeline)
     # Use first day's embed rows for probing (calendar differences are small)
-    embed_rows_probe, keys_probe = _build_candidate_feature_rows(
+    embed_rows_probe, keys_probe = build_candidate_feature_rows(
         candidates, config, pd.Timestamp(planning_dates[0]), set_features, panel=panel
     )
     for i, (seg, kid) in enumerate(keys_probe):
@@ -1177,7 +1177,7 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
         r0["daily_budget"] = 0.0
         if target not in r0.columns:
             r0[target] = 0.0
-        X0, _ = _prep_xy(r0, target, feature_cols)
+        X0, _ = prep_xy(r0, target, feature_cols)
         x_proc_0 = np.asarray(
             xgb_member.pipeline[:-1].transform(X0), dtype=np.float32
         ).ravel()
@@ -1193,7 +1193,7 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
             r["daily_budget"] = b
             if target not in r.columns:
                 r[target] = 0.0
-            X_b, _ = _prep_xy(r, target, feature_cols)
+            X_b, _ = prep_xy(r, target, feature_cols)
             xgb_b = float(xgb_member.pipeline.predict(X_b)[0])
             ridge_b = float(ridge_artifact.predict_design_frame(
                 pd.DataFrame([{**embed_rows_probe.iloc[i].to_dict(), "daily_budget": b, target: 0.0}])
@@ -1271,7 +1271,7 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
 
     for t, plan_date in enumerate(planning_dates):
         plan_date = pd.Timestamp(plan_date)
-        embed_rows_t, keys_t = _build_candidate_feature_rows(
+        embed_rows_t, keys_t = build_candidate_feature_rows(
             candidates, config, plan_date, set_features, panel=panel
         )
         x_vars_t = {seg: x_day_vars[(seg, t)] for seg in segments}
@@ -1526,7 +1526,7 @@ def solve_tree_embed_multiday_campaign_milp(
     level_ub_overrides: dict[str, float] = {}
     tree_paths_probe, _, _ = get_tree_path_sets(pipeline)
     budget_idx_probe, budget_mean_probe, budget_scale_probe = _budget_affine(pipeline)
-    embed_rows_probe, keys_probe = _build_candidate_feature_rows(
+    embed_rows_probe, keys_probe = build_candidate_feature_rows(
         candidates, config, pd.Timestamp(planning_dates[0]), set_features, panel=panel
     )
     for i, (seg, kid) in enumerate(keys_probe):
@@ -1536,7 +1536,7 @@ def solve_tree_embed_multiday_campaign_milp(
         r0["daily_budget"] = 0.0
         if target not in r0.columns:
             r0[target] = 0.0
-        X0, _ = _prep_xy(r0, target, feature_cols)
+        X0, _ = prep_xy(r0, target, feature_cols)
         x_proc_0 = np.asarray(
             pipeline[:-1].transform(X0), dtype=np.float32
         ).ravel()
@@ -1552,7 +1552,7 @@ def solve_tree_embed_multiday_campaign_milp(
             r["daily_budget"] = b
             if target not in r.columns:
                 r[target] = 0.0
-            X_b, _ = _prep_xy(r, target, feature_cols)
+            X_b, _ = prep_xy(r, target, feature_cols)
             max_pred = max(max_pred, float(pipeline.predict(X_b)[0]))
         cur = level_ub_overrides.get(seg, 0.0)
         level_ub_overrides[seg] = max(cur, max_pred * 1.1)
@@ -1618,7 +1618,7 @@ def solve_tree_embed_multiday_campaign_milp(
     day_pred_exprs: list[dict[tuple[str, str], Any]] = []
     for t, plan_date in enumerate(planning_dates):
         plan_date = pd.Timestamp(plan_date)
-        embed_rows_t, keys_t = _build_candidate_feature_rows(
+        embed_rows_t, keys_t = build_candidate_feature_rows(
             candidates, config, plan_date, set_features, panel=panel
         )
         x_vars_t = {seg: x_day_vars[(seg, t)] for seg in segments}
@@ -1831,7 +1831,7 @@ def solve_tree_embed_campaign_milp(
     """Embed winner tree model in Gurobi via big-M leaf formulation."""
     pipeline = joblib.load(model_path)
     set_features = build_keyword_set_feature_table(config.course)
-    embed_rows, keys = _build_candidate_feature_rows(
+    embed_rows, keys = build_candidate_feature_rows(
         candidates, config, planning_date, set_features, panel=panel
     )
 
@@ -1868,7 +1868,7 @@ def solve_tree_embed_campaign_milp(
         r0["daily_budget"] = 0.0
         if target not in r0.columns:
             r0[target] = 0.0
-        X0, _ = _prep_xy(r0, target, feature_cols)
+        X0, _ = prep_xy(r0, target, feature_cols)
         x_proc_0 = np.asarray(pipeline[:-1].transform(X0), dtype=np.float32).ravel()
         bps = _raw_budget_breakpoints_from_trees(
             tree_paths_ub, x_proc_0, budget_idx_ub, budget_mean_ub, budget_scale_ub, lo, hi
@@ -1881,7 +1881,7 @@ def solve_tree_embed_campaign_milp(
             r["daily_budget"] = b
             if target not in r.columns:
                 r[target] = 0.0
-            X_b, _ = _prep_xy(r, target, feature_cols)
+            X_b, _ = prep_xy(r, target, feature_cols)
             max_pred = max(max_pred, float(pipeline.predict(X_b)[0]))
         cur = level_ub_overrides.get(seg, 0.0)
         level_ub_overrides[seg] = max(cur, max_pred * 1.1)

@@ -1,11 +1,11 @@
 # campaign_opt
 
-Config-driven **two-stage** campaign optimization for System Thinking.
+Config-driven **two-stage** campaign optimization (multi-course via `--course`).
 
 ## Pipeline
 
 1. **Data prep** — `uv run prepare-data` (see root [README.md](../README.md))
-2. **Keyword candidates** — requires enrollment allowlist xlsx under `sys_think/data/gkp/`
+2. **Keyword candidates** — requires enrollment allowlist xlsx under `<course>/data/gkp/`
 3. **GKP features** — `cli.build_gkp_set_features` (uses cached `Saved Keyword Stats*.csv`)
 4. **Model fit** — `uv run fit-models` → `model_manifest.json`
 5. **Two-stage plan** — `uv run run-pipeline --window-start … --window-end …`

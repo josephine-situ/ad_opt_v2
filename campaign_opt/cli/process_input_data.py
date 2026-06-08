@@ -5,26 +5,28 @@ from __future__ import annotations
 
 import argparse
 
-from campaign_opt.paths import REPORTS_DIR, data_path
+from campaign_opt.cli.course_arg import add_course_arg
+from campaign_opt.paths import data_path, reports_dir
 from utils.data_processing import clean_kw_day_panel
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Clean pulled Google Ads kw-day-panel")
+    add_course_arg(parser)
     parser.add_argument(
         "--input-file",
         default="",
-        help="API kw-day-panel CSV. Defaults to sys_think/data/reports/kw-day-panel.csv.",
+        help="API kw-day-panel CSV. Defaults to <course>/data/reports/kw-day-panel.csv.",
     )
     parser.add_argument(
         "--output-file",
         default="",
-        help="Cleaned kw-day-panel CSV. Defaults to sys_think/data/processed/kw-day-panel.csv.",
+        help="Cleaned kw-day-panel CSV. Defaults to <course>/data/processed/kw-day-panel.csv.",
     )
 
     args = parser.parse_args()
-    input_file = args.input_file or str(REPORTS_DIR / "kw-day-panel.csv")
-    output_file = args.output_file or str(data_path("processed", "kw-day-panel.csv"))
+    input_file = args.input_file or str(reports_dir(args.course) / "kw-day-panel.csv")
+    output_file = args.output_file or str(data_path(args.course, "processed", "kw-day-panel.csv"))
 
     print(f"Cleaning kw-day-panel: {input_file}")
     clean_kw_day_panel(input_file, output_file)

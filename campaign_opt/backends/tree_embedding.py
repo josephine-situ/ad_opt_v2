@@ -11,7 +11,7 @@ import pandas as pd
 from gurobipy import GRB
 from sklearn.tree import _tree
 
-from campaign_opt.modeling import _prep_xy
+from campaign_opt.training_matrix import prep_xy
 
 
 TreePath = tuple[list[tuple[int, str, float]], float, int | None]
@@ -286,7 +286,7 @@ def _pwl_points_for_sklearn_pipeline(
     y_pts: list[float] = []
     for b in sorted(eval_pts):
         row = _row_at_budget(row_template, b, target)
-        X, _ = _prep_xy(row, target, feature_cols)
+        X, _ = prep_xy(row, target, feature_cols)
         y = float(pipeline.predict(X)[0])
         x_pts.append(float(b))
         y_pts.append(y)
@@ -337,7 +337,7 @@ def _predict_at_budget(
     budget: float,
 ) -> float:
     row = _row_at_budget(row_template, budget, target)
-    X, _ = _prep_xy(row, target, feature_cols)
+    X, _ = prep_xy(row, target, feature_cols)
     return float(pipeline.predict(X)[0])
 
 

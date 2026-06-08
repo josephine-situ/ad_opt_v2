@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from campaign_opt.paths import GKP_DIR, PROCESSED_DIR, data_path
+from campaign_opt.paths import data_path, gkp_dir, processed_dir
 from config import COURSE_CONFIG
 from utils.data_processing import _extract_region_from_campaign
 from utils.date_features import add_calendar_features
@@ -41,9 +41,9 @@ MATCH_TYPE_LIST_COLS = {
 
 def data_paths(course: str = "sys_think") -> dict[str, Path]:
     return {
-        "processed": PROCESSED_DIR,
-        "gkp": GKP_DIR,
-        "cache": data_path("cache"),
+        "processed": processed_dir(course),
+        "gkp": gkp_dir(course),
+        "cache": data_path(course, "cache"),
     }
 
 
@@ -230,17 +230,22 @@ def load_or_build_embeddings(
     return emb_map
 
 
-def _anchor_matrix(emb_map: dict[str, np.ndarray]) -> np.ndarray:
+def anchor_matrix(emb_map: dict[str, np.ndarray]) -> np.ndarray:
+    """Build (n_anchors, dim) matrix of COURSE_ANCHORS embeddings, computing any missing on the fly."""
     anchor_vecs = []
-    for anchor in COURSE_ANCHORS:
-        key = anchor.lower().strip()
+    for anchor_text in COURSE_ANCHORS:
+        key = anchor_text.lower().strip()
         if key not in emb_map:
             from sentence_transformers import SentenceTransformer
 
             model = SentenceTransformer(EMBED_MODEL_DEFAULT)
-            emb_map[key] = model.encode([anchor], normalize_embeddings=True)[0]
+            emb_map[key] = model.encode([anchor_text], normalize_embeddings=True)[0]
         anchor_vecs.append(emb_map[key])
     return np.stack(anchor_vecs)
+
+
+# Backward-compatible alias.
+_anchor_matrix = anchor_matrix
 
 
 def keyword_set_semantic_features(

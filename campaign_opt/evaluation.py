@@ -15,9 +15,7 @@ from sklearn.metrics import mean_squared_error, r2_score
 from campaign_opt.decisions import build_segment_list, observed_min_daily_budget, region_of_segment
 from campaign_opt.features import train_holdout_split
 from campaign_opt.modeling import (
-    _build_preprocessor,
     _cv_rmse_member_weights,
-    _prep_xy,
     FITTERS,
     base_tournament_candidates,
     configured_evaluation_model_name,
@@ -25,6 +23,10 @@ from campaign_opt.modeling import (
     pipeline_feature_overview_lines,
     report_model_fit_diagnostics,
     warn_if_not_tournament_winner,
+)
+from campaign_opt.training_matrix import (
+    build_preprocessor,
+    prep_xy,
 )
 from campaign_opt.schema import CampaignOptConfig
 from campaign_opt.train_specs import TrainSpec, get_train_spec
@@ -94,7 +96,7 @@ def _predict_member_levels(
     if hasattr(member.pipeline, "predict_design_frame"):
         pred = member.pipeline.predict_design_frame(df)
     else:
-        X, _ = _prep_xy(df, target, feature_cols, y_col=spec.fit_y_col)
+        X, _ = prep_xy(df, target, feature_cols, y_col=spec.fit_y_col)
         if spec.budget_col != "daily_budget" and spec.budget_col in df.columns:
             X = X.rename(columns={spec.budget_col: "daily_budget"})
         pred = member.pipeline.predict(X)
@@ -123,14 +125,14 @@ def fit_member_on_train(
     target = config.target
     tr = spec.transform(train, target) if spec.transform else train
     sub = tr.dropna(subset=[target, "daily_budget", "segment"])
-    X, y = _prep_xy(sub, target, feature_cols, y_col=spec.fit_y_col)
+    X, y = prep_xy(sub, target, feature_cols, y_col=spec.fit_y_col)
     if spec.budget_col != "daily_budget":
         X = X.rename(columns={spec.budget_col: "daily_budget"})
 
     from campaign_opt.train_specs import build_estimator
 
     estimator = build_estimator(spec.name, hyperparams) if hyperparams else spec.estimator
-    pipe = Pipeline([("prep", _build_preprocessor(feature_cols, tr)), ("model", estimator)])
+    pipe = Pipeline([("prep", build_preprocessor(feature_cols, tr)), ("model", estimator)])
     from campaign_opt.recency_weights import training_row_recency_weights
 
     fit_kw: dict[str, Any] = {}
@@ -582,7 +584,7 @@ def baseline_levels_for_candidate_sets(
     if isinstance(model, EnsembleModel):
         levels = model.predict_levels(rows)
     else:
-        X, _ = _prep_xy(rows, target, feature_cols)
+        X, _ = prep_xy(rows, target, feature_cols)
         levels = np.asarray(model.predict(X), dtype=float)
     return {
         (str(dec["segment"]), str(dec["keyword_set_id"])): float(levels[i])
@@ -600,7 +602,7 @@ def _raw_predict_levels(
     """Unfloored level predictions for ensemble or single sklearn pipeline."""
     if isinstance(model, EnsembleModel):
         return model.predict_levels(rows)
-    X, _ = _prep_xy(rows, target, feature_cols)
+    X, _ = prep_xy(rows, target, feature_cols)
     return np.asarray(model.predict(X), dtype=float)
 
 
@@ -718,15 +720,15 @@ def build_plan_prediction_rows(
     Feature rows for post-solve sklearn checks.
 
     When ``candidates`` is provided, rows match the tree embed MILP path
-    (``_build_candidate_feature_rows`` + solved budgets). Otherwise falls back
+    (``build_candidate_feature_rows`` + solved budgets). Otherwise falls back
     to ``build_segment_decision_rows``.
     """
     feature_cols = get_context_feature_columns(config.context_features)
     target = config.target
     if candidates is not None and not candidates.empty:
-        from campaign_opt.backends.tree_embed import _build_candidate_feature_rows
+        from campaign_opt.backends.tree_embed import build_candidate_feature_rows
 
-        embed_rows, keys = _build_candidate_feature_rows(
+        embed_rows, keys = build_candidate_feature_rows(
             candidates, config, planning_date, set_features, panel=panel
         )
         return feature_rows_at_plan_budgets(plan_dec, embed_rows, keys, target)

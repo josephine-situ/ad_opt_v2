@@ -51,11 +51,11 @@ def compute_mean_shap_effects(
 
     import shap
 
-    from campaign_opt.modeling import _prep_xy
+    from campaign_opt.training_matrix import prep_xy
 
     prep = pipeline.named_steps["prep"]
     model = pipeline.named_steps["model"]
-    X, _ = _prep_xy(df, target, feature_cols)
+    X, _ = prep_xy(df, target, feature_cols)
     if X.empty:
         return None
     if len(X) > max_samples:

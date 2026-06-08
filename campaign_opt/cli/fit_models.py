@@ -18,12 +18,14 @@ from campaign_opt.modeling import (
     warn_if_not_tournament_winner,
 )
 from campaign_opt.optimize import require_optimizer_winner
+from campaign_opt.cli.course_arg import add_course_arg
 from campaign_opt.schema import default_config_path, load_campaign_config
 from utils.tee_logging import setup_tee_logging
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fit campaign response models.")
+    add_course_arg(parser)
     parser.add_argument("--config", default="")
     parser.add_argument("--exp-name", default="default")
     parser.add_argument(
@@ -33,7 +35,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config_path = default_config_path(args.exp_name) if not args.config else args.config
+    config_path = default_config_path(args.course, args.exp_name) if not args.config else args.config
     config = load_campaign_config(config_path)
     out_dir = config.exp_dir()
 

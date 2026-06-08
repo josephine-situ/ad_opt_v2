@@ -87,7 +87,8 @@ def time_series_cv_folds(
     return folds
 
 
-def _validation_kw(config) -> dict[str, int | float]:
+def validation_cv_kwargs(config) -> dict[str, int | float]:
+    """Extract ValidationConfig fields as kwargs for ``time_series_cv_folds``."""
     val = config.model_policy.validation
     return {
         "min_train_days": val.min_train_days,
@@ -96,6 +97,10 @@ def _validation_kw(config) -> dict[str, int | float]:
         "min_train_rows": val.min_train_rows,
         "min_val_rows": val.min_val_rows,
     }
+
+
+# Backward-compatible alias.
+_validation_kw = validation_cv_kwargs
 
 
 def _fold_context(train_fold: pd.DataFrame, val_fold: pd.DataFrame, date_col: str = "date") -> str:
@@ -144,7 +149,7 @@ def cross_validate_model(
     """Run ``fit_fn`` on each CV fold; return mean level-scale metrics."""
     val = config.model_policy.validation
     n_folds_eff = int(getattr(val, "cv_folds", n_folds))
-    folds = time_series_cv_folds(train, n_folds_eff, date_col=date_col, **_validation_kw(config))
+    folds = time_series_cv_folds(train, n_folds_eff, date_col=date_col, **validation_cv_kwargs(config))
 
     if not folds:
         warnings.warn(

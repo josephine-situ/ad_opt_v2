@@ -1,4 +1,4 @@
 {
-  "latex-workshop.latex.rootFile": "presentation/SUMMARY_presentation.tex",
+  "latex-workshop.latex.autoBuild.run": "onSave",
   "latex-workshop.latex.outDir": "%DIR%/build"
 }

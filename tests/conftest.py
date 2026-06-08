@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+
 _SYNTHETIC_PANEL_FILES = (
     "campaign-day-panel.csv",
     "campaign-summary.csv",
@@ -30,28 +31,37 @@ def install_synthetic_sys_think_data(
     Never writes into the repo's tracked ``sys_think/data/processed`` tree.
     """
     src = synthetic_course / course / "processed"
-    dst = tmp_path / "sys_think" / "data" / "processed"
+    dst = tmp_path / course / "data" / "processed"
     dst.mkdir(parents=True, exist_ok=True)
     for name in _SYNTHETIC_PANEL_FILES:
         path = src / name
         if path.exists():
             shutil.copy(path, dst / name)
 
-    gkp_dst = tmp_path / "sys_think" / "data" / "gkp"
+    gkp_dst = tmp_path / course / "data" / "gkp"
     gkp_dst.mkdir(parents=True, exist_ok=True)
 
     def _data_paths(course_name: str) -> dict[str, Path]:
-        base = tmp_path / "sys_think" / "data"
+        base = tmp_path / course_name / "data"
         return {
             "processed": base / "processed",
             "gkp": base / "gkp",
             "cache": base / "cache",
         }
 
+    def _processed_dir(course_name: str = "sys_think") -> Path:
+        return tmp_path / course_name / "data" / "processed"
+
+    def _gkp_dir(course_name: str = "sys_think") -> Path:
+        return tmp_path / course_name / "data" / "gkp"
+
+    def _data_dir(course_name: str = "sys_think") -> Path:
+        return tmp_path / course_name / "data"
+
     monkeypatch.setattr("utils.campaign_features.data_paths", _data_paths)
-    monkeypatch.setattr("campaign_opt.paths.PROCESSED_DIR", dst)
-    monkeypatch.setattr("campaign_opt.paths.GKP_DIR", gkp_dst)
-    monkeypatch.setattr("campaign_opt.paths.DATA_DIR", tmp_path / "sys_think" / "data")
+    monkeypatch.setattr("campaign_opt.paths.processed_dir", _processed_dir)
+    monkeypatch.setattr("campaign_opt.paths.gkp_dir", _gkp_dir)
+    monkeypatch.setattr("campaign_opt.paths.data_dir", _data_dir)
     monkeypatch.setattr(
         "utils.keyword_allowlist.load_enrollment_keyword_allowlist",
         lambda _course="sys_think": {"test keyword", "another keyword"},

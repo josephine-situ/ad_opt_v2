@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from gurobipy import GRB
 
-from campaign_opt.backends.tree_embed import _build_candidate_feature_rows
+from campaign_opt.backends.tree_embed import build_candidate_feature_rows
 from campaign_opt.backends.tree_embedding import (
     _budget_affine,
     _raw_budget_breakpoints_from_trees,
@@ -22,7 +22,7 @@ from campaign_opt.decisions import (
     build_segment_list,
     historical_budget_bounds,
 )
-from campaign_opt.modeling import _prep_xy
+from campaign_opt.training_matrix import prep_xy
 from campaign_opt.optimize import _fit_and_save_embed_model
 from campaign_opt.schema import default_config_path, load_campaign_config
 from utils.campaign_features import (
@@ -69,9 +69,9 @@ def test_embed_matches_sklearn_at_tree_thresholds():
     """Embedding must be exact at every budget — especially at tree split thresholds."""
     from campaign_opt.features import prepare_modeling_data, train_holdout_split
 
-    if not default_config_path("default").exists():
+    if not default_config_path("sys_think", "default").exists():
         return
-    config = load_campaign_config(default_config_path("default"))
+    config = load_campaign_config(default_config_path("sys_think", "default"))
     out_dir = config.exp_dir()
     manifest_path = out_dir / "model_manifest.json"
     if not manifest_path.exists():
@@ -97,7 +97,7 @@ def test_embed_matches_sklearn_at_tree_thresholds():
     pipeline = joblib.load(model_path)
     planning_date = pd.Timestamp(production["date"].max())
     set_features = build_keyword_set_feature_table(config.course)
-    embed_rows, keys = _build_candidate_feature_rows(
+    embed_rows, keys = build_candidate_feature_rows(
         candidates, config, planning_date, set_features
     )
     feature_cols = get_context_feature_columns(config.context_features)
@@ -115,7 +115,7 @@ def test_embed_matches_sklearn_at_tree_thresholds():
         row = embed_rows.iloc[i : i + 1].copy()
         row["daily_budget"] = budget
         row[target] = 0.0
-        X, _ = _prep_xy(row, target, feature_cols)
+        X, _ = prep_xy(row, target, feature_cols)
         return X
 
     X0 = feature_row_at(0.0)

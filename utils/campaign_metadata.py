@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from utils.data_processing import _clean_campaign, _clean_keyword, _clean_match_type
+from utils.data_processing import _clean_campaign, _clean_match_type, clean_keyword_series as _clean_keyword
 
 
 def read_keyword_day_index(path: Path) -> dict[str, list[tuple[str, str, str]]]:

@@ -8,14 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
-def _clean_keyword(keyword: pd.Series) -> pd.Series:
-    return (
-        keyword.astype("string")
-        .str.replace(r'["\[\]]', "", regex=True)
-        .str.lower()
-        .str.strip()
-    )
+from utils.data_processing import clean_keyword_series as _clean_keyword
 
 
 def load_gkp_keyword_stats(gkp_dir: str | Path) -> pd.DataFrame:

@@ -7,7 +7,7 @@ import pytest
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.pipeline import Pipeline
 
-from campaign_opt.modeling import _build_preprocessor, _prep_xy
+from campaign_opt.training_matrix import build_preprocessor, prep_xy
 from campaign_opt.shap_effects import compute_mean_shap_effects, shap_available
 
 
@@ -23,10 +23,10 @@ def test_compute_mean_shap_effects_without_shap():
         }
     )
     feature_cols: list[str] = []
-    X, y = _prep_xy(df, "clicks", feature_cols)
+    X, y = prep_xy(df, "clicks", feature_cols)
     pipe = Pipeline(
         [
-            ("prep", _build_preprocessor(feature_cols, df)),
+            ("prep", build_preprocessor(feature_cols, df)),
             ("model", RandomForestRegressor(n_estimators=5, max_depth=2, random_state=0)),
         ]
     )
@@ -55,10 +55,10 @@ def test_compute_mean_shap_effects_tree_model():
         }
     )
     feature_cols = ["embed_cohesion"]
-    X, y = _prep_xy(df, "clicks", feature_cols)
+    X, y = prep_xy(df, "clicks", feature_cols)
     pipe = Pipeline(
         [
-            ("prep", _build_preprocessor(feature_cols, df)),
+            ("prep", build_preprocessor(feature_cols, df)),
             ("model", RandomForestRegressor(n_estimators=5, max_depth=2, random_state=0)),
         ]
     )

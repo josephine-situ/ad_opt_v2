@@ -52,11 +52,11 @@ def training_row_recency_weights(
     date_col: str = "date",
 ) -> np.ndarray | None:
     """Weights aligned with tree/sklearn training rows (same dropna as ``_prep_xy``)."""
-    from campaign_opt.modeling import _training_subframe
+    from campaign_opt.training_matrix import training_subframe
 
     half_life = recency_half_life_days(config)
     if half_life is None:
         return None
     target = config.target
-    sub = _training_subframe(train, target, y_col=y_col)
+    sub = training_subframe(train, target, y_col=y_col)
     return recency_sample_weights(sub, half_life_days=half_life, date_col=date_col)

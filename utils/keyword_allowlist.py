@@ -9,11 +9,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from campaign_opt.paths import GKP_DIR, require_enrollment_allowlist as paths_require_enrollment_allowlist
+from campaign_opt.paths import gkp_dir, require_enrollment_allowlist as paths_require_enrollment_allowlist
 from utils.campaign_features import MATCH_TYPE_LIST_COLS, resolve_positive_keyword_column
 
 _XLSX_NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
-_ENROLLMENT_FILE_GLOB = "*Keywords*Enrollments*.xlsx"
 _KEYWORD_LIST_COLS = (
     "positive_keywords",
     "unique_keywords",
@@ -31,9 +30,9 @@ def normalize_keyword(keyword: str) -> str:
     return clean_keyword_text(keyword).lower()
 
 
-def require_enrollment_allowlist() -> Path:
+def require_enrollment_allowlist(course: str = "sys_think") -> Path:
     """Return enrollment allowlist path or raise with setup instructions."""
-    return paths_require_enrollment_allowlist()
+    return paths_require_enrollment_allowlist(course)
 
 
 def _read_xlsx_first_sheet(path: Path) -> list[list[str]]:
@@ -70,7 +69,7 @@ def should_refresh_keyword_candidates(course: str, candidates_path: Path) -> boo
 
 def enrollment_keyword_allowlist_path(course: str) -> Path:
     """Return newest enrollment allowlist xlsx (required for keyword candidate builds)."""
-    return require_enrollment_allowlist()
+    return require_enrollment_allowlist(course)
 
 
 def load_enrollment_keyword_allowlist_ordered(course: str) -> list[str]:
@@ -117,6 +116,24 @@ def load_enrollment_keyword_allowlist(course: str) -> set[str]:
     return set(load_enrollment_keyword_allowlist_ordered(course))
 
 
+def allowlist_keys_in_order(
+    allowlist: set[str],
+    allowlist_order: list[str] | None,
+) -> list[str]:
+    """Return allowlist keywords in priority order, with remaining keys appended alphabetically."""
+    keys_in_order: list[str] = []
+    seen: set[str] = set()
+    for key in allowlist_order or sorted(allowlist):
+        if key in allowlist and key not in seen:
+            seen.add(key)
+            keys_in_order.append(key)
+    for key in sorted(allowlist):
+        if key not in seen:
+            seen.add(key)
+            keys_in_order.append(key)
+    return keys_in_order
+
+
 def _split_keyword_field(raw: object) -> list[str]:
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return []
@@ -161,16 +178,7 @@ def enrollment_allowlist_keywords(
                 if key in allowlist:
                     canonical[key] = clean_keyword_text(kw)
 
-    keys_in_order: list[str] = []
-    seen_keys: set[str] = set()
-    for key in allowlist_order or sorted(allowlist):
-        if key in allowlist and key not in seen_keys:
-            seen_keys.add(key)
-            keys_in_order.append(key)
-    for key in sorted(allowlist):
-        if key not in seen_keys:
-            seen_keys.add(key)
-            keys_in_order.append(key)
+    keys_in_order = allowlist_keys_in_order(allowlist, allowlist_order)
 
     for key in keys_in_order:
         canonical.setdefault(key, key)

@@ -86,8 +86,8 @@ class CampaignOptConfig:
 
     def exp_dir(self, base: Path | None = None) -> Path:
         if base is not None:
-            return base / self.exp_name
-        return paths_exp_dir(self.exp_name)
+            return base / "campaign" / self.exp_name
+        return paths_exp_dir(self.course, self.exp_name)
 
 
 def _parse_model_policy(raw: dict[str, Any]) -> ModelPolicy:
@@ -136,5 +136,5 @@ def load_campaign_config(path: str | Path) -> CampaignOptConfig:
     )
 
 
-def default_config_path(exp_name: str = "default") -> Path:
-    return campaign_config_path(exp_name)
+def default_config_path(course: str = "sys_think", exp_name: str = "default") -> Path:
+    return campaign_config_path(course, exp_name)

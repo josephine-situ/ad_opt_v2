@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import argparse
 
+from campaign_opt.cli.course_arg import add_course_arg
 from campaign_opt.decisions import parse_allowed_match_types, parse_excluded_regions
 from campaign_opt.schema import default_config_path, load_campaign_config
-from config import COURSE
 from utils.keyword_candidates import (
     DEFAULT_TOP_N_VALUES,
     build_segment_candidates,
@@ -19,6 +19,7 @@ from utils.tee_logging import setup_tee_logging
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build segment keyword-set candidates.")
+    add_course_arg(parser)
     parser.add_argument("--config", default="")
     parser.add_argument("--exp-name", default="default")
     parser.add_argument("--top-n", type=int, default=30, help="Panel rank cap when --top-n-values is not set")
@@ -42,14 +43,15 @@ def main() -> None:
 
     setup_tee_logging(log_file=None, default_log_prefix="build_candidates")
 
-    config_path = default_config_path(args.exp_name) if not args.config else args.config
+    config_path = default_config_path(args.course, args.exp_name) if not args.config else args.config
     config = load_campaign_config(config_path)
+    course = config.course
     allowed_match_types = parse_allowed_match_types(config.constraints)
     excluded_regions = parse_excluded_regions(config.constraints)
 
     top_n_values = [int(x.strip()) for x in args.top_n_values.split(",") if x.strip()]
     candidates, extended_sets = build_segment_candidates(
-        COURSE,
+        course,
         top_n=args.top_n,
         top_n_values=top_n_values or None,
         set_size=args.set_size or None,
@@ -61,13 +63,13 @@ def main() -> None:
         include_dispersion_synthetic=not args.no_dispersion_synthetic,
         include_composite_synthetic=not args.no_composite_synthetic,
     )
-    _, _, display_dir = write_segment_keyword_candidate_files(COURSE, candidates, extended_sets)
+    _, _, display_dir = write_segment_keyword_candidate_files(course, candidates, extended_sets)
     print(f"Wrote {len(candidates)} candidate rows across {candidates['segment'].nunique()} segments.")
     print(f"Updated keyword-sets-display at {display_dir}")
 
     if args.verify:
         caps = tuple(top_n_values or list(DEFAULT_TOP_N_VALUES))
-        issues = verify_segment_keyword_candidates(COURSE, candidates, extended_sets, top_n_values=caps)
+        issues = verify_segment_keyword_candidates(course, candidates, extended_sets, top_n_values=caps)
         if issues:
             print("Verification failed:")
             for issue in issues:

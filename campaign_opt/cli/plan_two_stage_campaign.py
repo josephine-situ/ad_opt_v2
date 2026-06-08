@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from campaign_opt.cli.course_arg import add_course_arg
 from campaign_opt.pipeline_inputs import load_planning_inputs, optimizer_manifest_for_backtest
 from campaign_opt.schema import default_config_path, load_campaign_config
 from campaign_opt.two_stage_plan import optimize_budgets_for_day, select_keyword_sets_for_window
@@ -20,6 +21,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Two-stage campaign plan (stage-1 keyword sets + stage-2 budgets)."
     )
+    add_course_arg(parser)
     parser.add_argument("--config", default="")
     parser.add_argument("--exp-name", default="default")
     parser.add_argument("--budget", type=float, default=None)
@@ -42,7 +44,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config_path = default_config_path(args.exp_name) if not args.config else args.config
+    config_path = default_config_path(args.course, args.exp_name) if not args.config else args.config
     config = load_campaign_config(config_path)
     out_dir = Path(args.output_dir) if args.output_dir else config.exp_dir() / "two_stage_plan"
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -13,6 +13,7 @@ import pandas as pd
 from campaign_opt.paths import data_path
 from utils.campaign_features import (
     COURSE_ANCHORS,
+    anchor_matrix,
     _pairwise_mean_distance,
     add_segment_column,
     data_paths,
@@ -21,6 +22,7 @@ from utils.campaign_features import (
     load_or_build_embeddings,
 )
 from utils.keyword_allowlist import (
+    allowlist_keys_in_order,
     clean_keyword_text,
     enrollment_allowlist_keywords,
     filter_keyword_list,
@@ -57,21 +59,8 @@ def _segment_allowed_match_types(segment_row: pd.Series) -> list[str]:
     return allowed if allowed else ["Broad", "Phrase", "Exact"]
 
 
-def _allowlist_keys_in_order(
-    allowlist: set[str],
-    allowlist_order: list[str] | None,
-) -> list[str]:
-    keys_in_order: list[str] = []
-    seen: set[str] = set()
-    for key in allowlist_order or sorted(allowlist):
-        if key in allowlist and key not in seen:
-            seen.add(key)
-            keys_in_order.append(key)
-    for key in sorted(allowlist):
-        if key not in seen:
-            seen.add(key)
-            keys_in_order.append(key)
-    return keys_in_order
+# Re-export for backward compatibility; canonical definition in keyword_allowlist.
+_allowlist_keys_in_order = allowlist_keys_in_order
 
 
 def _build_segment_panel_maps(
@@ -446,17 +435,8 @@ def _frozenset_union(by_mt: dict[str, list[str]]) -> frozenset[str]:
     return frozenset(normalize_keyword(k) for ks in by_mt.values() for k in ks if k)
 
 
-def _anchor_matrix(emb_map: dict[str, np.ndarray]) -> np.ndarray:
-    vecs = []
-    for anchor in COURSE_ANCHORS:
-        key = anchor.lower().strip()
-        if key not in emb_map:
-            from sentence_transformers import SentenceTransformer
-
-            model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-            emb_map[key] = model.encode([anchor], normalize_embeddings=True)[0]
-        vecs.append(emb_map[key])
-    return np.stack(vecs)
+# Re-export for backward compatibility; canonical definition in campaign_features.
+_anchor_matrix = anchor_matrix
 
 
 def _top_keywords_by_course_sim(
@@ -829,7 +809,7 @@ def build_segment_candidates(
         summary = summary[~summary["region"].isin(excluded_regions)]
     if allowed_match_types:
         summary = summary[summary["match_types"].isin(allowed_match_types)]
-    require_enrollment_allowlist()
+    require_enrollment_allowlist(course)
     if allowed_keywords is None:
         allowed_keywords = load_enrollment_keyword_allowlist(course)
     allowlist_ordered = load_enrollment_keyword_allowlist_ordered(course)
@@ -838,7 +818,7 @@ def build_segment_candidates(
         keyword_sets = filter_keyword_sets_dataframe(keyword_sets, allowed_keywords)
     positive_col = "positive_keywords"
 
-    kw_path = data_path("processed", "kw-day-panel.csv")
+    kw_path = data_path(course, "processed", "kw-day-panel.csv")
     kw_day = pd.read_csv(kw_path) if kw_path.exists() else pd.DataFrame()
 
     allowed_set_ids = set(keyword_sets["keyword_set_id"].astype(str))
@@ -1139,7 +1119,7 @@ def write_segment_keyword_candidate_files(
     """
     from utils.keyword_sets_display import export_keyword_sets_display
 
-    processed = data_path("processed")
+    processed = data_path(course, "processed")
     processed.mkdir(parents=True, exist_ok=True)
     cand_path = processed / "segment-keyword-candidates.csv"
     ext_path = processed / "campaign-keyword-sets-extended.csv"
@@ -1166,7 +1146,7 @@ def verify_segment_keyword_candidates(
     Checks allowlist filtering, ``top_conv`` multi-cap sources, and per-segment coverage.
     Returns a list of human-readable issue strings (empty when OK).
     """
-    processed = data_path("processed")
+    processed = data_path(course, "processed")
     cand_path = processed / "segment-keyword-candidates.csv"
     ext_path = processed / "campaign-keyword-sets-extended.csv"
     if candidates is None:
@@ -1224,8 +1204,8 @@ def ensure_segment_keyword_candidates(
     """Write segment-keyword-candidates and extended sets when missing or allowlist is newer."""
     from utils.keyword_allowlist import should_refresh_keyword_candidates
 
-    require_enrollment_allowlist()
-    processed = data_path("processed")
+    require_enrollment_allowlist(course)
+    processed = data_path(course, "processed")
     cand_path = processed / "segment-keyword-candidates.csv"
     if not should_refresh_keyword_candidates(course, cand_path):
         return cand_path

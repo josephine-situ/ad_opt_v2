@@ -13,6 +13,11 @@ class CourseConfig(TypedDict, total=False):
 
 
 REGION_CONFIG = {
+    "ml": {
+        "USA": ["United States"],
+        "A": ["United Kingdom", "Canada", "Australia"],
+        "B": ["India", "Brazil", "Mexico"],
+    },
     "sys_think": {
         "USA": ["United States"],
         "A": [
@@ -95,6 +100,17 @@ REGION_CONFIG = {
 COURSE = "sys_think"
 
 COURSE_CONFIG: dict[str, CourseConfig] = {
+    # Template for adding a new course — copy and fill in course-specific values.
+    "ml": {
+        "min_date": "2024-01-01",
+        "start_dates": ["2024-01-01"],
+        "campaign_budget": 400.0,
+        "current_campaign_start_date": "2026-01-01",
+        "current_campaign_end_date": "2026-06-30",
+        "regions": REGION_CONFIG["ml"],
+        "conversion_actions": ["Purchase"],
+        "purchase_actions": ["Purchase"],
+    },
     "sys_think": {
         "min_date": "2024-06-01",
         "start_dates": [

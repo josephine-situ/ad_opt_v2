@@ -15,8 +15,8 @@ from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
-from campaign_opt.paths import DATA_DIR, PROCESSED_DIR, data_path
-from config import COURSE, COURSE_CONFIG
+from campaign_opt.cli.course_arg import add_course_arg
+from campaign_opt.paths import data_dir, data_path, processed_dir
 from utils.campaign_metadata import read_keyword_day_index
 
 BUDGET_CHANGE_RE = re.compile(r"\bbudget\b", re.IGNORECASE)
@@ -1397,40 +1397,40 @@ def write_csv(
         writer.writerows(rows)
 
 
-def find_change_history_html(html_file: Path | None = None) -> Path:
-    """Locate the saved change-history HTML under sys_think/data/."""
+def find_change_history_html(course: str, html_file: Path | None = None) -> Path:
+    """Locate the saved change-history HTML under <course>/data/."""
     if html_file is not None:
         if not html_file.exists():
             raise FileNotFoundError(f"Change history HTML not found: {html_file}")
         return html_file
 
-    data_dir = DATA_DIR
-    if not data_dir.is_dir():
+    course_data_dir = data_dir(course)
+    if not course_data_dir.is_dir():
         raise FileNotFoundError(
-            f"Course data directory not found: {data_dir}. "
+            f"Course data directory not found: {course_data_dir}. "
             "Save the Google Ads change history HTML there or pass --html-file."
         )
 
-    candidates = sorted(data_dir.glob("*.html"))
+    candidates = sorted(course_data_dir.glob("*.html"))
     preferred = [path for path in candidates if "change history" in path.name.lower()]
     pool = preferred or candidates
     if len(pool) == 1:
         return pool[0]
     if not pool:
         raise FileNotFoundError(
-            f"No change history HTML in {data_dir}. "
+            f"No change history HTML in {course_data_dir}. "
             "Save the Google Ads export there or pass --html-file."
         )
     names = ", ".join(path.name for path in pool)
     raise FileNotFoundError(
-        f"Multiple HTML files in {data_dir}: {names}. Pass --html-file explicitly."
+        f"Multiple HTML files in {course_data_dir}: {names}. Pass --html-file explicitly."
     )
 
 
-def resolve_keyword_panel(kw_day_panel: Path | None) -> Path | None:
+def resolve_keyword_panel(course: str, kw_day_panel: Path | None) -> Path | None:
     if kw_day_panel:
         return kw_day_panel
-    processed = data_path("processed", "kw-day-panel.csv")
+    processed = data_path(course, "processed", "kw-day-panel.csv")
     return processed if processed.exists() else None
 
 
@@ -1438,11 +1438,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Parse saved Google Ads change history HTML into budget and keyword CSVs."
     )
+    add_course_arg(parser)
     parser.add_argument(
         "--html-file",
         type=Path,
         default=None,
-        help="Saved Google Ads change history HTML under sys_think/data/.",
+        help="Saved Google Ads change history HTML under <course>/data/.",
     )
     parser.add_argument(
         "--campaign-summary-output",
@@ -1464,16 +1465,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    processed_dir = PROCESSED_DIR
+    proc_dir = processed_dir(args.course)
 
-    html_file = find_change_history_html(args.html_file)
+    html_file = find_change_history_html(args.course, args.html_file)
     campaign_summary_output = args.campaign_summary_output or (
-        processed_dir / "campaign-summary.csv"
+        proc_dir / "campaign-summary.csv"
     )
     keyword_sets_output = args.keyword_sets_output or (
-        processed_dir / "campaign-keyword-sets.csv"
+        proc_dir / "campaign-keyword-sets.csv"
     )
-    keyword_panel = resolve_keyword_panel(args.kw_day_panel)
+    keyword_panel = resolve_keyword_panel(args.course, args.kw_day_panel)
 
     print(f"HTML: {html_file}", file=sys.stderr)
     print(f"Campaign summary: {campaign_summary_output}", file=sys.stderr)

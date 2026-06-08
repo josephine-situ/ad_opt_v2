@@ -9,6 +9,7 @@ import pandas as pd
 
 from campaign_opt.backtest_analysis import analyze_backtest_run, backtest_window_dir, save_backtest_config
 from campaign_opt.backtest_two_stage import run_two_stage_backtest
+from campaign_opt.cli.course_arg import add_course_arg
 from campaign_opt.pipeline_inputs import load_planning_inputs
 from campaign_opt.schema import default_config_path, load_campaign_config
 from config import COURSE_CONFIG
@@ -17,6 +18,7 @@ from utils.tee_logging import setup_tee_logging
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Two-stage walk-forward campaign backtest.")
+    add_course_arg(parser)
     parser.add_argument("--config", default="")
     parser.add_argument("--exp-name", default="default")
     parser.add_argument("--start", required=True, help="Backtest start date YYYY-MM-DD")
@@ -59,7 +61,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config_path = default_config_path(args.exp_name) if not args.config else args.config
+    config_path = default_config_path(args.course, args.exp_name) if not args.config else args.config
     config = load_campaign_config(config_path)
     if args.optimizer_backend:
         config.model_policy.optimizer_backend = args.optimizer_backend
@@ -70,7 +72,7 @@ def main() -> None:
 
     start = pd.Timestamp(args.day or args.start)
     end = pd.Timestamp(args.day or args.end)
-    out_dir = backtest_window_dir(args.exp_name, args.start, args.end)
+    out_dir = backtest_window_dir(args.course, args.exp_name, args.start, args.end)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     setup_tee_logging(log_file=None, default_log_prefix="backtest_two_stage")
