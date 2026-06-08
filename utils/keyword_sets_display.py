@@ -7,16 +7,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from utils.campaign_features import MATCH_TYPE_LIST_COLS, data_paths
-from utils.keyword_allowlist import clean_keyword_text
+from utils.campaign_features import MATCH_TYPE_LIST_COLS, data_paths, load_keyword_sets_table
+from utils.data_processing import split_keyword_field
 
 
 def _parse_keyword_list(value: object) -> list[str]:
-    if pd.isna(value) or not str(value).strip():
-        return []
-    return sorted(
-        k for k in (clean_keyword_text(part) for part in str(value).split(";")) if k
-    )
+    return sorted(split_keyword_field(value))
 
 
 def keyword_set_display_frame(row: pd.Series) -> pd.DataFrame:
@@ -24,16 +20,6 @@ def keyword_set_display_frame(row: pd.Series) -> pd.DataFrame:
     by_type = {mt: _parse_keyword_list(row[col]) for mt, col in MATCH_TYPE_LIST_COLS.items()}
     n_rows = max((len(words) for words in by_type.values()), default=0)
     return pd.DataFrame({mt: (by_type[mt] + [""] * n_rows)[:n_rows] for mt in MATCH_TYPE_LIST_COLS})
-
-
-def load_keyword_sets_table(course: str) -> pd.DataFrame:
-    processed = data_paths(course)["processed"]
-    ext_path = processed / "campaign-keyword-sets-extended.csv"
-    base_path = processed / "campaign-keyword-sets.csv"
-    path = ext_path if ext_path.exists() else base_path
-    if not path.exists():
-        raise FileNotFoundError(f"No keyword sets file at {ext_path} or {base_path}")
-    return pd.read_csv(path)
 
 
 def keyword_set_ids_from_plan(plan_path: Path) -> list[str]:

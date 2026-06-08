@@ -2,31 +2,16 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pandas as pd
 
 from utils.data_processing import clean_keyword_series as _clean_keyword
+from utils.data_processing import clean_keyword_text, split_keyword_field
 
 EXISTING_ORIGIN = "existing"
 MAX_KEYWORD_LEN = 80
 MAX_KEYWORD_WORDS = 10
-
-
-def clean_keyword_text(kw: object) -> str | None:
-    """Match ad_opt compare_keywords cleaning (brackets, specials, quotes)."""
-    if pd.isna(kw):
-        return None
-
-    text = str(kw).strip()
-    text = text.replace("'", "").replace('"', "").replace("+", "")
-    text = re.sub(r"\[.*?\]", "", text).strip()
-    if not re.match(r"^[a-zA-Z0-9\s']*$", text):
-        return None
-    if not text or text.isspace():
-        return None
-    return text
 
 
 def passes_length_filters(kw: str) -> bool:
@@ -36,10 +21,10 @@ def passes_length_filters(kw: str) -> bool:
 
 
 def clean_and_filter_keyword(kw: object) -> str | None:
-    cleaned = clean_keyword_text(kw)
+    cleaned = clean_keyword_text(kw, strict=True)
     if cleaned is None:
         return None
-    normalized = " ".join(cleaned.split()).lower()
+    normalized = cleaned.lower()
     if not passes_length_filters(normalized):
         return None
     return normalized
@@ -63,8 +48,10 @@ def _keywords_from_kw_day_panel(path: Path, *, min_clicks: int) -> set[str]:
     return keywords
 
 
-def _keywords_from_keyword_sets(path: Path) -> set[str]:
-    df = pd.read_csv(path)
+def _keywords_from_keyword_sets(course: str) -> set[str]:
+    from utils.campaign_features import load_keyword_sets
+
+    df = load_keyword_sets(course)
     keywords: set[str] = set()
     list_columns = [
         col
@@ -79,7 +66,7 @@ def _keywords_from_keyword_sets(path: Path) -> set[str]:
     ]
     for col in list_columns:
         for raw in df[col].dropna():
-            for part in str(raw).split(";"):
+            for part in split_keyword_field(raw):
                 cleaned = clean_and_filter_keyword(part)
                 if cleaned:
                     keywords.add(cleaned)
@@ -108,9 +95,7 @@ def collect_existing_keywords(
         keywords |= found
 
     if include_keyword_sets:
-        sets_path = processed_dir(course) / "campaign-keyword-sets.csv"
-        if sets_path.exists():
-            keywords |= _keywords_from_keyword_sets(sets_path)
+        keywords |= _keywords_from_keyword_sets(course)
 
     return keywords
 

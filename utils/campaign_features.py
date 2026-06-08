@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from utils.paths import data_path, gkp_dir, processed_dir
-from utils.data_processing import _extract_region_from_campaign
+from utils.data_processing import _extract_region_from_campaign, clean_keyword_sets_dataframe
 from utils.date_features import add_calendar_features
 from utils.gkp_features import (
     aggregate_gkp_to_keyword_sets,
@@ -92,7 +92,19 @@ def resolve_positive_keyword_column(keyword_sets: pd.DataFrame) -> tuple[pd.Data
 def load_keyword_sets(course: str) -> pd.DataFrame:
     path = data_paths(course)["processed"] / "campaign-keyword-sets.csv"
     keyword_sets, _ = resolve_positive_keyword_column(pd.read_csv(path))
-    return keyword_sets
+    return clean_keyword_sets_dataframe(keyword_sets)
+
+
+def load_keyword_sets_table(course: str) -> pd.DataFrame:
+    """Load base or extended keyword-set table with keyword columns cleaned."""
+    processed = data_paths(course)["processed"]
+    ext_path = processed / "campaign-keyword-sets-extended.csv"
+    base_path = processed / "campaign-keyword-sets.csv"
+    path = ext_path if ext_path.exists() else base_path
+    if not path.exists():
+        raise FileNotFoundError(f"No keyword sets file at {ext_path} or {base_path}")
+    keyword_sets, _ = resolve_positive_keyword_column(pd.read_csv(path))
+    return clean_keyword_sets_dataframe(keyword_sets)
 
 
 def _merge_keyword_set_tables(base: pd.DataFrame, extended: pd.DataFrame) -> pd.DataFrame:
@@ -119,6 +131,7 @@ def load_keyword_sets_for_features(course: str) -> pd.DataFrame:
     ext_path = data_paths(course)["processed"] / "campaign-keyword-sets-extended.csv"
     if ext_path.exists():
         extended, _ = resolve_positive_keyword_column(pd.read_csv(ext_path))
+        extended = clean_keyword_sets_dataframe(extended)
         merged = _merge_keyword_set_tables(base, extended)
     else:
         merged = base

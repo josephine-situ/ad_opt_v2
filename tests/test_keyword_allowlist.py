@@ -5,17 +5,15 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from utils.paths import gkp_dir
+from utils.data_processing import clean_keyword_text, normalize_keyword
 from utils.keyword_allowlist import (
-    require_enrollment_allowlist,
-    clean_keyword_text,
     enrollment_allowlist_keywords,
     filter_keyword_list,
     filter_keyword_sets_dataframe,
     load_enrollment_keyword_allowlist,
     load_enrollment_keyword_allowlist_ordered,
-    normalize_keyword,
 )
+from utils.paths import gkp_dir, require_enrollment_allowlist
 
 
 def test_normalize_keyword_strips_brackets():
@@ -25,6 +23,17 @@ def test_normalize_keyword_strips_brackets():
 def test_clean_keyword_text_collapses_whitespace():
     assert clean_keyword_text("system  dynamics") == "system dynamics"
     assert normalize_keyword("system  thinking  training") == "system thinking training"
+
+
+def test_clean_keyword_text_strips_ads_artifacts():
+    assert clean_keyword_text('[MIT systems thinking]') == "MIT systems thinking"
+    assert clean_keyword_text('"phrase match"') == "phrase match"
+    assert clean_keyword_text("broad +match") == "broad match"
+
+
+def test_clean_keyword_text_strict_rejects_non_ascii():
+    assert clean_keyword_text("café marketing", strict=True) is None
+    assert clean_keyword_text("systems thinking", strict=True) == "systems thinking"
 
 
 def test_enrollment_allowlist_ordered_collapses_whitespace():
@@ -107,8 +116,8 @@ def test_require_enrollment_allowlist_finds_file():
 
 def test_require_enrollment_allowlist_raises_when_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "utils.keyword_allowlist.gkp_dir",
+        "utils.paths.gkp_dir",
         lambda _course="sys_think": tmp_path / "empty_gkp",
     )
-    with pytest.raises(FileNotFoundError, match="No enrollment allowlist"):
+    with pytest.raises(FileNotFoundError, match="Required enrollment allowlist not found"):
         require_enrollment_allowlist("sys_think")

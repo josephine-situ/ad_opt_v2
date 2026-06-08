@@ -1,7 +1,11 @@
 from pathlib import Path
 from typing import Any
 
+import re
+
 import pandas as pd
+
+_ASCII_KEYWORD_RE = re.compile(r"^[a-zA-Z0-9\s']*$")
 
 
 KW_DAY_PANEL_COLUMNS = [
@@ -42,14 +46,83 @@ def _clean_campaign(campaign: pd.Series) -> pd.Series:
     return campaign.astype("string").str.replace(r"\[.*?\]", "", regex=True).str.strip()
 
 
-def clean_keyword_series(keyword: pd.Series) -> pd.Series:
-    """Strip bracket/quote artifacts, lowercase, and trim whitespace (vectorized)."""
-    return (
-        keyword.astype("string")
-        .str.replace(r'["\[\]]', "", regex=True)
-        .str.lower()
-        .str.strip()
-    )
+def clean_keyword_text(keyword: object, *, strict: bool = False) -> str | None:
+    """Strip Ads keyword artifacts and collapse internal whitespace.
+
+    Removes quotes, bracket wrappers, ``+`` broad-match modifiers, and stray apostrophes.
+    When ``strict=True``, rejects non-alphanumeric keywords and returns ``None``.
+    """
+    if keyword is None or (isinstance(keyword, float) and pd.isna(keyword)):
+        return None if strict else ""
+
+    text = str(keyword).strip()
+    for char in ("'", '"', "+", "[", "]"):
+        text = text.replace(char, "")
+    text = " ".join(text.split()).strip()
+
+    if not text:
+        return None if strict else ""
+    if strict and not _ASCII_KEYWORD_RE.match(text):
+        return None
+    return text
+
+
+def clean_keyword_series(keyword: pd.Series, *, lowercase: bool = True) -> pd.Series:
+    """Apply :func:`clean_keyword_text` to each value (vectorized)."""
+    out = keyword.astype("string")
+    for char in ("'", '"', "+", "[", "]"):
+        out = out.str.replace(char, "", regex=False)
+    out = out.str.split().str.join(" ").str.strip()
+    if lowercase:
+        out = out.str.lower()
+    return out
+
+
+KEYWORD_SET_LIST_COLUMNS = (
+    "positive_keywords",
+    "unique_keywords",
+    "broad_keywords",
+    "phrase_keywords",
+    "exact_keywords",
+)
+
+
+def normalize_keyword(keyword: str) -> str:
+    """Normalized key for matching (clean + lowercase)."""
+    text = clean_keyword_text(keyword)
+    return text.lower() if text else ""
+
+
+def split_keyword_field(raw: object) -> list[str]:
+    """Split a semicolon/newline keyword list field (already-clean values only)."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return []
+    return [part for part in (p.strip() for p in re.split(r"[;\n]", str(raw))) if part]
+
+
+def join_keyword_field(keywords: list[str]) -> str:
+    """Join keyword tokens into a canonical semicolon-separated field."""
+    return "; ".join(sorted(dict.fromkeys(k for k in keywords if k)))
+
+
+def clean_keyword_list_field(raw: object) -> str:
+    """Clean each token in a keyword list field and rejoin."""
+    cleaned = [text for part in split_keyword_field(raw) if (text := clean_keyword_text(part))]
+    return join_keyword_field(cleaned)
+
+
+def clean_keyword_sets_dataframe(
+    keyword_sets: pd.DataFrame,
+    list_cols: tuple[str, ...] | None = None,
+) -> pd.DataFrame:
+    """Clean semicolon-separated keyword columns once at load time."""
+    cols = [c for c in (list_cols or KEYWORD_SET_LIST_COLUMNS) if c in keyword_sets.columns]
+    if not cols:
+        return keyword_sets.copy()
+    out = keyword_sets.copy()
+    for col in cols:
+        out[col] = out[col].map(clean_keyword_list_field)
+    return out
 
 
 def _clean_match_type(match_type: pd.Series) -> pd.Series:

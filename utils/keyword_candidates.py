@@ -21,17 +21,16 @@ from utils.campaign_features import (
     load_keyword_sets,
     load_or_build_embeddings,
 )
+from utils.data_processing import join_keyword_field, normalize_keyword
 from utils.keyword_allowlist import (
     allowlist_keys_in_order,
-    clean_keyword_text,
     enrollment_allowlist_keywords,
     filter_keyword_list,
     filter_keyword_sets_dataframe,
     load_enrollment_keyword_allowlist,
     load_enrollment_keyword_allowlist_ordered,
-    normalize_keyword,
-    require_enrollment_allowlist,
 )
+from utils.paths import require_enrollment_allowlist
 
 MATCH_TYPE_COLS = {
     "Broad": "broad_keywords",
@@ -57,10 +56,6 @@ def _parse_segment_match_types(match_types: str) -> list[str]:
 def _segment_allowed_match_types(segment_row: pd.Series) -> list[str]:
     allowed = _parse_segment_match_types(segment_row["match_types"])
     return allowed if allowed else ["Broad", "Phrase", "Exact"]
-
-
-# Re-export for backward compatibility; canonical definition in keyword_allowlist.
-_allowlist_keys_in_order = allowlist_keys_in_order
 
 
 def _build_segment_panel_maps(
@@ -98,7 +93,7 @@ def _build_segment_panel_maps(
                 continue
             panel_keys_by_mt[mt].add(key)
             keys_in_segment.add(key)
-            canonical[key] = clean_keyword_text(kw) or key
+            canonical[key] = kw
 
     return panel_keys_by_mt, canonical, keys_in_segment
 
@@ -225,9 +220,9 @@ def _top_keywords_for_match_type_slice(
     volume_scores = dict(zip(agg["_kw_key"].astype(str), agg["volume"]))
     efficiency_scores = dict(zip(agg["_kw_key"].astype(str), agg["efficiency"]))
     labels = {
-        str(row["_kw_key"]): clean_keyword_text(str(row["keyword"]))
+        str(row["_kw_key"]): str(row["keyword"])
         for _, row in agg.iterrows()
-        if clean_keyword_text(str(row["keyword"]))
+        if str(row["keyword"]).strip()
     }
     return _top_keywords_by_rank_sum(
         keys,
@@ -418,16 +413,16 @@ def _union_keywords_from_match_types(by_mt: dict[str, list[str]]) -> list[str]:
             key = normalize_keyword(kw)
             if key not in seen:
                 seen.add(key)
-                out.append(clean_keyword_text(kw))
+                out.append(kw)
     return sorted(out)
 
 
 def _match_type_lists_to_columns(by_mt: dict[str, list[str]], *, positive_col: str) -> dict[str, str]:
     cols = {
-        MATCH_TYPE_COLS[mt]: "; ".join(sorted(dict.fromkeys(by_mt.get(mt, []))))
+        MATCH_TYPE_COLS[mt]: join_keyword_field(by_mt.get(mt, []))
         for mt in ("Broad", "Phrase", "Exact")
     }
-    cols[positive_col] = "; ".join(_union_keywords_from_match_types(by_mt))
+    cols[positive_col] = join_keyword_field(_union_keywords_from_match_types(by_mt))
     return cols
 
 
@@ -592,7 +587,7 @@ def _ensure_embeddings(
         panel_keys_by_mt, canonical, keys_in_segment = _build_segment_panel_maps(
             kw_day, row, allowed_keywords
         )
-        ordered = _allowlist_keys_in_order(allowed_keywords, allowlist_ordered)
+        ordered = allowlist_keys_in_order(allowed_keywords, allowlist_ordered)
         for mt in _segment_allowed_match_types(row):
             pool = _intersection_keywords_for_match_type(
                 mt,
@@ -635,7 +630,7 @@ def _select_embedding_keywords_for_pool(
     for k in intersection_pool:
         kl = normalize_keyword(k)
         if kl in emb_map:
-            canon[kl] = clean_keyword_text(k)
+            canon[kl] = k
             pool_lower.append(kl)
     if not pool_lower:
         return []
@@ -744,14 +739,10 @@ def _append_synthetic_set(
     positive_col: str,
 ) -> None:
     allowed = _segment_allowed_match_types(row)
-    cleaned: dict[str, list[str]] = {
-        mt: [clean_keyword_text(k) for k in by_match_type.get(mt, []) if clean_keyword_text(k)]
-        for mt in allowed
-    }
-    if not _union_keywords_from_match_types(cleaned):
+    if not _union_keywords_from_match_types(by_match_type):
         return
     record: dict = {"keyword_set_id": new_id}
-    record.update(_match_type_lists_to_columns(cleaned, positive_col=positive_col))
+    record.update(_match_type_lists_to_columns(by_match_type, positive_col=positive_col))
     synthetic_sets.append(record)
     synth_cand.append(
         {
@@ -856,7 +847,7 @@ def build_segment_candidates(
             panel_keys_by_mt, canonical, keys_in_segment = _build_segment_panel_maps(
                 kw_day, row, allowed_keywords
             )
-            allowlist_keys_ordered = _allowlist_keys_in_order(allowed_keywords, allowlist_ordered)
+            allowlist_keys_ordered = allowlist_keys_in_order(allowed_keywords, allowlist_ordered)
             enrollment_canonical = enrollment_allowlist_keywords(
                 allowed_keywords,
                 kw_day,

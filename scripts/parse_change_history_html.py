@@ -18,6 +18,7 @@ from pathlib import Path
 from utils.paths import add_course_arg
 from utils.paths import data_dir, data_path, processed_dir
 from utils.campaign_metadata import read_keyword_day_index
+from utils.data_processing import clean_keyword_text
 
 BUDGET_CHANGE_RE = re.compile(r"\bbudget\b", re.IGNORECASE)
 BUDGET_AMOUNT_CHANGE_RE = re.compile(
@@ -456,9 +457,10 @@ def parse_keyword_detail(detail: str) -> tuple[str, str, bool] | None:
         match_type = "Broad"
         keyword = raw_keyword
 
-    keyword = " ".join(keyword.lower().split())
+    keyword = clean_keyword_text(keyword)
     if not keyword:
         return None
+    keyword = keyword.lower()
     return keyword, match_type, negative
 
 
@@ -963,10 +965,6 @@ def campaign_summary_rows(actions: list[ChangeAction]) -> list[dict[str, str]]:
 
 def split_keyword_list(value: str) -> set[str]:
     return {keyword.strip() for keyword in value.split(";") if keyword.strip()}
-
-
-def clean_keyword_text(value: str) -> str:
-    return " ".join(value.strip().strip('"[]').lower().split())
 
 
 def next_iso_date(value: str) -> str:

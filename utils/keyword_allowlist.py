@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import re
-import zipfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pandas as pd
 
-from utils.paths import gkp_dir
-
-_ENROLLMENT_GLOB = "*Keywords*Enrollments*.xlsx"
 from utils.campaign_features import MATCH_TYPE_LIST_COLS, resolve_positive_keyword_column
+from utils.data_processing import (
+    join_keyword_field,
+    normalize_keyword,
+    split_keyword_field,
+)
+from utils.paths import require_enrollment_allowlist
 
-_XLSX_NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 _KEYWORD_LIST_COLS = (
     "positive_keywords",
     "unique_keywords",
@@ -22,61 +21,26 @@ _KEYWORD_LIST_COLS = (
 )
 
 
-def clean_keyword_text(keyword: str) -> str:
-    """Strip bracket/quote artifacts and collapse internal whitespace."""
-    s = str(keyword).replace('"', "").replace("[", "").replace("]", "")
-    return " ".join(s.split()).strip()
-
-
-def normalize_keyword(keyword: str) -> str:
-    return clean_keyword_text(keyword).lower()
-
-
-def require_enrollment_allowlist(course: str = "sys_think") -> Path:
-    gkp = gkp_dir(course)
-    if not gkp.is_dir():
-        raise FileNotFoundError(f"No enrollment allowlist under {gkp}")
-    matches = sorted(gkp.glob(_ENROLLMENT_GLOB), key=lambda p: p.stat().st_mtime)
-    if not matches:
-        raise FileNotFoundError(f"No enrollment allowlist under {gkp}")
-    return matches[-1]
-
-
 def _read_xlsx_first_sheet(path: Path) -> list[list[str]]:
+    df = pd.read_excel(path, sheet_name=0, header=None, engine="openpyxl")
     rows: list[list[str]] = []
-    with zipfile.ZipFile(path) as zf:
-        shared: list[str] = []
-        if "xl/sharedStrings.xml" in zf.namelist():
-            root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
-            for si in root.findall(".//m:si", _XLSX_NS):
-                shared.append("".join((t.text or "") for t in si.findall(".//m:t", _XLSX_NS)))
-        sheet = ET.fromstring(zf.read("xl/worksheets/sheet1.xml"))
-        for row in sheet.findall(".//m:sheetData/m:row", _XLSX_NS):
-            vals: list[str] = []
-            for cell in row.findall("m:c", _XLSX_NS):
-                ref = cell.get("t")
-                value = cell.find("m:v", _XLSX_NS)
-                if value is None:
-                    vals.append("")
-                elif ref == "s":
-                    vals.append(shared[int(value.text)])
-                else:
-                    vals.append(value.text or "")
-            rows.append(vals)
+    for _, row in df.iterrows():
+        vals: list[str] = []
+        for value in row.tolist():
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                vals.append("")
+            else:
+                vals.append(str(value))
+        rows.append(vals)
     return rows
 
 
 def should_refresh_keyword_candidates(course: str, candidates_path: Path) -> bool:
     """True when candidates are missing or older than the enrollment allowlist file."""
-    allow_path = enrollment_keyword_allowlist_path(course)
+    allow_path = require_enrollment_allowlist(course)
     if not candidates_path.exists():
         return True
     return allow_path.stat().st_mtime > candidates_path.stat().st_mtime
-
-
-def enrollment_keyword_allowlist_path(course: str) -> Path:
-    """Return newest enrollment allowlist xlsx (required for keyword candidate builds)."""
-    return require_enrollment_allowlist(course)
 
 
 def load_enrollment_keyword_allowlist_ordered(course: str) -> list[str]:
@@ -86,7 +50,7 @@ def load_enrollment_keyword_allowlist_ordered(course: str) -> list[str]:
     When a numeric enrollment column is present, sorts by enrollment descending;
     otherwise preserves spreadsheet row order.
     """
-    path = enrollment_keyword_allowlist_path(course)
+    path = require_enrollment_allowlist(course)
     rows = _read_xlsx_first_sheet(path)
     if not rows:
         return []
@@ -141,17 +105,6 @@ def allowlist_keys_in_order(
     return keys_in_order
 
 
-def _split_keyword_field(raw: object) -> list[str]:
-    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-        return []
-    return [clean_keyword_text(k) for k in re.split(r"[;\n]", str(raw)) if clean_keyword_text(k)]
-
-
-def _join_keyword_field(keywords: list[str]) -> str:
-    cleaned = [clean_keyword_text(k) for k in keywords if clean_keyword_text(k)]
-    return "; ".join(sorted(dict.fromkeys(cleaned)))
-
-
 def enrollment_allowlist_keywords(
     allowlist: set[str],
     kw_day: pd.DataFrame,
@@ -183,7 +136,7 @@ def enrollment_allowlist_keywords(
             for kw in sub["keyword"].dropna().astype(str):
                 key = normalize_keyword(kw)
                 if key in allowlist:
-                    canonical[key] = clean_keyword_text(kw)
+                    canonical[key] = kw
 
     keys_in_order = allowlist_keys_in_order(allowlist, allowlist_order)
 
@@ -199,7 +152,7 @@ def filter_keyword_list(keywords: list[str], allowlist: set[str]) -> list[str]:
         key = normalize_keyword(kw)
         if key in allowlist and key not in seen:
             seen.add(key)
-            out.append(clean_keyword_text(kw) if clean_keyword_text(kw) else key)
+            out.append(kw or key)
     return out
 
 
@@ -216,8 +169,8 @@ def filter_keyword_sets_dataframe(
     for idx, row in out.iterrows():
         updated: dict[str, str] = {}
         for col in list_cols:
-            filtered = filter_keyword_list(_split_keyword_field(row.get(col)), allowlist)
-            updated[col] = _join_keyword_field(filtered)
+            filtered = filter_keyword_list(split_keyword_field(row.get(col)), allowlist)
+            updated[col] = join_keyword_field(filtered)
         for col, value in updated.items():
             out.at[idx, col] = value
 
@@ -230,8 +183,8 @@ def filter_keyword_sets_dataframe(
         if match_cols:
             positive: set[str] = set()
             for col in match_cols:
-                positive.update(_split_keyword_field(out.at[idx, col]))
-            joined = _join_keyword_field(sorted(positive))
+                positive.update(split_keyword_field(out.at[idx, col]))
+            joined = join_keyword_field(sorted(positive))
             if "positive_keywords" in out.columns:
                 out.at[idx, "positive_keywords"] = joined
             if "unique_keywords" in out.columns:
