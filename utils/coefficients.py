@@ -27,7 +27,6 @@ from utils.linear_design import (
 )
 from utils.campaign_config import CampaignOptConfig
 from utils.date_features import calendar_vector_for_date
-from utils.shrinkage import shrink_segment_slopes
 
 
 def extract_context_feature_coefs(model: Ridge, x_columns: list[str]) -> dict[str, float]:
@@ -238,8 +237,6 @@ def coeffs_from_linear_milp_design(
     design: LinearMilpDesign,
     config: CampaignOptConfig,
     *,
-    shrink_weight: float = 0.5,
-    min_budget_levels: int = 3,
     calendar_date: pd.Timestamp | None = None,
     calendar_region: str | None = None,
 ) -> dict:
@@ -261,12 +258,10 @@ def coeffs_from_linear_milp_design(
             )
             seg_intercepts[seg_str] = intercept
             seg_slopes[seg_str] = slope
-        global_slope = float(np.mean(list(seg_slopes.values()))) if seg_slopes else 0.0
         context_coefs = extract_context_feature_coefs(ridge, x_columns)
         static_lift = _static_lift_from_artifact(artifact, sub, design.static_cols)
     else:
         context_coefs = extract_context_feature_coefs(ridge, x_columns)
-        global_slope = float(ridge.coef_[x_columns.index("daily_budget")])
         for seg in sub["segment"].unique():
             seg_str = str(seg)
             seg_slopes[seg_str] = segment_slope_from_model(ridge, x_columns, seg_str)
@@ -276,13 +271,6 @@ def coeffs_from_linear_milp_design(
             for set_id in sub["keyword_set_id"].dropna().unique():
                 row = sub[sub["keyword_set_id"] == set_id].iloc[0]
                 static_lift[str(set_id)] = context_contribution(row, context_coefs, design.static_cols)
-
-    seg_slopes = shrink_segment_slopes(
-        pd.Series(seg_slopes),
-        global_slope=global_slope,
-        min_levels=min_budget_levels,
-        weight=shrink_weight,
-    ).to_dict()
 
     if calendar_date is not None and calendar_region is not None:
         if artifact.uses_scaled_fit():
@@ -352,10 +340,7 @@ def ridge_embed_coeffs(
 ) -> dict:
     """MILP ridge coeffs with per-segment calendar for ``ridge_xgb_embed`` (matches ``predict_design_frame``)."""
     design = build_linear_milp_design_matrix(train, config, columns=artifact.x_columns)
-    # No slope shrinkage: coeffs must match ``predict_design_frame`` on the fitted ridge.
-    coeffs = coeffs_from_linear_milp_design(
-        artifact, design, config, shrink_weight=0.0, min_budget_levels=1
-    )
+    coeffs = coeffs_from_linear_milp_design(artifact, design, config)
     cal_cols = coeffs["calendar_context_columns"]
     coeffs["calendar_offset_by_segment"] = {}
     for seg in segments:
@@ -378,8 +363,6 @@ def export_linear_solver_coeffs(
     config: CampaignOptConfig,
     output_path: Path,
     *,
-    shrink_weight: float = 0.5,
-    min_budget_levels: int = 3,
     prefit_model: Ridge | LinearMilpRidgeModel | None = None,
     prefit_design: LinearMilpDesign | None = None,
 ) -> dict:
@@ -397,13 +380,7 @@ def export_linear_solver_coeffs(
         design = build_linear_milp_design_matrix(train, config)
         model = fit_linear_milp_ridge(design, config, alpha=1.0)
 
-    coeffs = coeffs_from_linear_milp_design(
-        model,
-        design,
-        config,
-        shrink_weight=shrink_weight,
-        min_budget_levels=min_budget_levels,
-    )
+    coeffs = coeffs_from_linear_milp_design(model, design, config)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:

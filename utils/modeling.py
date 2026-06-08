@@ -46,8 +46,6 @@ from utils.campaign_features import (
     SEGMENT_BROAD_MATCH_COL,
     get_context_feature_columns,
 )
-from utils.shrinkage import segment_budget_level_counts
-
 # Meta-candidates: weighted average of base learners (not MILP backends themselves).
 ENSEMBLE_CANDIDATE_NAMES = frozenset({"ensemble", "ensemble_ridge_xgb"})
 BASE_TOURNAMENT_CANDIDATES = [
@@ -900,10 +898,7 @@ def report_model_fit_diagnostics(
     return shap_effects
 
 
-def resolve_backend(winner: ModelResult, config: CampaignOptConfig) -> str:
-    policy = config.model_policy
-    if policy.optimizer_backend != "auto":
-        return policy.optimizer_backend
+def resolve_backend(winner: ModelResult) -> str:
     return winner.backend
 
 
@@ -1134,7 +1129,7 @@ def run_tournament(
 
     ridge_res = next((r for r in competitive if r.name == "ridge"), None)
     winner = min(competitive, key=lambda r: _selection_score(r, config))
-    backend = resolve_backend(winner, config)
+    backend = resolve_backend(winner)
 
     refit_full = config.model_policy.validation.refit_on_full_data
     full = (
@@ -1176,9 +1171,6 @@ def run_tournament(
         "secondary_metrics": config.secondary_metrics,
         "holdout_metrics": metrics_table,
         "shap_mean_effects": winner_shap,
-        "segment_budget_levels": segment_budget_level_counts(
-            full if refit_full and len(holdout) else train
-        ).to_dict(),
         "feature_cols": feature_cols,
         "linear_design": (
             "region + is_broad_match + budget×(region + is_broad_match) + context_features"
