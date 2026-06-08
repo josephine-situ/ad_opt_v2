@@ -3,6 +3,10 @@
 min_date: "2024-06-01"
 daily_budget_cap: 412.7
 
+# MILP optimizer: XGB trees embedded in Gurobi (backend auto from optimizer_winner).
+model_policy:
+  optimizer_winner: xgboost
+
 start_dates:
   - "2021-01-25"
   - "2021-04-05"

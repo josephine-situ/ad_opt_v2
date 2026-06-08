@@ -38,16 +38,13 @@ def require_optimizer_winner(config: CampaignOptConfig) -> str:
 
 
 def _resolve_backend(config: CampaignOptConfig, manifest: dict) -> str:
-    policy = config.model_policy
     winner = require_optimizer_winner(config)
-    if policy.optimizer_backend != "auto":
-        return policy.optimizer_backend
     if winner == "ensemble_ridge_xgb":
         return "ridge_xgb_embed"
     if is_ensemble_candidate(winner):
         raise ValueError(
             f"optimizer_winner={winner!r} has no MILP backend; "
-            "use ensemble_ridge_xgb or set optimizer_backend explicitly."
+            "use ensemble_ridge_xgb or a base model such as xgboost."
         )
     spec = get_train_spec(winner)
     if spec is None:

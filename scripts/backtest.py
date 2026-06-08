@@ -43,11 +43,6 @@ def main() -> None:
         help="Use configured daily budget caps from the panel for each backtest day",
     )
     parser.add_argument(
-        "--optimizer-backend",
-        default=None,
-        help="Override model_policy.optimizer_backend (e.g. linear when Gurobi license is size-limited)",
-    )
-    parser.add_argument(
         "--optimizer-winner",
         default=None,
         help="Override model_policy.optimizer_winner for the MILP optimizer",
@@ -60,8 +55,6 @@ def main() -> None:
     args = parser.parse_args()
 
     config = resolve_config(args.course, args.config)
-    if args.optimizer_backend:
-        config.model_policy.optimizer_backend = args.optimizer_backend
     if args.optimizer_winner:
         config.model_policy.optimizer_winner = args.optimizer_winner
     if args.skip_stage1 and config.backtest.strategy != "two_stage":
@@ -86,7 +79,6 @@ def main() -> None:
             "target": config.target,
             "budget_mode": "actual" if args.use_actual_budget else "fixed",
             "optimizer_winner": config.model_policy.optimizer_winner,
-            "optimizer_backend": config.model_policy.optimizer_backend,
             "skip_stage1": args.skip_stage1,
             "total_budget": args.budget or default_budget,
         },

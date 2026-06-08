@@ -56,7 +56,6 @@ model_policy:
     - holdout_r2_levels
     - holdout_mae_levels
   optimizer_winner: xgboost
-  optimizer_backend: auto
   stability_check: false
   validation:
     scheme: time_series_cv

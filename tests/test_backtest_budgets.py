@@ -78,7 +78,11 @@ def test_actual_campaign_budget_total_sums_segments_not_regional_median():
 
 
 def test_load_fit_manifest_requires_optimizer_winner():
-    config = CampaignOptConfig(exp_name="t", course="sys_think")
+    config = CampaignOptConfig(
+        exp_name="t",
+        course="sys_think",
+        model_policy=ModelPolicy(optimizer_winner=None),
+    )
     with pytest.raises(ValueError, match="optimizer_winner"):
         load_fit_manifest(config)
 
@@ -88,7 +92,6 @@ def test_optimizer_manifest_requires_fit_artifacts(tmp_path: Path):
         course="sys_think",
         model_policy=ModelPolicy(
             optimizer_winner="xgboost",
-            optimizer_backend="tree_embed",
         ),
     )
     config.prod_dir = lambda base=None: tmp_path
