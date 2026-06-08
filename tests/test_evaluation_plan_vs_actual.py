@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from campaign_opt.evaluation import compare_plan_and_actual, plan_vs_actual_row_metrics
-from campaign_opt.schema import CampaignOptConfig, EvaluationConfig, ModelPolicy, ValidationConfig
+from utils.evaluation import compare_plan_and_actual, plan_vs_actual_row_metrics
+from utils.campaign_config import CampaignOptConfig, EvaluationConfig, ModelPolicy, ValidationConfig
 
 
 @pytest.fixture
@@ -29,8 +29,8 @@ def test_market_actuals_use_panel_campaigns_not_zero_pad(
 ):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    from campaign_opt.features import prepare_modeling_data
-    from campaign_opt.evaluation import fit_ensemble
+    from utils.modeling_prep import prepare_modeling_data
+    from utils.evaluation import fit_ensemble
     from utils.campaign_features import build_keyword_set_feature_table
 
     df = prepare_modeling_data(tiny_config)
@@ -84,7 +84,7 @@ def test_market_actuals_use_panel_campaigns_not_zero_pad(
 
 
 def test_actual_decisions_reject_missing_daily_budget():
-    from campaign_opt.evaluation import actual_decisions_by_segment
+    from utils.evaluation import actual_decisions_by_segment
 
     day_df = pd.DataFrame(
         {

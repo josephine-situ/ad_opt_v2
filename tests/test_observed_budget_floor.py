@@ -9,11 +9,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from campaign_opt.backends.milp_core import make_linear_segment_predictor, solve_campaign_milp
-from campaign_opt.backends.prediction_gating import budget_big_m_from_bounds, gate_level_expr
-from campaign_opt.decisions import observed_min_daily_budget, optimizer_gating_panel, panel_before_date
-from campaign_opt.optimizer_prediction import apply_observed_budget_floor
-from campaign_opt.schema import CampaignOptConfig, EvaluationConfig
+from utils.backends.milp_core import make_linear_segment_predictor, solve_campaign_milp
+from utils.backends.prediction_gating import budget_big_m_from_bounds, gate_level_expr
+from utils.decisions import observed_min_daily_budget, optimizer_gating_panel, panel_before_date
+from utils.optimizer_prediction import apply_observed_budget_floor
+from utils.campaign_config import CampaignOptConfig, EvaluationConfig
 
 pytest.importorskip("gurobipy")
 import gurobipy as gp
@@ -164,7 +164,7 @@ def test_optimizer_gating_panel_uses_history_before_planning_date():
 
 
 def test_predict_levels_optimizer_respects_separate_floor_panel():
-    from campaign_opt.optimizer_prediction import predict_levels_optimizer
+    from utils.optimizer_prediction import predict_levels_optimizer
 
     seg = "USA / Phrase; Exact"
     full = pd.DataFrame(

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 
-from campaign_opt.linear_design import split_context_columns_by_dtype
-from campaign_opt.training_matrix import build_preprocessor, prep_xy
+from utils.linear_design import split_context_columns_by_dtype
+from utils.training_matrix import build_preprocessor, prep_xy
 
 
 def test_split_context_columns_by_dtype():

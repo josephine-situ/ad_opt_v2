@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from campaign_opt.backends.tree_embedding import (
+from utils.backends.tree_embedding import (
     _intervals_overlap,
     _leaf_budget_interval,
     _processed_budget_bounds,

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from campaign_opt.paths import data_path, gkp_dir, processed_dir
+from utils.paths import data_path, gkp_dir, processed_dir
 from config import COURSE_CONFIG
 from utils.data_processing import _extract_region_from_campaign
 from utils.date_features import add_calendar_features
@@ -533,10 +533,13 @@ def build_keyword_set_feature_table(course: str) -> pd.DataFrame:
     summary = load_campaign_summary(course)
     if "num_unique_keywords" in summary.columns:
         counts = summary.groupby("keyword_set_id")["num_unique_keywords"].max().reset_index()
-    else:
+    elif not sem.empty and "n_positive" in sem.columns:
         counts = sem[["keyword_set_id", "n_positive"]].rename(
             columns={"n_positive": "num_unique_keywords"}
         )
+    else:
+        counts = keyword_sets[["keyword_set_id"]].drop_duplicates().copy()
+        counts["num_unique_keywords"] = 0
 
     out = (
         sem.merge(gkp_set, on="keyword_set_id", how="left")
@@ -613,6 +616,19 @@ def version_start_dates_for_course(course: str) -> dict[object, pd.Timestamp]:
     return _version_start_cache[course]
 
 
+def version_starts_from_panel(panel: pd.DataFrame) -> dict[object, pd.Timestamp]:
+    """Earliest panel date per ``campaign_version`` (fallback when summary lacks start_date)."""
+    if panel.empty or "campaign_version" not in panel.columns or "date" not in panel.columns:
+        return {}
+    work = panel.copy()
+    work["date"] = pd.to_datetime(work["date"])
+    return {
+        ver: pd.Timestamp(d)
+        for ver, d in work.groupby("campaign_version")["date"].min().items()
+        if not pd.isna(ver)
+    }
+
+
 def version_for_segment_on_date(
     panel: pd.DataFrame,
     segment: str,
@@ -662,9 +678,13 @@ def version_run_vector_for_date(
     ver = campaign_version
     if (ver is None or pd.isna(ver)) and segment is not None and panel is not None:
         ver = version_for_segment_on_date(panel, segment, planning_date)
+    starts = dict(version_start_dates_for_course(course))
+    if panel is not None:
+        for k, v in version_starts_from_panel(panel).items():
+            starts.setdefault(k, v)
     return {
         "days_since_version_start": days_since_version_start_value(
-            planning_date, ver, course=course
+            planning_date, ver, version_starts=starts
         )
     }
 

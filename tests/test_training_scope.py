@@ -5,9 +5,9 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from campaign_opt.features import filter_training_scope, prepare_modeling_data
-from campaign_opt.modeling import fit_mean_baseline, is_mean_baseline_candidate
-from campaign_opt.schema import CampaignOptConfig, ModelPolicy
+from utils.modeling_prep import filter_training_scope, prepare_modeling_data
+from utils.modeling import fit_mean_baseline, is_mean_baseline_candidate
+from utils.campaign_config import CampaignOptConfig, ModelPolicy
 from utils.campaign_features import (
     SEGMENT_BROAD_MATCH_COL,
     add_segment_match_type_indicators,
@@ -81,7 +81,7 @@ def test_prepare_modeling_data_filters_with_default_config():
     )
     if not path.exists():
         pytest.skip("default config missing")
-    from campaign_opt.schema import load_campaign_config
+    from utils.campaign_config import load_campaign_config
 
     config = load_campaign_config(path)
     df = prepare_modeling_data(config)

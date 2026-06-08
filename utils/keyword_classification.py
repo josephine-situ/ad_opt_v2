@@ -93,7 +93,7 @@ def collect_existing_keywords(
     include_keyword_sets: bool = True,
 ) -> set[str]:
     """Unique normalized keywords from the kw-day-panel for a course."""
-    from campaign_opt.paths import processed_dir, reports_dir
+    from utils.paths import processed_dir, reports_dir
 
     candidates: list[Path] = [
         processed_dir(course) / "kw-day-panel.csv",
@@ -137,7 +137,7 @@ def write_keywords_classified(
     min_clicks: int = 1,
     include_keyword_sets: bool = True,
 ) -> Path:
-    from campaign_opt.paths import gkp_dir
+    from utils.paths import gkp_dir
 
     out = Path(output_file or gkp_dir(course) / "keywords_classified.csv")
     out.parent.mkdir(parents=True, exist_ok=True)

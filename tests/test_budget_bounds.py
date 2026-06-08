@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from campaign_opt.decisions import historical_budget_bounds
+from utils.decisions import historical_budget_bounds
 
 
 def test_historical_budget_bounds_allows_zero_for_single_level():

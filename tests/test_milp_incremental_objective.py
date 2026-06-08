@@ -8,12 +8,12 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from campaign_opt.backends.milp_core import (
+from utils.backends.milp_core import (
     baseline_levels_from_coeffs,
     make_linear_segment_predictor,
     solve_campaign_milp,
 )
-from campaign_opt.schema import CampaignOptConfig
+from utils.campaign_config import CampaignOptConfig
 
 pytest.importorskip("gurobipy")
 

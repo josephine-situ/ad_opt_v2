@@ -10,21 +10,21 @@ import numpy as np
 import pandas as pd
 from gurobipy import GRB
 
-from campaign_opt.backends.tree_embed import build_candidate_feature_rows
-from campaign_opt.backends.tree_embedding import (
+from utils.backends.tree_embed import build_candidate_feature_rows
+from utils.backends.tree_embedding import (
     _budget_affine,
     _raw_budget_breakpoints_from_trees,
     embed_tree_prediction,
     get_tree_path_sets,
 )
-from campaign_opt.decisions import (
+from utils.decisions import (
     apply_candidate_region_policy,
     build_segment_list,
     historical_budget_bounds,
 )
-from campaign_opt.training_matrix import prep_xy
-from campaign_opt.optimize import _fit_and_save_embed_model
-from campaign_opt.schema import default_config_path, load_campaign_config
+from utils.training_matrix import prep_xy
+from utils.optimize import _fit_and_save_embed_model
+from utils.campaign_config import default_config_path, load_campaign_config
 from utils.campaign_features import (
     add_segment_column,
     build_keyword_set_feature_table,
@@ -67,7 +67,7 @@ def _milp_level_at_budget(
 
 def test_embed_matches_sklearn_at_tree_thresholds():
     """Embedding must be exact at every budget — especially at tree split thresholds."""
-    from campaign_opt.features import prepare_modeling_data, train_holdout_split
+    from utils.modeling_prep import prepare_modeling_data, train_holdout_split
 
     if not default_config_path("sys_think", "default").exists():
         return

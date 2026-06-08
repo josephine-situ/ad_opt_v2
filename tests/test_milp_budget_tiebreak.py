@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from campaign_opt.backends.milp_core import _budget_tiebreak_penalty
-from campaign_opt.schema import CampaignOptConfig
+from utils.backends.milp_core import _budget_tiebreak_penalty
+from utils.campaign_config import CampaignOptConfig
 
 
 def test_budget_tiebreak_penalty_default():

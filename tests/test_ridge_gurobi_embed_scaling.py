@@ -7,16 +7,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from campaign_opt.backends.milp_core import _eval_gurobi_expr
-from campaign_opt.backends.tree_embed import (
+from utils.backends.milp_core import _eval_gurobi_expr
+from utils.backends.tree_embed import (
     build_candidate_feature_rows,
     _embed_linear_candidate_predictions,
 )
-from campaign_opt.decisions import apply_candidate_region_policy, historical_budget_bounds
-from campaign_opt.linear_design import LinearMilpRidgeModel
-from campaign_opt.modeling import fit_ridge_full
-from campaign_opt.paths import processed_dir
-from campaign_opt.schema import default_config_path, load_campaign_config
+from utils.decisions import apply_candidate_region_policy, historical_budget_bounds
+from utils.linear_design import LinearMilpRidgeModel
+from utils.modeling import fit_ridge_full
+from utils.paths import processed_dir
+from utils.campaign_config import default_config_path, load_campaign_config
 from utils.campaign_features import add_segment_column, build_keyword_set_feature_table, load_campaign_day_panel
 
 
@@ -26,7 +26,7 @@ def test_embed_linear_matches_predict_design_frame(budget: float):
     if not config_path.exists():
         pytest.skip("sys_think config not present")
     config = load_campaign_config(config_path)
-    from campaign_opt.features import prepare_modeling_data
+    from utils.modeling_prep import prepare_modeling_data
 
     df = prepare_modeling_data(config).head(800)
     artifact = fit_ridge_full(df, config, hyperparams={"alpha": 10.0})

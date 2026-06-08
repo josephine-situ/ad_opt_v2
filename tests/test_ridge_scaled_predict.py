@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import numpy as np
 
-from campaign_opt.features import prepare_modeling_data
-from campaign_opt.linear_design import (
+from utils.modeling_prep import prepare_modeling_data
+from utils.linear_design import (
     build_linear_milp_design_matrix,
     fit_linear_milp_ridge,
     ridge_numeric_scale_column_names,
     scale_milp_design_matrix,
 )
-from campaign_opt.schema import default_config_path, load_campaign_config
+from utils.campaign_config import default_config_path, load_campaign_config
 
 
 def test_scaled_train_predict_matches_scaled_matrix():

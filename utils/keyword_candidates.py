@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from campaign_opt.paths import data_path
+from utils.paths import data_path
 from utils.campaign_features import (
     COURSE_ANCHORS,
     anchor_matrix,

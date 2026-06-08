@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from campaign_opt.recency_weights import recency_sample_weights
-from campaign_opt.schema import CampaignOptConfig, ModelPolicy, ValidationConfig
+from utils.recency_weights import recency_sample_weights
+from utils.campaign_config import CampaignOptConfig, ModelPolicy, ValidationConfig
 
 
 def test_recency_weights_none_for_disabled():
@@ -37,7 +37,7 @@ def test_recency_half_life_from_config():
             validation=ValidationConfig(recency_half_life_days=180.0),
         ),
     )
-    from campaign_opt.recency_weights import recency_half_life_days
+    from utils.recency_weights import recency_half_life_days
 
     assert recency_half_life_days(cfg) == 180.0
 

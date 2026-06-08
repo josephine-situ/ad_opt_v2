@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from campaign_opt.paths import gkp_dir, require_enrollment_allowlist as paths_require_enrollment_allowlist
+from utils.paths import gkp_dir
+
+_ENROLLMENT_GLOB = "*Keywords*Enrollments*.xlsx"
 from utils.campaign_features import MATCH_TYPE_LIST_COLS, resolve_positive_keyword_column
 
 _XLSX_NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
@@ -31,8 +33,13 @@ def normalize_keyword(keyword: str) -> str:
 
 
 def require_enrollment_allowlist(course: str = "sys_think") -> Path:
-    """Return enrollment allowlist path or raise with setup instructions."""
-    return paths_require_enrollment_allowlist(course)
+    gkp = gkp_dir(course)
+    if not gkp.is_dir():
+        raise FileNotFoundError(f"No enrollment allowlist under {gkp}")
+    matches = sorted(gkp.glob(_ENROLLMENT_GLOB), key=lambda p: p.stat().st_mtime)
+    if not matches:
+        raise FileNotFoundError(f"No enrollment allowlist under {gkp}")
+    return matches[-1]
 
 
 def _read_xlsx_first_sheet(path: Path) -> list[list[str]]:

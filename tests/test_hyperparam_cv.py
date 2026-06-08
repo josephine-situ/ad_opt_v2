@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from campaign_opt.features import prepare_modeling_data, train_holdout_split
-from campaign_opt.hyperparam_cv import iter_param_grid, tune_hyperparams
-from campaign_opt.modeling import fit_ridge, model_feature_overview_lines
-from campaign_opt.schema import CampaignOptConfig, ModelPolicy, ValidationConfig
-from campaign_opt.train_specs import DEFAULT_HYPERPARAM_GRIDS
+from utils.modeling_prep import prepare_modeling_data, train_holdout_split
+from utils.cv import iter_param_grid, tune_hyperparams
+from utils.modeling import fit_ridge, model_feature_overview_lines
+from utils.campaign_config import CampaignOptConfig, ModelPolicy, ValidationConfig
+from utils.train_specs import DEFAULT_HYPERPARAM_GRIDS
 
 
 def test_iter_param_grid():

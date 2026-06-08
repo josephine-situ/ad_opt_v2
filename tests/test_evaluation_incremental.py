@@ -8,16 +8,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from campaign_opt.evaluation import (
+from utils.evaluation import (
     EnsembleModel,
     build_baseline_rows_for_decisions,
     build_segment_decision_rows,
     evaluation_ensemble_weights,
     fit_ensemble,
 )
-from campaign_opt.decisions import observed_min_daily_budget
-from campaign_opt.optimizer_prediction import predict_levels_optimizer
-from campaign_opt.schema import CampaignOptConfig, EvaluationConfig, ModelPolicy, ValidationConfig
+from utils.decisions import observed_min_daily_budget
+from utils.optimizer_prediction import predict_levels_optimizer
+from utils.campaign_config import CampaignOptConfig, EvaluationConfig, ModelPolicy, ValidationConfig
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def tiny_config():
 def test_incremental_zero_budget_baseline(tiny_config, synthetic_sys_think_data, monkeypatch):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    from campaign_opt.features import prepare_modeling_data
+    from utils.modeling_prep import prepare_modeling_data
 
     df = prepare_modeling_data(tiny_config)
     ensemble = fit_ensemble(df, tiny_config)
@@ -85,7 +85,7 @@ def test_incremental_zero_budget_baseline(tiny_config, synthetic_sys_think_data,
 def test_gated_baseline_zero_when_below_observed_min(tiny_config, synthetic_sys_think_data, monkeypatch):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    from campaign_opt.features import prepare_modeling_data
+    from utils.modeling_prep import prepare_modeling_data
 
     tiny_config.evaluation.apply_observed_budget_floor = True
     df = prepare_modeling_data(tiny_config)

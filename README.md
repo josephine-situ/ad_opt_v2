@@ -18,8 +18,8 @@ Each course is a self-contained bundle under `<course>/` with its own `data/` an
     campaign/default/
       campaign_config.json       # experiment config
       backtest/<start>_<end>/    # backtest summaries + plans/
-campaign_opt/                    # library + CLI (campaign_opt/cli/)
-utils/                           # data-processing helpers
+scripts/                         # CLI entry points (prepare-data, fit-models, backtest, …)
+utils/                           # library code (modeling, MILP, features, paths)
 config.py                        # COURSE_CONFIG per course
 tests/
 ```
@@ -68,8 +68,8 @@ All pipeline commands accept `--course` (default `sys_think`).
 uv run prepare-data --google-ads-yaml ..\google-ads-prod.yaml --customer-id 1234567890
 
 # 2. Features + model fit
-uv run python -m campaign_opt.cli.build_keyword_candidates --verify
-uv run python -m campaign_opt.cli.build_gkp_set_features
+uv run python -m scripts.build_keyword_candidates --verify
+uv run python -m scripts.build_gkp_set_features
 uv run fit-models
 
 # 3. Two-stage production plan
@@ -87,12 +87,12 @@ For another course, add `--course <name>` to any command above.
 | Component | Inputs | Outputs |
 |-----------|--------|---------|
 | `prepare-data` | allowlist xlsx, credentials, change-history HTML | all `processed/` panels |
-| `cli.pull_input_data` | Google Ads YAML, customer ID | `reports/kw-day-panel.csv`; optional KWP stats (keywords from panel) |
-| `cli.process_input_data` | raw kw-day panel | `processed/kw-day-panel.csv` |
-| `cli.parse_change_history_html` | change-history HTML | `campaign-summary.csv`, `campaign-keyword-sets.csv` |
-| `cli.generate_campaign_day_panel` | processed artifacts | `campaign-day-panel.csv` |
-| `cli.build_keyword_candidates` | panel + **required** allowlist | `segment-keyword-candidates.csv`, `campaign-keyword-sets-extended.csv` |
-| `cli.build_gkp_set_features` | cached GKP stats + keyword sets | `keyword-set-features.csv` |
+| `pull_input_data` | Google Ads YAML, customer ID | `reports/kw-day-panel.csv`; optional KWP stats (keywords from panel) |
+| `process_input_data` | raw kw-day panel | `processed/kw-day-panel.csv` |
+| `parse_change_history_html` | change-history HTML | `campaign-summary.csv`, `campaign-keyword-sets.csv` |
+| `generate_campaign_day_panel` | processed artifacts | `campaign-day-panel.csv` |
+| `build_keyword_candidates` | panel + **required** allowlist | `segment-keyword-candidates.csv`, `campaign-keyword-sets-extended.csv` |
+| `build_gkp_set_features` | cached GKP stats + keyword sets | `keyword-set-features.csv` |
 | `fit-models` | modeling panel + config | `model_manifest.json`, `holdout_metrics.json` |
 | **Stage 1** `select_keyword_sets_for_window` | train (`date < window_start`), candidates, manifest | `fixed_keyword_sets.json`, `keyword_set_plan.csv` |
 | **Stage 2** `optimize_budgets_for_day` | train (`date < t`), fixed sets, manifest | `campaign_plan.csv`, `optimizer_xgboost.joblib` |
@@ -105,7 +105,7 @@ For another course, add `--course <name>` to any command above.
 
 Default: `sys_think/opt_results/campaign/default/campaign_config.json`
 
-See [`campaign_opt/README.md`](campaign_opt/README.md) for modeling notes and config fields.
+Experiment config lives in `<course>/opt_results/campaign/default/campaign_config.json`. Key fields: `target`, `model_policy`, `evaluation`, `constraints`.
 
 ## Tests
 

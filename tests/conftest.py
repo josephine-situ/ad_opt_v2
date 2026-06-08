@@ -59,16 +59,16 @@ def install_synthetic_sys_think_data(
         return tmp_path / course_name / "data"
 
     monkeypatch.setattr("utils.campaign_features.data_paths", _data_paths)
-    monkeypatch.setattr("campaign_opt.paths.processed_dir", _processed_dir)
-    monkeypatch.setattr("campaign_opt.paths.gkp_dir", _gkp_dir)
-    monkeypatch.setattr("campaign_opt.paths.data_dir", _data_dir)
+    monkeypatch.setattr("utils.paths.processed_dir", _processed_dir)
+    monkeypatch.setattr("utils.paths.gkp_dir", _gkp_dir)
+    monkeypatch.setattr("utils.paths.data_dir", _data_dir)
     monkeypatch.setattr(
         "utils.keyword_allowlist.load_enrollment_keyword_allowlist",
-        lambda _course="sys_think": {"test keyword", "another keyword"},
+        lambda _course="sys_think": None,
     )
     monkeypatch.setattr(
         "utils.keyword_allowlist.load_enrollment_keyword_allowlist_ordered",
-        lambda _course="sys_think": ["test keyword", "another keyword"],
+        lambda _course="sys_think": None,
     )
 
     import utils.campaign_features as campaign_features

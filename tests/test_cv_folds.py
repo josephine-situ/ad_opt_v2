@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from campaign_opt.cv import (
+from utils.cv import (
     CVFoldError,
     cross_validate_model,
     effective_min_train_days,

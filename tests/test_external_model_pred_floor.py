@@ -5,10 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from campaign_opt.backends.tree_embed import _external_incremental_pred_by_segment
-from campaign_opt.decisions import observed_min_daily_budget
-from campaign_opt.evaluation import build_plan_prediction_rows
-from campaign_opt.schema import CampaignOptConfig, EvaluationConfig
+from utils.backends.tree_embed import _external_incremental_pred_by_segment
+from utils.decisions import observed_min_daily_budget
+from utils.evaluation import build_plan_prediction_rows
+from utils.campaign_config import CampaignOptConfig, EvaluationConfig
 
 
 def test_external_pred_zeros_below_observed_min_budget():

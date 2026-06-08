@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from campaign_opt.evaluation import optimizer_winner_name
-from campaign_opt.modeling import (
+from utils.evaluation import optimizer_winner_name
+from utils.modeling import (
     POOR_R2_THRESHOLD,
     configured_evaluation_model_name,
     warn_if_not_tournament_winner,
     warn_if_poor_r2,
 )
-from campaign_opt.schema import CampaignOptConfig, EvaluationConfig, ModelPolicy
+from utils.campaign_config import CampaignOptConfig, EvaluationConfig, ModelPolicy
 
 
 def test_warn_if_not_tournament_winner_skips_match(capsys):

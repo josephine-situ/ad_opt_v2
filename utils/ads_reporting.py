@@ -5,7 +5,7 @@ from typing import Any
 
 from google.ads.googleads.client import GoogleAdsClient
 
-from campaign_opt.paths import reports_dir
+from utils.paths import reports_dir
 from config import COURSE_CONFIG
 from utils.gaql_queries import KW_DAY_PANEL_REPORT_QUERY, KW_KEYWORD_ALL_CONV_QUERY
 from utils.metrics import google_ads_metrics_client

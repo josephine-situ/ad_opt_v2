@@ -61,16 +61,21 @@ def calculate_days_to_next(d: pd.Timestamp, course_start_dts: list[str] | None =
     return float(min(diffs)) if diffs else np.nan
 
 
-def add_month_cycle_features(dates: pd.Series) -> pd.DataFrame:
+def add_month_cycle_features(dates: pd.Series | pd.DatetimeIndex) -> pd.DataFrame:
     """Smooth annual cycle (2 harmonics) to reduce month-dummy overfit risk."""
-    month = dates.dt.month.astype(float)
+    if isinstance(dates, pd.DatetimeIndex):
+        month = dates.month.astype(float)
+        index = dates
+    else:
+        month = dates.dt.month.astype(float)
+        index = dates.index
     angle = 2.0 * np.pi * (month - 1.0) / 12.0
     return pd.DataFrame(
         {
             "month_sin": np.sin(angle),
             "month_cos": np.cos(angle),
         },
-        index=dates.index,
+        index=index,
     )
 
 

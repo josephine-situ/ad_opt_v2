@@ -6,18 +6,18 @@ import pandas as pd
 import pytest
 from sklearn.linear_model import Ridge
 
-from campaign_opt.coefficients import (
+from utils.coefficients import (
     coeffs_from_linear_milp_design,
     context_contribution,
     refresh_static_context_lift,
 )
-from campaign_opt.linear_design import (
+from utils.linear_design import (
     CONTEXT_MISSING_NUMERIC_FILL,
     build_linear_milp_design_matrix,
     segment_intercept_from_model,
     segment_slope_from_model,
 )
-from campaign_opt.schema import CampaignOptConfig, ModelPolicy
+from utils.campaign_config import CampaignOptConfig, ModelPolicy
 
 
 def _minimal_config() -> CampaignOptConfig:

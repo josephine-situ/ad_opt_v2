@@ -7,8 +7,8 @@ import pytest
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.pipeline import Pipeline
 
-from campaign_opt.training_matrix import build_preprocessor, prep_xy
-from campaign_opt.shap_effects import compute_mean_shap_effects, shap_available
+from utils.training_matrix import build_preprocessor, prep_xy
+from utils.shap_effects import compute_mean_shap_effects, shap_available
 
 
 def test_compute_mean_shap_effects_without_shap():

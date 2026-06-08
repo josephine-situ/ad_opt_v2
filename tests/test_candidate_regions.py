@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from campaign_opt.decisions import (
+from utils.decisions import (
     apply_candidate_region_policy,
     filter_candidates_by_region,
     parse_excluded_regions,

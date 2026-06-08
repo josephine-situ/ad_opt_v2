@@ -9,14 +9,14 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from campaign_opt.pipeline_inputs import load_fit_manifest
-from campaign_opt.two_stage_plan import optimize_budgets_for_day
-from campaign_opt.decisions import (
+from utils.modeling_prep import load_fit_manifest
+from utils.two_stage_plan import optimize_budgets_for_day
+from utils.decisions import (
     actual_campaign_budget_total,
     budgets_proportional_to_conversion_rates,
     segment_conversion_rates,
 )
-from campaign_opt.schema import CampaignOptConfig, ModelPolicy
+from utils.campaign_config import CampaignOptConfig, ModelPolicy
 
 
 def test_segment_conversion_rates():
@@ -152,7 +152,7 @@ def test_stage2_budget_opt_tunes_hyperparams_daily(tmp_path: Path):
     exp_dir.mkdir(parents=True, exist_ok=True)
     (exp_dir / "model_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
-    with patch("campaign_opt.two_stage_plan.run_optimizer", side_effect=fake_optimizer):
+    with patch("utils.two_stage_plan.run_optimizer", side_effect=fake_optimizer):
         plan = optimize_budgets_for_day(
             config,
             manifest,

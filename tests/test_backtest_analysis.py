@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from campaign_opt.backtest_analysis import (
+from utils.backtest_analysis import (
     analyze_backtest_run,
     compile_evaluation_results,
     regional_breakdown,

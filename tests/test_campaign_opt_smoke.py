@@ -9,11 +9,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from campaign_opt.coefficients import export_linear_solver_coeffs
-from campaign_opt.features import prepare_modeling_data, train_holdout_split
-from campaign_opt.modeling import run_tournament
-from campaign_opt.optimize import _resolve_backend, require_optimizer_winner
-from campaign_opt.schema import CampaignOptConfig, ModelPolicy, load_campaign_config
+from utils.coefficients import export_linear_solver_coeffs
+from utils.modeling_prep import prepare_modeling_data, train_holdout_split
+from utils.modeling import run_tournament
+from utils.optimize import _resolve_backend, require_optimizer_winner
+from utils.campaign_config import CampaignOptConfig, ModelPolicy, load_campaign_config
 
 
 def test_optimizer_winner_resolves_tree_embed_backend():
