@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -16,6 +17,10 @@ from utils.two_stage_plan import optimize_budgets_for_day, select_keyword_sets_f
 from utils.tee_logging import setup_tee_logging
 
 
+def _default_planning_date() -> str:
+    return (date.today() + timedelta(days=1)).isoformat()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Two-stage campaign plan (stage-1 keyword sets + stage-2 budgets)."
@@ -23,17 +28,17 @@ def main() -> None:
     add_course_arg(parser)
     parser.add_argument("--config", default="", help="Optional YAML/JSON config override")
     parser.add_argument("--budget", type=float, default=None)
-    parser.add_argument("--window-start", required=True, help="Stage-1 window start YYYY-MM-DD")
-    parser.add_argument("--window-end", required=True, help="Stage-1 window end YYYY-MM-DD")
+    parser.add_argument("--window-start", default="", help="Stage-1 window start YYYY-MM-DD")
+    parser.add_argument("--window-end", default="", help="Stage-1 window end YYYY-MM-DD")
     parser.add_argument(
         "--planning-date",
         default="",
-        help="Stage-2 planning day YYYY-MM-DD (default: window-start)",
+        help="Stage-2 planning day YYYY-MM-DD (default: window-start when running stage 1, else tomorrow)",
     )
     parser.add_argument(
         "--skip-stage1",
         action="store_true",
-        help="Reuse fixed_keyword_sets.json from output-dir",
+        help="Reuse fixed_keyword_sets.json from output-dir; only optimize stage-2 budgets",
     )
     parser.add_argument(
         "--output-dir",
@@ -41,6 +46,12 @@ def main() -> None:
         help="Write stage outputs here (default: prod/two_stage_plan)",
     )
     args = parser.parse_args()
+
+    if args.skip_stage1:
+        if args.window_start or args.window_end:
+            parser.error("--window-start/--window-end are not used with --skip-stage1")
+    elif not args.window_start or not args.window_end:
+        parser.error("--window-start and --window-end are required unless --skip-stage1 is set")
 
     config = resolve_config(args.course, args.config)
     out_dir = Path(args.output_dir) if args.output_dir else config.prod_dir() / "two_stage_plan"
@@ -54,9 +65,12 @@ def main() -> None:
     df, panel, candidates = load_planning_inputs(config)
 
     total_budget = args.budget or float(getattr(config, "daily_budget_cap", 400.0))
-    window_start = pd.Timestamp(args.window_start)
-    window_end = pd.Timestamp(args.window_end)
-    planning_date = pd.Timestamp(args.planning_date) if args.planning_date else window_start
+    if args.skip_stage1:
+        planning_date = pd.Timestamp(args.planning_date or _default_planning_date())
+    else:
+        window_start = pd.Timestamp(args.window_start)
+        window_end = pd.Timestamp(args.window_end)
+        planning_date = pd.Timestamp(args.planning_date) if args.planning_date else window_start
 
     stage1_dir = out_dir / "stage1_keyword_sets"
     if args.skip_stage1:

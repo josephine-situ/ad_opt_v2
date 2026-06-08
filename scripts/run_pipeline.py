@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from datetime import date, timedelta
 
 from utils.campaign_config import resolve_config
 from utils.paths import add_course_arg
@@ -19,22 +20,36 @@ def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
+def _default_planning_date() -> str:
+    return (date.today() + timedelta(days=1)).isoformat()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run full two-stage campaign optimization pipeline.")
     add_course_arg(parser)
     parser.add_argument("--config", default="", help="Optional YAML/JSON config override")
     parser.add_argument("--budget", type=float, default=None)
-    parser.add_argument("--planning-date", default="")
-    parser.add_argument("--window-start", required=True, help="Stage-1 window start YYYY-MM-DD")
-    parser.add_argument("--window-end", required=True, help="Stage-1 window end YYYY-MM-DD")
+    parser.add_argument(
+        "--planning-date",
+        default="",
+        help="Stage-2 day YYYY-MM-DD (default: window-start when running stage 1, else tomorrow)",
+    )
+    parser.add_argument("--window-start", default="", help="Stage-1 window start YYYY-MM-DD")
+    parser.add_argument("--window-end", default="", help="Stage-1 window end YYYY-MM-DD")
     parser.add_argument(
         "--skip-stage1",
         action="store_true",
-        help="Reuse fixed_keyword_sets.json from prod/two_stage_plan",
+        help="Reuse fixed_keyword_sets.json; only run stage-2 budgets (default planning date: tomorrow)",
     )
     parser.add_argument("--skip-gkp", action="store_true")
     parser.add_argument("--skip-candidates", action="store_true")
     args = parser.parse_args()
+
+    if args.skip_stage1:
+        if args.window_start or args.window_end:
+            parser.error("--window-start/--window-end are not used with --skip-stage1")
+    elif not args.window_start or not args.window_end:
+        parser.error("--window-start and --window-end are required unless --skip-stage1 is set")
 
     config = resolve_config(args.course, args.config)
     py = sys.executable
@@ -77,19 +92,19 @@ def main() -> None:
         "-m",
         "scripts.plan_two_stage_campaign",
         *course_flag,
-        "--window-start",
-        args.window_start,
-        "--window-end",
-        args.window_end,
         "--budget",
         str(budget),
     ]
     if args.config:
         plan_cmd.extend(["--config", args.config])
-    if args.planning_date:
-        plan_cmd.extend(["--planning-date", args.planning_date])
     if args.skip_stage1:
         plan_cmd.append("--skip-stage1")
+        planning_date = args.planning_date or _default_planning_date()
+        plan_cmd.extend(["--planning-date", planning_date])
+    else:
+        plan_cmd.extend(["--window-start", args.window_start, "--window-end", args.window_end])
+        if args.planning_date:
+            plan_cmd.extend(["--planning-date", args.planning_date])
     _run(plan_cmd)
     print(f"Two-stage pipeline finished. Budget cap: ${budget:.0f}")
 
