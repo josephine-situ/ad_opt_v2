@@ -24,7 +24,7 @@ pytest.importorskip("gurobipy")
 
 
 def test_ridge_xgb_embed_matches_ensemble_with_incremental_objective(tmp_path: Path):
-    config_path = default_config_path("sys_think", "default")
+    config_path = default_config_path("default")
     if not config_path.exists():
         pytest.skip("sys_think default config missing")
     config = load_campaign_config(config_path)
@@ -36,7 +36,7 @@ def test_ridge_xgb_embed_matches_ensemble_with_incremental_objective(tmp_path: P
     if manifest.get("optimizer_winner") not in (None, "ensemble_ridge_xgb"):
         pytest.skip("manifest winner is not ensemble_ridge_xgb")
 
-    data_root = Path("data") / config.course / "processed"
+    data_root = Path("sys_think/data/processed")
     candidates_path = data_root / "segment-keyword-candidates.csv"
     if not candidates_path.exists():
         pytest.skip("segment-keyword-candidates.csv missing")

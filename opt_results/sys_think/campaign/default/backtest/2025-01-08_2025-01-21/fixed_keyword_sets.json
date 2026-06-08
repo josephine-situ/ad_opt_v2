@@ -1,8 +1,0 @@
-{
-  "A / Broad": "ks_0001",
-  "A / Phrase; Exact": "synthetic_A_Phrase; Exact_top_conv_n40_30",
-  "B / Broad": "ks_0002",
-  "B / Phrase; Exact": "synthetic_B_Phrase; Exact_top_conv_n40_43",
-  "USA / Broad": "synthetic_USA_Broad_allowlist_n10_45",
-  "USA / Phrase; Exact": "synthetic_USA_Phrase; Exact_dispersion_n10_57"
-}

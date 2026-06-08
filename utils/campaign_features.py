@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from campaign_opt.paths import GKP_DIR, PROCESSED_DIR, data_path
 from config import COURSE_CONFIG
 from utils.data_processing import _extract_region_from_campaign
 from utils.date_features import add_calendar_features
@@ -38,12 +39,11 @@ MATCH_TYPE_LIST_COLS = {
 }
 
 
-def data_paths(course: str) -> dict[str, Path]:
-    base = Path("data") / course
+def data_paths(course: str = "sys_think") -> dict[str, Path]:
     return {
-        "processed": base / "processed",
-        "gkp": base / "gkp",
-        "cache": base / "cache",
+        "processed": PROCESSED_DIR,
+        "gkp": GKP_DIR,
+        "cache": data_path("cache"),
     }
 
 

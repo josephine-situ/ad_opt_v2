@@ -26,7 +26,6 @@ def test_clean_keyword_text_collapses_whitespace():
 
 def test_enrollment_allowlist_ordered_collapses_whitespace():
     ordered = load_enrollment_keyword_allowlist_ordered("sys_think")
-    assert ordered is not None
     assert not any("  " in kw for kw in ordered)
 
 

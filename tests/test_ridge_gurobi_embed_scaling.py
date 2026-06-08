@@ -21,7 +21,7 @@ from utils.campaign_features import add_segment_column, build_keyword_set_featur
 
 @pytest.mark.parametrize("budget", [0.0, 35.7, 120.0])
 def test_embed_linear_matches_predict_design_frame(budget: float):
-    config_path = default_config_path("sys_think", "default")
+    config_path = default_config_path("default")
     if not config_path.exists():
         pytest.skip("sys_think config not present")
     config = load_campaign_config(config_path)

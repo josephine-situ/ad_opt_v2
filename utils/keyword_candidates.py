@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from campaign_opt.paths import data_path
 from utils.campaign_features import (
     COURSE_ANCHORS,
     _pairwise_mean_distance,
@@ -27,6 +28,7 @@ from utils.keyword_allowlist import (
     load_enrollment_keyword_allowlist,
     load_enrollment_keyword_allowlist_ordered,
     normalize_keyword,
+    require_enrollment_allowlist,
 )
 
 MATCH_TYPE_COLS = {
@@ -610,11 +612,7 @@ def _ensure_embeddings(
         panel_keys_by_mt, canonical, keys_in_segment = _build_segment_panel_maps(
             kw_day, row, allowed_keywords
         )
-        ordered = (
-            _allowlist_keys_in_order(allowed_keywords, allowlist_ordered)
-            if allowed_keywords
-            else []
-        )
+        ordered = _allowlist_keys_in_order(allowed_keywords, allowlist_ordered)
         for mt in _segment_allowed_match_types(row):
             pool = _intersection_keywords_for_match_type(
                 mt,
@@ -831,6 +829,7 @@ def build_segment_candidates(
         summary = summary[~summary["region"].isin(excluded_regions)]
     if allowed_match_types:
         summary = summary[summary["match_types"].isin(allowed_match_types)]
+    require_enrollment_allowlist()
     if allowed_keywords is None:
         allowed_keywords = load_enrollment_keyword_allowlist(course)
     allowlist_ordered = load_enrollment_keyword_allowlist_ordered(course)
@@ -839,7 +838,7 @@ def build_segment_candidates(
         keyword_sets = filter_keyword_sets_dataframe(keyword_sets, allowed_keywords)
     positive_col = "positive_keywords"
 
-    kw_path = Path("data") / course / "processed" / "kw-day-panel.csv"
+    kw_path = data_path("processed", "kw-day-panel.csv")
     kw_day = pd.read_csv(kw_path) if kw_path.exists() else pd.DataFrame()
 
     allowed_set_ids = set(keyword_sets["keyword_set_id"].astype(str))
@@ -877,20 +876,12 @@ def build_segment_candidates(
             panel_keys_by_mt, canonical, keys_in_segment = _build_segment_panel_maps(
                 kw_day, row, allowed_keywords
             )
-            allowlist_keys_ordered = (
-                _allowlist_keys_in_order(allowed_keywords, allowlist_ordered)
-                if allowed_keywords
-                else []
-            )
-            enrollment_canonical = (
-                enrollment_allowlist_keywords(
-                    allowed_keywords,
-                    kw_day,
-                    row,
-                    allowlist_order=allowlist_ordered,
-                )
-                if allowed_keywords
-                else []
+            allowlist_keys_ordered = _allowlist_keys_in_order(allowed_keywords, allowlist_ordered)
+            enrollment_canonical = enrollment_allowlist_keywords(
+                allowed_keywords,
+                kw_day,
+                row,
+                allowlist_order=allowlist_ordered,
             )
             intersection_list = _segment_intersection_keyword_list(
                 keys_in_segment,
@@ -899,17 +890,11 @@ def build_segment_candidates(
                 allowlist=allowed_keywords,
             )
             region = row["region"]
-            if allowed_keywords:
-                print(
-                    f"[keyword_candidates] {segment}: {len(keys_in_segment)} keywords in "
-                    f"allowlist∩region panel across match types (region={region}, "
-                    f"allowlist size {len(allowed_keywords)}; pools from all campaigns in region)"
-                )
-            else:
-                print(
-                    f"[keyword_candidates] {segment}: no enrollment allowlist file; "
-                    f"{len(keys_in_segment)} panel keywords in region={region}"
-                )
+            print(
+                f"[keyword_candidates] {segment}: {len(keys_in_segment)} keywords in "
+                f"allowlist∩region panel across match types (region={region}, "
+                f"allowlist size {len(allowed_keywords)}; pools from all campaigns in region)"
+            )
 
             segment_seen: set[frozenset[str]] = set()
             any_pool = bool(keys_in_segment) or bool(allowlist_keys_ordered)
@@ -965,8 +950,8 @@ def build_segment_candidates(
                     require_positive_volume=True,
                     segment=segment,
                     source=_top_n_labels("top_conv", "synthetic_top_conv", n, multi_top_n=multi_top_n)[1],
-                    allowlist_keys_ordered=allowlist_keys_ordered if allowed_keywords else None,
-                    enrollment_canonical=enrollment_canonical if allowed_keywords else None,
+                    allowlist_keys_ordered=allowlist_keys_ordered,
+                    enrollment_canonical=enrollment_canonical,
                 )
                 pool_empty = not _union_keywords_from_match_types(pool_by_mt)
                 if not pool_empty:
@@ -1154,7 +1139,7 @@ def write_segment_keyword_candidate_files(
     """
     from utils.keyword_sets_display import export_keyword_sets_display
 
-    processed = Path("data") / course / "processed"
+    processed = data_path("processed")
     processed.mkdir(parents=True, exist_ok=True)
     cand_path = processed / "segment-keyword-candidates.csv"
     ext_path = processed / "campaign-keyword-sets-extended.csv"
@@ -1181,7 +1166,7 @@ def verify_segment_keyword_candidates(
     Checks allowlist filtering, ``top_conv`` multi-cap sources, and per-segment coverage.
     Returns a list of human-readable issue strings (empty when OK).
     """
-    processed = Path("data") / course / "processed"
+    processed = data_path("processed")
     cand_path = processed / "segment-keyword-candidates.csv"
     ext_path = processed / "campaign-keyword-sets-extended.csv"
     if candidates is None:
@@ -1199,8 +1184,6 @@ def verify_segment_keyword_candidates(
 
     for n in top_n_values:
         for base in ("synthetic_top_conv", "synthetic_allowlist"):
-            if base == "synthetic_allowlist" and allowlist is None:
-                continue
             source = f"{base}_n{n}"
             present = set(candidates.loc[candidates["source"] == source, "segment"])
             missing = [s for s in segments if s not in present]
@@ -1209,25 +1192,24 @@ def verify_segment_keyword_candidates(
                     f"Missing {source} for segment(s): {', '.join(missing)}"
                 )
 
-    if allowlist:
-        ext_by_id = extended.set_index("keyword_set_id", drop=False)
-        for _, row in candidates.iterrows():
-            set_id = str(row["keyword_set_id"])
-            if set_id not in ext_by_id.index:
-                issues.append(f"Candidate {set_id!r} missing from extended sets")
+    ext_by_id = extended.set_index("keyword_set_id", drop=False)
+    for _, row in candidates.iterrows():
+        set_id = str(row["keyword_set_id"])
+        if set_id not in ext_by_id.index:
+            issues.append(f"Candidate {set_id!r} missing from extended sets")
+            continue
+        ext_row = ext_by_id.loc[set_id]
+        if isinstance(ext_row, pd.DataFrame):
+            ext_row = ext_row.iloc[0]
+        for col in _KEYWORD_LIST_COLS:
+            if col not in ext_row or pd.isna(ext_row[col]) or not str(ext_row[col]).strip():
                 continue
-            ext_row = ext_by_id.loc[set_id]
-            if isinstance(ext_row, pd.DataFrame):
-                ext_row = ext_row.iloc[0]
-            for col in _KEYWORD_LIST_COLS:
-                if col not in ext_row or pd.isna(ext_row[col]) or not str(ext_row[col]).strip():
-                    continue
-                for kw in str(ext_row[col]).split(";"):
-                    kw = kw.strip()
-                    if kw and normalize_keyword(kw) not in allowlist:
-                        issues.append(
-                            f"Allowlist violation in {set_id!r} ({col}): {kw!r}"
-                        )
+            for kw in str(ext_row[col]).split(";"):
+                kw = kw.strip()
+                if kw and normalize_keyword(kw) not in allowlist:
+                    issues.append(
+                        f"Allowlist violation in {set_id!r} ({col}): {kw!r}"
+                    )
 
     return issues
 
@@ -1242,7 +1224,8 @@ def ensure_segment_keyword_candidates(
     """Write segment-keyword-candidates and extended sets when missing or allowlist is newer."""
     from utils.keyword_allowlist import should_refresh_keyword_candidates
 
-    processed = Path("data") / course / "processed"
+    require_enrollment_allowlist()
+    processed = data_path("processed")
     cand_path = processed / "segment-keyword-candidates.csv"
     if not should_refresh_keyword_candidates(course, cand_path):
         return cand_path

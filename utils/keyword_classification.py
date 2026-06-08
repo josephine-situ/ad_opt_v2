@@ -87,16 +87,17 @@ def _keywords_from_keyword_sets(path: Path) -> set[str]:
 
 
 def collect_existing_keywords(
-    course: str,
+    course: str = "sys_think",
     *,
     min_clicks: int = 1,
     include_keyword_sets: bool = True,
 ) -> set[str]:
     """Unique normalized keywords from the kw-day-panel for a course."""
-    base = Path("data") / course
+    from campaign_opt.paths import PROCESSED_DIR, REPORTS_DIR
+
     candidates: list[Path] = [
-        base / "processed" / "kw-day-panel.csv",
-        base / "reports" / "kw-day-panel.csv",
+        PROCESSED_DIR / "kw-day-panel.csv",
+        REPORTS_DIR / "kw-day-panel.csv",
     ]
 
     keywords: set[str] = set()
@@ -107,7 +108,7 @@ def collect_existing_keywords(
         keywords |= found
 
     if include_keyword_sets:
-        sets_path = base / "processed" / "campaign-keyword-sets.csv"
+        sets_path = PROCESSED_DIR / "campaign-keyword-sets.csv"
         if sets_path.exists():
             keywords |= _keywords_from_keyword_sets(sets_path)
 
@@ -136,7 +137,9 @@ def write_keywords_classified(
     min_clicks: int = 1,
     include_keyword_sets: bool = True,
 ) -> Path:
-    out = Path(output_file or Path("data") / course / "gkp" / "keywords_classified.csv")
+    from campaign_opt.paths import GKP_DIR
+
+    out = Path(output_file or GKP_DIR / "keywords_classified.csv")
     out.parent.mkdir(parents=True, exist_ok=True)
     frame = build_keywords_classified_dataframe(
         course,

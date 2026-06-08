@@ -12,7 +12,7 @@ from tests.conftest import install_synthetic_sys_think_data
 def test_install_synthetic_data_does_not_touch_repo_panels(
     monkeypatch, synthetic_course, tmp_path
 ):
-    repo_panel = Path("data/sys_think/processed/campaign-day-panel.csv")
+    repo_panel = Path("sys_think/data/processed/campaign-day-panel.csv")
     if not repo_panel.exists():
         import pytest
 
@@ -25,4 +25,4 @@ def test_install_synthetic_data_does_not_touch_repo_panels(
 
     assert repo_panel.read_bytes() == before
     assert len(pd.read_csv(repo_panel)) == before_rows
-    assert len(pd.read_csv(tmp_path / "data/sys_think/processed/campaign-day-panel.csv")) == 240
+    assert len(pd.read_csv(tmp_path / "sys_think/data/processed/campaign-day-panel.csv")) == 240

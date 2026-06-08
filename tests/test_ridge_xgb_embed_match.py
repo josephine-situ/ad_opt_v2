@@ -28,7 +28,7 @@ from utils.campaign_features import (
 
 
 def test_ridge_xgb_embed_matches_ensemble_levels():
-    config_path = default_config_path("sys_think", "default")
+    config_path = default_config_path("default")
     if not config_path.exists():
         return
     config = load_campaign_config(config_path)
@@ -44,7 +44,7 @@ def test_ridge_xgb_embed_matches_ensemble_levels():
     )
     panel = add_segment_column(load_campaign_day_panel(config.course))
     candidates = apply_candidate_region_policy(
-        pd.read_csv(Path("data") / config.course / "processed" / "segment-keyword-candidates.csv"),
+        pd.read_csv(Path("sys_think/data/processed/segment-keyword-candidates.csv")),
         config.constraints,
     )
     planning_date = pd.Timestamp(production["date"].max())

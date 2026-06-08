@@ -1,0 +1,13 @@
+{
+  "course": "sys_think",
+  "exp_name": "default",
+  "start_day": "2026-05-12",
+  "end_day": "2026-05-25",
+  "strategy": "two_stage",
+  "target": "conv_scaled_clicks",
+  "budget_mode": "fixed",
+  "optimizer_winner": "xgboost",
+  "optimizer_backend": "auto",
+  "skip_stage1": false,
+  "total_budget": 412.7
+}

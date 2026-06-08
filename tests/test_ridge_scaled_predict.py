@@ -20,7 +20,7 @@ from campaign_opt.schema import default_config_path, load_campaign_config
 
 
 def test_scaled_ridge_holdout_r2_beats_raw_on_sys_think():
-    config = load_campaign_config(default_config_path("sys_think", "default"))
+    config = load_campaign_config(default_config_path("default"))
     df = prepare_modeling_data(config)
     holdout_days = config.model_policy.validation.holdout_days
     cutoff = df["date"].max() - __import__("pandas").Timedelta(days=holdout_days - 1)
@@ -46,7 +46,7 @@ def test_scaled_ridge_holdout_r2_beats_raw_on_sys_think():
 
 
 def test_scaled_train_predict_matches_scaled_matrix():
-    config = load_campaign_config(default_config_path("sys_think", "default"))
+    config = load_campaign_config(default_config_path("default"))
     df = prepare_modeling_data(config).head(400)
     design = build_linear_milp_design_matrix(df, config)
     artifact = fit_linear_milp_ridge(design, config, alpha=1.0)

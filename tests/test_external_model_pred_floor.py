@@ -14,7 +14,7 @@ from campaign_opt.schema import CampaignOptConfig, EvaluationConfig
 def test_external_pred_zeros_below_observed_min_budget():
     from pathlib import Path
 
-    if not Path("data/sys_think/processed/campaign-summary.csv").exists():
+    if not Path("sys_think/data/processed/campaign-summary.csv").exists():
         return
     config = CampaignOptConfig(
         exp_name="t",

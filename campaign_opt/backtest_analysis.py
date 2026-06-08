@@ -1,4 +1,10 @@
-"""Compile and summarize campaign backtest outputs (plan vs actual, LaTeX tables)."""
+"""Compile and summarize campaign backtest outputs (plan vs actual, LaTeX tables).
+
+``analyze_backtest_run(out_dir)``
+    Inputs: backtest window dir with ``plans/*/plan_vs_actual.csv``.
+    Outputs: ``evaluation_results.csv``, ``backtest_summary.csv``,
+    ``regional_breakdown.csv``, ``backtest_summary.tex``.
+"""
 
 from __future__ import annotations
 
@@ -14,16 +20,10 @@ from campaign_opt.decisions import region_of_segment
 REGIONS = ("USA", "A", "B")
 
 
-def backtest_window_dir(
-    course: str,
-    exp_name: str,
-    start: str,
-    end: str,
-    *,
-    base: Path | None = None,
-) -> Path:
-    root = base or Path("opt_results")
-    return root / course / "campaign" / exp_name / "backtest" / f"{start}_{end}"
+def backtest_window_dir(exp_name: str, start: str, end: str) -> Path:
+    from campaign_opt.paths import backtest_window_dir as _backtest_window_dir
+
+    return _backtest_window_dir(exp_name, start, end)
 
 
 def save_backtest_config(backtest_dir: Path, payload: dict[str, Any]) -> Path:

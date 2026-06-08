@@ -77,7 +77,7 @@ def test_fit_mean_baseline_holdout():
 
 def test_prepare_modeling_data_filters_with_default_config():
     path = pytest.importorskip("pathlib").Path(
-        "opt_results/sys_think/campaign/default/campaign_config.json"
+        "sys_think/opt_results/campaign/default/campaign_config.json"
     )
     if not path.exists():
         pytest.skip("default config missing")

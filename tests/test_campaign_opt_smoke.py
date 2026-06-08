@@ -28,7 +28,7 @@ def test_optimizer_winner_resolves_tree_embed_backend():
 
 
 def test_config_load():
-    path = Path("opt_results/sys_think/campaign/default/campaign_config.json")
+    path = Path("sys_think/opt_results/campaign/default/campaign_config.json")
     if not path.exists():
         pytest.skip("default config missing")
     cfg = load_campaign_config(path)
@@ -38,7 +38,7 @@ def test_config_load():
 def test_tournament_on_synthetic(monkeypatch, synthetic_sys_think_data):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    config_path = Path("opt_results/sys_think/campaign/default/campaign_config.json")
+    config_path = Path("sys_think/opt_results/campaign/default/campaign_config.json")
     if not config_path.exists():
         pytest.skip("config missing")
     config = load_campaign_config(config_path)
@@ -63,7 +63,7 @@ def test_tournament_on_synthetic(monkeypatch, synthetic_sys_think_data):
 def test_linear_coeffs_export(monkeypatch, synthetic_sys_think_data, tmp_path):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    config_path = Path("opt_results/sys_think/campaign/default/campaign_config.json")
+    config_path = Path("sys_think/opt_results/campaign/default/campaign_config.json")
     if not config_path.exists():
         pytest.skip("config missing")
     config = load_campaign_config(config_path)

@@ -33,8 +33,19 @@ notebook = [
 ]
 dev = ["pytest>=8.0.0", "black>=24.0.0"]
 
+[project.scripts]
+prepare-data = "campaign_opt.cli.prepare_data:main"
+backtest = "campaign_opt.cli.backtest:main"
+run-pipeline = "campaign_opt.cli.run_pipeline:main"
+fit-models = "campaign_opt.cli.fit_models:main"
+analyze-backtest = "campaign_opt.cli.analyze_backtest:main"
+
 [tool.setuptools]
-packages = ["utils", "scripts", "campaign_opt"]
+py-modules = ["config"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["utils*", "campaign_opt*"]
 
 [tool.black]
 line-length = 100

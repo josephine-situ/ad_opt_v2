@@ -1,4 +1,16 @@
-"""Shared two-stage planning: stage-1 keyword sets, stage-2 daily budgets."""
+"""Shared two-stage planning: stage-1 keyword sets, stage-2 daily budgets.
+
+Stage 1 (``select_keyword_sets_for_window``)
+    Inputs: ``CampaignOptConfig``, optimizer manifest, modeling panel, keyword
+    candidates, campaign panel, window dates, total budget.
+    Outputs: ``fixed_keyword_sets.json``, ``keyword_set_plan.csv`` under
+    ``output_dir``.
+
+Stage 2 (``optimize_budgets_for_day``)
+    Inputs: same panels + manifest, ``fixed_keyword_sets``, single planning date.
+    Outputs: ``campaign_plan.csv``, ``optimizer_<winner>.joblib`` under
+    ``output_dir``.
+"""
 
 from __future__ import annotations
 

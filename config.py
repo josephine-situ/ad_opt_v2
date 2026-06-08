@@ -13,58 +13,6 @@ class CourseConfig(TypedDict, total=False):
 
 
 REGION_CONFIG = {
-    "ml": {
-        "USA": ["United States"],
-        "A": [
-            "Japan",
-            "Italy",
-            "United Kingdom",
-            "Belgium",
-            "Canada",
-            "Germany",
-            "Switzerland",
-            "France",
-            "Denmark",
-            "Spain",
-            "Netherlands",
-            "Sweden",
-            "South Korea",
-            "Israel",
-            "Australia",
-            "Norway",
-            "Mexico",
-            "Luxembourg",
-        ],
-        "B": [
-            "Bolivia",
-            "Portugal",
-            "Argentina",
-            "Saudi Arabia",
-            "Austria",
-            "Singapore",
-            "Poland",
-            "Morocco",
-            "Ghana",
-            "Russia",
-            "China",
-            "Chile",
-            "Brazil",
-            "Slovakia",
-            "Iceland",
-            "Peru",
-            "Greece",
-            "Colombia",
-            "Thailand",
-            "Hong Kong",
-            "South Africa",
-            "Qatar",
-            "Croatia",
-            "United Arab Emirates",
-            "Taiwan",
-            "Indonesia",
-            "Ecuador",
-        ],
-    },
     "sys_think": {
         "USA": ["United States"],
         "A": [
@@ -144,37 +92,9 @@ REGION_CONFIG = {
 }
 
 
+COURSE = "sys_think"
+
 COURSE_CONFIG: dict[str, CourseConfig] = {
-    "gen_ai": {
-        "min_date": "2024-11-03",
-        "regions": REGION_CONFIG["ml"],
-        "conversion_actions": [
-            "Purchase - Gen AI",
-            "Add to Cart - Gen AI",
-            "idimension - account create",
-        ],
-        "purchase_actions": ["Purchase - Gen AI"],
-    },
-    "ml": {
-        "min_date": "2022-07-01",
-        "regions": REGION_CONFIG["ml"],
-        "conversion_actions": [
-            "Purchase",
-            "Add to cart - MLx - iDimension",
-            "idimension - account create",
-        ],
-        "purchase_actions": ["Purchase"],
-    },
-    "sys_eng": {
-        "min_date": "2022-07-01",
-        "regions": REGION_CONFIG["ml"],
-        "conversion_actions": [
-            "Purchase",
-            "SysEng - Add to cart - iDimension",
-            "idimension - account create",
-        ],
-        "purchase_actions": ["Purchase"],
-    },
     "sys_think": {
         "min_date": "2024-06-01",
         "start_dates": [
@@ -209,26 +129,5 @@ COURSE_CONFIG: dict[str, CourseConfig] = {
             "HubSpot - Customers",
         ],
         "purchase_actions": ["Purchase", "HubSpot - Customers"],
-    },
-    "quant_comp": {
-        "min_date": "2022-07-01",
-        "regions": REGION_CONFIG["ml"],
-        "conversion_actions": [
-            "idimension - Purchase",
-            "idimension - QCX = Add to cart",
-            "idimension - account create",
-        ],
-        "purchase_actions": ["idimension - Purchase"],
-    },
-    "dai": {
-        "min_date": "2022-07-01",
-        "regions": REGION_CONFIG["ml"],
-        "conversion_actions": [
-            "Purchase",
-            "Add to Cart",
-            "idimension - account create",
-            "Account Creation",
-        ],
-        "purchase_actions": ["Purchase"],
     },
 }

@@ -27,18 +27,21 @@ def install_synthetic_sys_think_data(
     """
     Copy synthetic processed CSVs into ``tmp_path`` and redirect ``data_paths``.
 
-    Never writes into the repo's tracked ``data/<course>/processed`` tree.
+    Never writes into the repo's tracked ``sys_think/data/processed`` tree.
     """
     src = synthetic_course / course / "processed"
-    dst = tmp_path / "data" / course / "processed"
+    dst = tmp_path / "sys_think" / "data" / "processed"
     dst.mkdir(parents=True, exist_ok=True)
     for name in _SYNTHETIC_PANEL_FILES:
         path = src / name
         if path.exists():
             shutil.copy(path, dst / name)
 
+    gkp_dst = tmp_path / "sys_think" / "data" / "gkp"
+    gkp_dst.mkdir(parents=True, exist_ok=True)
+
     def _data_paths(course_name: str) -> dict[str, Path]:
-        base = tmp_path / "data" / course_name
+        base = tmp_path / "sys_think" / "data"
         return {
             "processed": base / "processed",
             "gkp": base / "gkp",
@@ -46,9 +49,16 @@ def install_synthetic_sys_think_data(
         }
 
     monkeypatch.setattr("utils.campaign_features.data_paths", _data_paths)
+    monkeypatch.setattr("campaign_opt.paths.PROCESSED_DIR", dst)
+    monkeypatch.setattr("campaign_opt.paths.GKP_DIR", gkp_dst)
+    monkeypatch.setattr("campaign_opt.paths.DATA_DIR", tmp_path / "sys_think" / "data")
     monkeypatch.setattr(
         "utils.keyword_allowlist.load_enrollment_keyword_allowlist",
-        lambda _course: None,
+        lambda _course="sys_think": {"test keyword", "another keyword"},
+    )
+    monkeypatch.setattr(
+        "utils.keyword_allowlist.load_enrollment_keyword_allowlist_ordered",
+        lambda _course="sys_think": ["test keyword", "another keyword"],
     )
 
     import utils.campaign_features as campaign_features

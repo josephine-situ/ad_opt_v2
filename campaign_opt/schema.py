@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from campaign_opt.paths import campaign_config_path, exp_dir as paths_exp_dir
+
 
 @dataclass
 class ValidationConfig:
@@ -62,10 +64,8 @@ class ModelPolicy:
 
 @dataclass
 class BacktestConfig:
-    """Walk-forward backtest strategy (default: daily full re-optimization)."""
-    strategy: str = "daily"
-    keyword_set_horizon: str = "period"
-    budget_cadence: str = "W-MON"
+    """Walk-forward backtest strategy (default: two-stage)."""
+    strategy: str = "two_stage"
 
 
 @dataclass
@@ -85,8 +85,9 @@ class CampaignOptConfig:
     modeling_lookback_days: int | None = None
 
     def exp_dir(self, base: Path | None = None) -> Path:
-        root = base or Path("opt_results")
-        return root / self.course / "campaign" / self.exp_name
+        if base is not None:
+            return base / self.exp_name
+        return paths_exp_dir(self.exp_name)
 
 
 def _parse_model_policy(raw: dict[str, Any]) -> ModelPolicy:
@@ -135,5 +136,5 @@ def load_campaign_config(path: str | Path) -> CampaignOptConfig:
     )
 
 
-def default_config_path(course: str, exp_name: str = "default") -> Path:
-    return Path("opt_results") / course / "campaign" / exp_name / "campaign_config.json"
+def default_config_path(exp_name: str = "default") -> Path:
+    return campaign_config_path(exp_name)

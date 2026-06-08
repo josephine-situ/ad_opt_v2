@@ -1,20 +1,25 @@
-# ad_opt_v2
+# ad_opt_v2 — System Thinking campaign optimization
 
-Google Ads data pull, campaign-level budget/keyword-set optimization, and walk-forward backtests for the System Thinking course.
+Two-stage Google Ads optimization for the **System Thinking** course: fix keyword sets once per window (stage 1), then walk-forward daily budget allocation (stage 2). Includes data prep, model fitting, production planning, and walk-forward backtest.
 
-## Repo layout
+## Repository layout
 
-| Path | Purpose |
-|------|---------|
-| `eda_clicks_budget_keywords.ipynb` | Exploratory analysis (clicks, budget, keyword sets) |
-| `data/<course>/` | Change-history HTML, processed panels, GKP inputs |
-| `campaign_opt/` | Optimization library (features, models, MILP, backtest) |
-| `scripts/` | CLI entry points for pull → panel → pipeline → backtest |
-| `opt_results/<course>/campaign/<exp>/` | `campaign_config.json` + backtest summaries |
-| `presentation/` | Beamer slides (`SUMMARY_presentation.tex`, `BACKTEST_presentation.tex`) |
-| `tests/` | Unit tests for the optimization package |
-
-Notebook figures go under `figures/` (gitignored; created when you run the notebook).
+```
+sys_think/
+  data/                          # inputs + processed panels
+    Change history*.html         # required: budget/keyword history
+    gkp/
+      *Keywords*Enrollments*.xlsx   # required: enrollment allowlist
+      Saved Keyword Stats*.csv      # cached GKP search-volume stats
+    processed/                   # campaign-day panel, candidates, features
+  opt_results/
+    campaign/default/
+      campaign_config.json       # experiment config
+      backtest/<start>_<end>/    # backtest summaries + plans/
+campaign_opt/                    # library + CLI (campaign_opt/cli/)
+utils/                           # data-processing helpers
+tests/
+```
 
 ## Setup
 
@@ -24,43 +29,70 @@ Requires [uv](https://docs.astral.sh/uv/). From the repo root:
 uv sync --extra optimization --extra ml
 ```
 
-Optional notebook EDA: `uv sync --extra notebook`.
+Keep Google Ads credentials outside the repo (`.gitignore` excludes `google-ads*.yaml`).
 
-Keep Google Ads credentials outside the repo (`.gitignore` excludes `google-ads*.yaml` / `google-ads*.json`).
+**Required before candidate build:** `sys_think/data/gkp/*Keywords*Enrollments*.xlsx`
 
-## Data pipeline
+## Overall inputs and outputs
 
-Run in order: **pull → clean → parse change history → campaign-day panel**.
+| Inputs | Outputs |
+|--------|---------|
+| Change-history HTML | `sys_think/data/processed/campaign-summary.csv`, `campaign-keyword-sets.csv` |
+| Google Ads API pulls | `sys_think/data/reports/kw-day-panel.csv` → cleaned `processed/kw-day-panel.csv` |
+| Enrollment allowlist xlsx | Filtered `segment-keyword-candidates.csv` (synthetic `*_allowlist_*` sets) |
+| Cached GKP stats CSV | `keyword-set-features.csv` (`last_month_searches_mean`, etc.) |
+| `campaign_config.json` + fitted models | `model_manifest.json`, `holdout_metrics.json` |
+| Two-stage production run | `two_stage_plan/fixed_keyword_sets.json`, `stage2_budgets/YYYYMMDD/campaign_plan.csv` |
+| Backtest window | `backtest/<start>_<end>/daily_backtest_summary.csv`, `backtest_summary.csv` |
 
-```powershell
-uv run python scripts/pull_input_data.py --datasets campaign_opt --output-course sys_think --google-ads-yaml ..\google-ads-prod.yaml --customer-id 1234567890
-uv run python scripts/process_input_data.py --output-course sys_think
-uv run python scripts/parse_change_history_html.py --output-course sys_think
-uv run python scripts/generate_campaign_day_panel.py --output-course sys_think
-```
-
-`build_keywords_classified.py` and `pull_input_data.py --datasets keyword_planning` are needed when GKP set features are enabled in config. Details: [`campaign_opt/README.md`](campaign_opt/README.md).
-
-## Optimization and backtest
-
-Default config: `opt_results/sys_think/campaign/default/campaign_config.json`
+## Quick start
 
 ```powershell
-uv run python scripts/run_campaign_pipeline.py --course sys_think
-uv run python scripts/backtest_campaign.py --course sys_think --start 2026-05-12 --end 2026-05-25 --strategy two_stage --analyze
-uv run python scripts/analyze_backtest_results.py --course sys_think --start 2026-05-12 --end 2026-05-25
+# 1. Data prep (pull optional; validates allowlist)
+uv run prepare-data --pull --google-ads-yaml ..\google-ads-prod.yaml --customer-id 1234567890
+
+# 2. Features + model fit
+uv run python -m campaign_opt.cli.build_keyword_candidates --verify
+uv run python -m campaign_opt.cli.build_gkp_set_features
+uv run fit-models
+
+# 3. Two-stage production plan
+uv run run-pipeline --window-start 2026-05-12 --window-end 2026-05-25 --planning-date 2026-05-12
+
+# 4. Walk-forward backtest + analysis
+uv run backtest --start 2026-05-12 --end 2026-05-25 --use-actual-budget --analyze
+uv run analyze-backtest --start 2026-05-12 --end 2026-05-25
 ```
 
-Per-day plan folders and fitted `.joblib` files under `opt_results/.../backtest/` are regeneratable and not tracked in git.
+## Per-component I/O
 
-On a cluster, run one `backtest_campaign.py` job per day with `--day YYYY-MM-DD`, then `analyze_backtest_results.py` after the window completes (see [`campaign_opt/README.md`](campaign_opt/README.md)).
+| Component | Inputs | Outputs |
+|-----------|--------|---------|
+| `prepare-data` | allowlist xlsx, credentials, change-history HTML | all `processed/` panels; optional GKP stats refresh (`--refresh-gkp`) |
+| `cli.pull_input_data` | Google Ads YAML, customer ID | `reports/kw-day-panel.csv`; optional KWP stats (keywords from panel) |
+| `cli.process_input_data` | raw kw-day panel | `processed/kw-day-panel.csv` |
+| `cli.parse_change_history_html` | change-history HTML | `campaign-summary.csv`, `campaign-keyword-sets.csv` |
+| `cli.generate_campaign_day_panel` | processed artifacts | `campaign-day-panel.csv` |
+| `cli.build_keyword_candidates` | panel + **required** allowlist | `segment-keyword-candidates.csv`, `campaign-keyword-sets-extended.csv` |
+| `cli.build_gkp_set_features` | cached GKP stats + keyword sets | `keyword-set-features.csv` |
+| `fit-models` | modeling panel + config | `model_manifest.json`, `holdout_metrics.json` |
+| **Stage 1** `select_keyword_sets_for_window` | train (`date < window_start`), candidates, manifest | `fixed_keyword_sets.json`, `keyword_set_plan.csv` |
+| **Stage 2** `optimize_budgets_for_day` | train (`date < t`), fixed sets, manifest | `campaign_plan.csv`, `optimizer_xgboost.joblib` |
+| `backtest` | same + date window | `daily_backtest_summary.csv`, `plans/YYYYMMDD/plan_vs_actual.csv` |
+| `analyze-backtest` | `plan_vs_actual` files | `backtest_summary.csv`, `evaluation_results.csv` |
 
-## Presentations
+**Production vs backtest:** `run-pipeline` / `plan_two_stage_campaign` runs stage 2 for **one** `--planning-date`. `backtest` runs stage 2 for **every day** in `[start, end]`.
+
+## Config
+
+Default: `sys_think/opt_results/campaign/default/campaign_config.json`
+
+See [`campaign_opt/README.md`](campaign_opt/README.md) for modeling notes and config fields.
+
+## Tests
 
 ```powershell
-cd presentation
-latexmk BACKTEST_presentation.tex
-latexmk SUMMARY_presentation.tex
+uv run pytest tests/ -q
 ```
 
-Build artifacts go to `presentation/build/`.
+Golden parity fixtures: `tests/fixtures/backtest_golden/2026-05-12_2026-05-25/`

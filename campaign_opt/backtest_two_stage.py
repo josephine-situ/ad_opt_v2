@@ -1,4 +1,12 @@
-"""Two-stage walk-forward backtest: fix keyword sets for full window, re-optimize budgets daily."""
+"""Two-stage walk-forward backtest: fix keyword sets for full window, re-optimize budgets daily.
+
+``run_two_stage_backtest``
+    Inputs: config, modeling panel, candidates, campaign panel, date window,
+    budget cap, output dir under ``sys_think/opt_results/.../backtest/<start>_<end>/``.
+    Outputs: ``fixed_keyword_sets.json``, ``stage1_keyword_sets/``,
+    ``plans/YYYYMMDD/{campaign_plan,plan_vs_actual}.csv``,
+    ``daily_backtest_summary.csv`` (+ ``.json``).
+"""
 
 from __future__ import annotations
 
@@ -8,7 +16,7 @@ from typing import Any
 
 import pandas as pd
 
-from campaign_opt.backtest import optimizer_manifest_for_backtest
+from campaign_opt.pipeline_inputs import optimizer_manifest_for_backtest
 from campaign_opt.decisions import actual_campaign_budget_total, parse_excluded_regions
 from campaign_opt.evaluation import (
     compare_plan_and_actual,

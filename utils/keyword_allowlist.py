@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from campaign_opt.paths import GKP_DIR, require_enrollment_allowlist as paths_require_enrollment_allowlist
 from utils.campaign_features import MATCH_TYPE_LIST_COLS, resolve_positive_keyword_column
 
 _XLSX_NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
@@ -28,6 +29,11 @@ def clean_keyword_text(keyword: str) -> str:
 
 def normalize_keyword(keyword: str) -> str:
     return clean_keyword_text(keyword).lower()
+
+
+def require_enrollment_allowlist() -> Path:
+    """Return enrollment allowlist path or raise with setup instructions."""
+    return paths_require_enrollment_allowlist()
 
 
 def _read_xlsx_first_sheet(path: Path) -> list[list[str]]:
@@ -57,32 +63,24 @@ def _read_xlsx_first_sheet(path: Path) -> list[list[str]]:
 def should_refresh_keyword_candidates(course: str, candidates_path: Path) -> bool:
     """True when candidates are missing or older than the enrollment allowlist file."""
     allow_path = enrollment_keyword_allowlist_path(course)
-    if allow_path is None:
-        return not candidates_path.exists()
     if not candidates_path.exists():
         return True
     return allow_path.stat().st_mtime > candidates_path.stat().st_mtime
 
 
-def enrollment_keyword_allowlist_path(course: str) -> Path | None:
-    gkp_dir = Path("data") / course / "gkp"
-    if not gkp_dir.is_dir():
-        return None
-    matches = sorted(gkp_dir.glob(_ENROLLMENT_FILE_GLOB), key=lambda p: p.stat().st_mtime)
-    return matches[-1] if matches else None
+def enrollment_keyword_allowlist_path(course: str) -> Path:
+    """Return newest enrollment allowlist xlsx (required for keyword candidate builds)."""
+    return require_enrollment_allowlist()
 
 
-def load_enrollment_keyword_allowlist_ordered(course: str) -> list[str] | None:
+def load_enrollment_keyword_allowlist_ordered(course: str) -> list[str]:
     """
     Keywords from ``*Keywords*Enrollments*.xlsx`` in priority order.
 
     When a numeric enrollment column is present, sorts by enrollment descending;
-    otherwise preserves spreadsheet row order. Returns ``None`` when no file exists.
+    otherwise preserves spreadsheet row order.
     """
     path = enrollment_keyword_allowlist_path(course)
-    if path is None:
-        return None
-
     rows = _read_xlsx_first_sheet(path)
     if not rows:
         return []
@@ -114,16 +112,9 @@ def load_enrollment_keyword_allowlist_ordered(course: str) -> list[str] | None:
     return ordered
 
 
-def load_enrollment_keyword_allowlist(course: str) -> set[str] | None:
-    """
-    Keywords from ``*Keywords*Enrollments*.xlsx`` in ``data/<course>/gkp/``.
-
-    Returns ``None`` when no allowlist file exists for the course.
-    """
-    ordered = load_enrollment_keyword_allowlist_ordered(course)
-    if ordered is None:
-        return None
-    return set(ordered)
+def load_enrollment_keyword_allowlist(course: str) -> set[str]:
+    """Keywords from the enrollment allowlist under ``sys_think/data/gkp/``."""
+    return set(load_enrollment_keyword_allowlist_ordered(course))
 
 
 def _split_keyword_field(raw: object) -> list[str]:
@@ -187,8 +178,6 @@ def enrollment_allowlist_keywords(
 
 
 def filter_keyword_list(keywords: list[str], allowlist: set[str]) -> list[str]:
-    if not allowlist:
-        return keywords
     out: list[str] = []
     seen: set[str] = set()
     for kw in keywords:
@@ -206,9 +195,6 @@ def filter_keyword_sets_dataframe(
     drop_empty: bool = True,
 ) -> pd.DataFrame:
     """Keep only allowlisted keywords in set list columns; optionally drop empty sets."""
-    if not allowlist:
-        return keyword_sets
-
     out = keyword_sets.copy()
     list_cols = [c for c in _KEYWORD_LIST_COLS if c in out.columns]
 
@@ -252,6 +238,4 @@ def apply_allowlist_to_keyword_sets(
 ) -> pd.DataFrame:
     if allowlist is None:
         allowlist = load_enrollment_keyword_allowlist(course)
-    if allowlist is None:
-        return keyword_sets
     return filter_keyword_sets_dataframe(keyword_sets, allowlist)

@@ -69,9 +69,9 @@ def test_embed_matches_sklearn_at_tree_thresholds():
     """Embedding must be exact at every budget — especially at tree split thresholds."""
     from campaign_opt.features import prepare_modeling_data, train_holdout_split
 
-    if not default_config_path("sys_think", "default").exists():
+    if not default_config_path("default").exists():
         return
-    config = load_campaign_config(default_config_path("sys_think", "default"))
+    config = load_campaign_config(default_config_path("default"))
     out_dir = config.exp_dir()
     manifest_path = out_dir / "model_manifest.json"
     if not manifest_path.exists():
@@ -88,7 +88,7 @@ def test_embed_matches_sklearn_at_tree_thresholds():
     )
     panel = add_segment_column(load_campaign_day_panel(config.course))
     candidates = apply_candidate_region_policy(
-        pd.read_csv(Path("data") / config.course / "processed" / "segment-keyword-candidates.csv"),
+        pd.read_csv(Path("sys_think/data/processed/segment-keyword-candidates.csv")),
         config.constraints,
     )
     model_path = _fit_and_save_embed_model(
