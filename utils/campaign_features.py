@@ -563,28 +563,36 @@ def compute_segment_conv_per_click_rates(panel: pd.DataFrame) -> pd.DataFrame:
     """
     Course-wide conv/click per (region, match_types) from all rows in ``panel``.
 
+    Requires columns: region, match_types, clicks, all_conv.
     Returns columns: region, match_types, conv_per_click.
     """
     work = panel.copy()
-    work["clicks"] = pd.to_numeric(work.get("clicks", 0), errors="coerce").fillna(0.0)
-    if "all_conv" not in work.columns:
-        work["conv_per_click"] = 0.0
-        return work[["region", "match_types", "conv_per_click"]].drop_duplicates()
+    for col in ("region", "match_types", "clicks", "all_conv"):
+        if col not in work.columns:
+            raise ValueError(f"panel is missing required column for conv/click rates: {col}")
 
-    work["all_conv"] = pd.to_numeric(work["all_conv"], errors="coerce").fillna(0.0)
-    total_clicks = float(work["clicks"].sum())
-    total_conv = float(work["all_conv"].sum())
-    global_rate = total_conv / total_clicks if total_clicks > 0 else 0.0
+    work["clicks"] = pd.to_numeric(work["clicks"], errors="coerce")
+    bad_clicks = work["clicks"].isna()
+    if bad_clicks.any():
+        raise ValueError("panel has non-numeric clicks values")
+
+    work["all_conv"] = pd.to_numeric(work["all_conv"], errors="coerce")
+    bad_conv = work["all_conv"].isna()
+    if bad_conv.any():
+        raise ValueError("panel has non-numeric all_conv values")
 
     seg = (
         work.groupby(["region", "match_types"], as_index=False)
         .agg(seg_clicks=("clicks", "sum"), seg_conv=("all_conv", "sum"))
     )
-    seg["conv_per_click"] = np.where(
-        seg["seg_clicks"] > 0.0,
-        seg["seg_conv"] / seg["seg_clicks"],
-        global_rate,
-    )
+    zero_click = seg["seg_clicks"] <= 0.0
+    if zero_click.any():
+        bad = seg.loc[zero_click, ["region", "match_types"]]
+        raise ValueError(
+            "conv/click rate undefined for segment(s) with zero clicks: "
+            f"{bad.to_dict(orient='records')}"
+        )
+    seg["conv_per_click"] = seg["seg_conv"] / seg["seg_clicks"]
     return seg[["region", "match_types", "conv_per_click"]]
 
 
@@ -647,18 +655,13 @@ def build_modeling_frame(
     panel = add_calendar_features(panel, course=course)
 
     if target_col == "all_conv":
-        if "all_conv" in panel.columns:
-            panel["all_conv"] = panel["all_conv"].fillna(0.0)
-        elif include_all_conv_from_summary:
+        if "all_conv" not in panel.columns and include_all_conv_from_summary:
             panel["all_conv"] = np.nan
     elif target_col == "conv_scaled_clicks":
         rates = load_course_conv_per_click_rates(course)
         panel = add_conversion_scaled_clicks_target(
             panel, target_col=target_col, rates=rates, course=course
         )
-
-    if "clicks" not in panel.columns:
-        panel["clicks"] = 0
 
     return panel.sort_values(["date", "segment"]).reset_index(drop=True)
 
