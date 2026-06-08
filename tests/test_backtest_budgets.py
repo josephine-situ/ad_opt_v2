@@ -11,39 +11,8 @@ import pytest
 
 from utils.modeling_prep import load_fit_manifest
 from utils.two_stage_plan import optimize_budgets_for_day
-from utils.decisions import (
-    actual_campaign_budget_total,
-    budgets_proportional_to_conversion_rates,
-    segment_conversion_rates,
-)
+from utils.decisions import actual_campaign_budget_total
 from utils.campaign_config import CampaignOptConfig, ModelPolicy
-
-
-def test_segment_conversion_rates():
-    panel = pd.DataFrame(
-        {
-            "segment": ["A / Broad", "A / Broad", "B / Phrase; Exact", "B / Phrase; Exact"],
-            "daily_budget": [10.0, 20.0, 5.0, 15.0],
-            "all_conv": [1.0, 2.0, 3.0, 1.0],
-        }
-    )
-    rates = segment_conversion_rates(panel, ["A / Broad", "B / Phrase; Exact"])
-    assert rates["A / Broad"] == 0.1
-    assert rates["B / Phrase; Exact"] == 0.2
-
-
-def test_budgets_proportional_to_conversion_rates():
-    panel = pd.DataFrame(
-        {
-            "segment": ["A / Broad", "A / Broad", "B / Phrase; Exact"],
-            "daily_budget": [10.0, 10.0, 20.0],
-            "all_conv": [2.0, 2.0, 8.0],
-        }
-    )
-    segments = ["A / Broad", "B / Phrase; Exact"]
-    budgets = budgets_proportional_to_conversion_rates(panel, segments, total_budget=100.0)
-    assert abs(sum(budgets.values()) - 100.0) < 1e-9
-    assert budgets["B / Phrase; Exact"] > budgets["A / Broad"]
 
 
 def test_actual_campaign_budget_total():

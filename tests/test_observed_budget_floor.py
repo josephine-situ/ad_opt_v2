@@ -105,9 +105,7 @@ def test_linear_milp_levels_objective_with_floor(tmp_path: Path):
         target="clicks",
         constraints={"budget_tiebreak_penalty": 0.0},
         evaluation=EvaluationConfig(
-            objective="levels",
             apply_observed_budget_floor=True,
-            baseline_budget=0.0,
         ),
     )
     candidates = pd.DataFrame(

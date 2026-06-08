@@ -109,19 +109,3 @@ def predict_levels_optimizer(
         mins,
         budget_atol=float(config.evaluation.budget_floor_atol),
     )
-
-
-def predict_incremental_optimizer(
-    model: EnsembleModel | Any,
-    decision_rows: pd.DataFrame,
-    baseline_rows: pd.DataFrame,
-    panel: pd.DataFrame,
-    config: CampaignOptConfig,
-    *,
-    floor_panel: pd.DataFrame | None = None,
-) -> np.ndarray:
-    """Gated f(decision) - f(baseline) per row."""
-    floor_kw = {"floor_panel": floor_panel} if floor_panel is not None else {}
-    f_dec = predict_levels_optimizer(model, decision_rows, panel, config, **floor_kw)
-    f_zero = predict_levels_optimizer(model, baseline_rows, panel, config, **floor_kw)
-    return f_dec - f_zero

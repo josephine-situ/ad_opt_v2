@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from utils.backends.tree_embed import _external_incremental_pred_by_segment
+from utils.backends.tree_embed import _external_level_pred_by_segment
 from utils.decisions import observed_min_daily_budget
 from utils.evaluation import build_plan_prediction_rows
 from utils.campaign_config import CampaignOptConfig, EvaluationConfig
@@ -22,7 +22,6 @@ def test_external_pred_zeros_below_observed_min_budget():
         target="clicks",
         evaluation=EvaluationConfig(
             apply_observed_budget_floor=True,
-            baseline_budget=0.0,
             budget_floor_atol=0.01,
         ),
     )
@@ -65,7 +64,7 @@ def test_external_pred_zeros_below_observed_min_budget():
             "milp_pred": [0.0],
         }
     )
-    ext = _external_incremental_pred_by_segment(
+    ext = _external_level_pred_by_segment(
         plan,
         StubPipeline(),
         panel,
@@ -75,8 +74,6 @@ def test_external_pred_zeros_below_observed_min_budget():
         candidates=candidates,
     )
     assert float(ext["external_model_pred"].iloc[0]) == 0.0
-    assert float(ext["pred_over_base"].iloc[0]) == 0.0
-
 
 def test_build_plan_prediction_rows_uses_embed_template():
     config = CampaignOptConfig(exp_name="t", course="sys_think", target="clicks")

@@ -1,4 +1,4 @@
-"""Tests for ensemble incremental prediction."""
+"""Tests for ensemble level prediction and gating."""
 
 from __future__ import annotations
 
@@ -9,8 +9,6 @@ import pandas as pd
 import pytest
 
 from utils.evaluation import (
-    EnsembleModel,
-    build_baseline_rows_for_decisions,
     build_segment_decision_rows,
     evaluation_ensemble_weights,
     fit_ensemble,
@@ -27,7 +25,7 @@ def tiny_config():
         course="sys_think",
         target="clicks",
         model_policy=ModelPolicy(candidates=["ridge"], validation=ValidationConfig(cv_folds=2)),
-        evaluation=EvaluationConfig(baseline_budget=0.0),
+        evaluation=EvaluationConfig(),
         context_features={
             "calendar": ["is_weekend"],
             "keyword_set_static": [],
@@ -36,53 +34,7 @@ def tiny_config():
     )
 
 
-def test_incremental_zero_budget_baseline(tiny_config, synthetic_sys_think_data, monkeypatch):
-    root = Path(__file__).resolve().parents[1]
-    monkeypatch.chdir(root)
-    from utils.modeling_prep import prepare_modeling_data
-
-    df = prepare_modeling_data(tiny_config)
-    ensemble = fit_ensemble(df, tiny_config)
-    set_feats = pd.DataFrame(
-        {
-            "keyword_set_id": df["keyword_set_id"].unique(),
-            "embed_cohesion": 0.5,
-        }
-    )
-    segments = df["segment"].unique()[:2]
-    baseline_sets = df.groupby("segment")["keyword_set_id"].first()
-    planning_date = pd.Timestamp(df["date"].max())
-
-    dec = pd.DataFrame(
-        {
-            "segment": segments,
-            "daily_budget": [50.0, 80.0],
-            "keyword_set_id": baseline_sets.loc[segments].values,
-        }
-    )
-    baseline_rows = build_baseline_rows_for_decisions(
-        dec,
-        planning_date,
-        set_feats,
-        tiny_config.course,
-        ensemble.feature_cols,
-        0.0,
-    )
-    f0 = ensemble.predict_levels(baseline_rows)
-    assert np.all(f0 >= 0)
-
-    dec_rows = build_segment_decision_rows(
-        dec, planning_date, set_feats, tiny_config.course, ensemble.feature_cols
-    )
-    assert "region" in dec_rows.columns
-    assert dec_rows["region"].notna().all()
-    raw = ensemble.predict_incremental_raw(dec_rows, baseline_rows)
-    lift = ensemble.predict_incremental(dec_rows, baseline_rows)
-    assert np.allclose(lift, np.clip(raw, 0, None))
-    assert len(lift) == len(segments)
-
-
-def test_gated_baseline_zero_when_below_observed_min(tiny_config, synthetic_sys_think_data, monkeypatch):
+def test_gated_level_zero_when_below_observed_min(tiny_config, synthetic_sys_think_data, monkeypatch):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
     from utils.modeling_prep import prepare_modeling_data

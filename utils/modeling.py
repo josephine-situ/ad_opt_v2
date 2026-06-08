@@ -638,7 +638,6 @@ def fit_ensemble_tournament(
         members=members,
         feature_cols=feature_cols,
         target=config.target,
-        baseline_budget=float(config.evaluation.baseline_budget),
     )
 
     target = config.target

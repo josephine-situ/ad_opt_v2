@@ -52,17 +52,8 @@ def clean_keyword_series(keyword: pd.Series) -> pd.Series:
     )
 
 
-# Backward-compatible alias.
-_clean_keyword = clean_keyword_series
-
-
 def _clean_match_type(match_type: pd.Series) -> pd.Series:
     return match_type.astype("string").str.replace("_", " ", regex=False).str.title().str.strip()
-
-
-def _join_sorted_unique(values: pd.Series) -> str:
-    clean_values = values.dropna().astype(str)
-    return "; ".join(sorted(clean_values.unique()))
 
 
 def clean_kw_day_panel(input_file: str | Path, output_file: str | Path | None = None) -> pd.DataFrame:
@@ -88,7 +79,7 @@ def clean_kw_day_panel(input_file: str | Path, output_file: str | Path | None = 
     df = df.copy()
     df["campaign"] = _clean_campaign(df["campaign"])
     df["region"] = df["campaign"].apply(_extract_region_from_campaign)
-    df["keyword"] = _clean_keyword(df["keyword"])
+    df["keyword"] = clean_keyword_series(df["keyword"])
     df["match_type"] = _clean_match_type(df["match_type"])
     df["date"] = pd.to_datetime(df["date"]).dt.date
 

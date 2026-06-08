@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -19,7 +18,7 @@ def tiny_config():
         course="sys_think",
         target="clicks",
         model_policy=ModelPolicy(candidates=["ridge"], validation=ValidationConfig(cv_folds=2)),
-        evaluation=EvaluationConfig(baseline_budget=0.0),
+        evaluation=EvaluationConfig(),
         context_features={"calendar": ["is_weekend"], "keyword_set_static": [], "gkp_set": []},
     )
 
@@ -65,22 +64,7 @@ def test_market_actuals_use_panel_campaigns_not_zero_pad(
     assert plan_rows["actual_budget"].notna().all()
     assert "campaign_budget" in market.columns
     assert market["campaign_budget"].equals(market["daily_budget"])
-    assert "pred_lift_raw" in plan_rows.columns
-    assert "actual_model_lift_raw" in market.columns
-    assert np.allclose(
-        plan_rows["pred_lift"],
-        np.clip(plan_rows["pred_lift_raw"], 0, None),
-        equal_nan=True,
-    )
-    assert np.allclose(
-        market["actual_model_lift"],
-        np.clip(market["actual_model_lift_raw"], 0, None),
-        equal_nan=True,
-    )
-    assert metrics.get("pred_lift_raw_total") == pytest.approx(float(plan_rows["pred_lift_raw"].sum()))
-    assert metrics.get("actual_model_lift_raw_total") == pytest.approx(
-        float(market["actual_model_lift_raw"].sum())
-    )
+    assert metrics.get("pred_lift_total") == pytest.approx(float(plan_rows["pred_lift"].sum()))
 
 
 def test_actual_decisions_reject_missing_daily_budget():

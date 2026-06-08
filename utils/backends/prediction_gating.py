@@ -95,26 +95,6 @@ def segment_level_ub(
     return max(ub, 1e-6)
 
 
-def apply_gated_baseline_levels(
-    baseline_level_by_key: dict[tuple[str, str], float],
-    baseline_budget: float,
-    min_by_segment: dict[str, float],
-    *,
-    budget_atol: float = 0.01,
-) -> dict[tuple[str, str], float]:
-    """Zero baseline levels when baseline budget is below observed min for that segment."""
-    out: dict[tuple[str, str], float] = {}
-    bb = float(round_budgets_for_floor(np.array([baseline_budget]))[0])
-    atol = max(float(budget_atol), 0.0)
-    for (seg, kid), level in baseline_level_by_key.items():
-        bmin = float(min_by_segment.get(str(seg), min_by_segment.get(seg, 0.0)))
-        if bmin > 0.0 and bb + atol < bmin:
-            out[(seg, kid)] = 0.0
-        else:
-            out[(seg, kid)] = float(level)
-    return out
-
-
 def gate_level_expr(
     model: gp.Model,
     raw_expr: Any,
@@ -180,7 +160,7 @@ def gate_pred_vars_if_enabled(
     """
     Optionally replace ``pred_vars`` with gated expressions.
 
-    Returns ``observed_min_daily_budget`` map (for baseline gating).
+    Returns ``observed_min_daily_budget`` map for post-solve floor checks.
     """
     floor_panel = gating_panel if gating_panel is not None else panel
     mins = observed_min_daily_budget(floor_panel, segments)

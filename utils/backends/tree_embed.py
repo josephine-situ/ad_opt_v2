@@ -32,15 +32,12 @@ from utils.decisions import (
 )
 from utils.evaluation import (
     EnsembleModel,
-    baseline_levels_for_candidate_sets,
-    build_baseline_rows_for_decisions,
     build_plan_prediction_rows,
     build_segment_decision_rows,
     feature_rows_at_plan_budgets,
 )
 from utils.optimizer_prediction import (
     apply_observed_budget_floor,
-    predict_incremental_optimizer,
     predict_levels_optimizer,
 )
 from utils.linear_design import LinearMilpRidgeModel, build_linear_milp_design_matrix
@@ -516,101 +513,6 @@ def assert_milp_matches_ensemble_levels(
         )
 
 
-def warn_milp_matches_ensemble_incremental(
-    plan: pd.DataFrame,
-    ensemble: EnsembleModel,
-    config: CampaignOptConfig,
-    planning_date: pd.Timestamp,
-    set_features: pd.DataFrame,
-    *,
-    tol: float = 0.05,
-) -> float:
-    """Warn if MILP / external incremental lift differs from ``predict_incremental_raw``."""
-    feature_cols = get_context_feature_columns(config.context_features)
-    target = config.target
-    plan_dec = _plan_decision_frame(plan)
-    decision_rows = build_segment_decision_rows(
-        plan_dec, planning_date, set_features, config.course, feature_cols
-    )
-    baseline_rows = build_baseline_rows_for_decisions(
-        plan_dec,
-        planning_date,
-        set_features,
-        config.course,
-        feature_cols,
-        float(config.evaluation.baseline_budget),
-    )
-    if target not in decision_rows.columns:
-        decision_rows[target] = 0.0
-    if target not in baseline_rows.columns:
-        baseline_rows[target] = 0.0
-    expected = ensemble.predict_incremental_raw(decision_rows, baseline_rows)
-    if "pred_over_base" not in plan.columns:
-        print("[Warn] plan has no pred_over_base column for incremental validation")
-        return 0.0
-    got = pd.to_numeric(plan["pred_over_base"], errors="coerce").values
-    valid = np.isfinite(got) & np.isfinite(expected)
-    if not valid.any():
-        print("[Warn] no finite pred_over_base values to validate")
-        return 0.0
-    diff = np.abs(got[valid] - expected[valid])
-    max_diff = float(np.max(diff))
-    if max_diff > tol:
-        worst = int(np.where(valid)[0][int(np.argmax(diff))])
-        print(
-            f"[Warn] MILP incremental != ensemble predict_incremental_raw: max diff {max_diff:.6g} > {tol} "
-            f"(segment={plan_dec.iloc[worst]['segment']!r}, "
-            f"got={got[worst]:.6g}, expected={expected[worst]:.6g})"
-        )
-    return max_diff
-
-
-def assert_milp_matches_ensemble_incremental(
-    plan: pd.DataFrame,
-    ensemble: EnsembleModel,
-    config: CampaignOptConfig,
-    planning_date: pd.Timestamp,
-    set_features: pd.DataFrame,
-    *,
-    tol: float = 1e-4,
-) -> None:
-    """Raise if MILP / external incremental lift differs from ``predict_incremental_raw``."""
-    feature_cols = get_context_feature_columns(config.context_features)
-    target = config.target
-    plan_dec = _plan_decision_frame(plan)
-    decision_rows = build_segment_decision_rows(
-        plan_dec, planning_date, set_features, config.course, feature_cols
-    )
-    baseline_rows = build_baseline_rows_for_decisions(
-        plan_dec,
-        planning_date,
-        set_features,
-        config.course,
-        feature_cols,
-        float(config.evaluation.baseline_budget),
-    )
-    if target not in decision_rows.columns:
-        decision_rows[target] = 0.0
-    if target not in baseline_rows.columns:
-        baseline_rows[target] = 0.0
-    expected = ensemble.predict_incremental_raw(decision_rows, baseline_rows)
-    if "pred_over_base" not in plan.columns:
-        raise AssertionError("plan has no pred_over_base column for incremental validation")
-    got = pd.to_numeric(plan["pred_over_base"], errors="coerce").values
-    valid = np.isfinite(got) & np.isfinite(expected)
-    if not valid.any():
-        raise AssertionError("no finite pred_over_base values to validate")
-    diff = np.abs(got[valid] - expected[valid])
-    max_diff = float(np.max(diff))
-    if max_diff > tol:
-        worst = int(np.where(valid)[0][int(np.argmax(diff))])
-        raise AssertionError(
-            f"MILP incremental != ensemble predict_incremental_raw: max diff {max_diff:.6g} > {tol} "
-            f"(segment={plan_dec.iloc[worst]['segment']!r}, "
-            f"got={got[worst]:.6g}, expected={expected[worst]:.6g})"
-        )
-
-
 def warn_milp_matches_ensemble_plan(
     plan: pd.DataFrame,
     ensemble: EnsembleModel,
@@ -621,10 +523,9 @@ def warn_milp_matches_ensemble_plan(
     *,
     candidates: pd.DataFrame | None = None,
     level_tol: float = 0.05,
-    incremental_tol: float = 0.05,
     gating_panel: pd.DataFrame | None = None,
 ) -> None:
-    """Warn when MILP levels / incremental differ from the optimizer ensemble (tree big-M embed)."""
+    """Warn when MILP levels differ from the optimizer ensemble (tree big-M embed)."""
     warn_milp_matches_ensemble_levels(
         plan,
         ensemble,
@@ -635,9 +536,6 @@ def warn_milp_matches_ensemble_plan(
         candidates=candidates,
         tol=level_tol,
         gating_panel=gating_panel,
-    )
-    warn_milp_matches_ensemble_incremental(
-        plan, ensemble, config, planning_date, set_features, tol=incremental_tol
     )
     _warn_if_milp_external_pred_mismatch(plan, tol=level_tol)
 
@@ -652,9 +550,8 @@ def assert_milp_matches_ensemble_plan(
     *,
     candidates: pd.DataFrame | None = None,
     level_tol: float = 1e-4,
-    incremental_tol: float = 1e-4,
 ) -> None:
-    """Level and incremental predictions vs the optimizer ensemble (strict; tests)."""
+    """Level predictions vs the optimizer ensemble (strict; tests)."""
     assert_milp_matches_ensemble_levels(
         plan,
         ensemble,
@@ -664,9 +561,6 @@ def assert_milp_matches_ensemble_plan(
         panel,
         candidates=candidates,
         tol=level_tol,
-    )
-    assert_milp_matches_ensemble_incremental(
-        plan, ensemble, config, planning_date, set_features, tol=incremental_tol
     )
     max_diff = _max_milp_external_level_diff(plan)
     if max_diff is not None and max_diff > level_tol:
@@ -836,7 +730,7 @@ def _diagnose_milp_vs_sklearn_at_solved_budgets(
             )
 
 
-def _external_incremental_pred_by_segment(
+def _external_level_pred_by_segment(
     plan: pd.DataFrame,
     pipeline: Any,
     panel: pd.DataFrame,
@@ -847,7 +741,7 @@ def _external_incremental_pred_by_segment(
     candidates: pd.DataFrame | None = None,
     gating_panel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Independent sklearn check: gated f(plan) and f(plan)-f(0), aligned with MILP floor."""
+    """Independent sklearn check: gated f(plan), aligned with MILP floor."""
     plan_dec = _plan_decision_frame(plan)
     segments = plan_dec["segment"].tolist()
     decision_rows = build_plan_prediction_rows(
@@ -858,46 +752,25 @@ def _external_incremental_pred_by_segment(
         panel,
         candidates=candidates,
     )
-    baseline_rows = build_baseline_rows_for_decisions(
-        plan_dec,
-        planning_date,
-        set_features,
-        config.course,
-        get_context_feature_columns(config.context_features),
-        float(config.evaluation.baseline_budget),
-        panel=panel,
-        config=config,
-        candidates=candidates,
-    )
     target = config.target
     if target not in decision_rows.columns:
         decision_rows[target] = 0.0
-    if target not in baseline_rows.columns:
-        baseline_rows[target] = 0.0
 
     if config.evaluation.apply_observed_budget_floor:
         floor_kw = {"floor_panel": gating_panel} if gating_panel is not None else {}
         pred_dec = predict_levels_optimizer(
             pipeline, decision_rows, panel, config, **floor_kw
         )
-        pred_lift = predict_incremental_optimizer(
-            pipeline, decision_rows, baseline_rows, panel, config, **floor_kw
-        )
     elif isinstance(pipeline, EnsembleModel):
         pred_dec = pipeline.predict_levels(decision_rows)
-        pred_lift = pipeline.predict_incremental_raw(decision_rows, baseline_rows)
     else:
         feature_cols = get_context_feature_columns(config.context_features)
         X_dec, _ = prep_xy(decision_rows, target, feature_cols)
-        X_zero, _ = prep_xy(baseline_rows, target, feature_cols)
         pred_dec = np.asarray(pipeline.predict(X_dec), dtype=float)
-        pred_zero = np.asarray(pipeline.predict(X_zero), dtype=float)
-        pred_lift = pred_dec - pred_zero
     return pd.DataFrame(
         {
             "segment": segments,
             "external_model_pred": pred_dec,
-            "pred_over_base": pred_lift,
         }
     )
 
@@ -976,7 +849,6 @@ def solve_ridge_xgb_embed_campaign_milp(
     pred_by_key = _blend_ridge_xgb_level(
         linear_pred, tree_pred, w_ridge=w_ridge, w_xgb=w_xgb
     )
-    baseline_budget = float(config.evaluation.baseline_budget)
     _probe_ridge_xgb_embed_on_embed_rows(
         pipeline,
         embed_rows,
@@ -993,10 +865,6 @@ def solve_ridge_xgb_embed_campaign_milp(
         tol=1e-4,
     )
     _disable_pruned_keyword_sets(model, y_vars, k_map, pred_by_key)
-
-    baseline_level_by_key = baseline_levels_for_candidate_sets(
-        pipeline, k_map, config, planning_date, set_features, baseline_budget=baseline_budget
-    )
 
     # Compute valid level_ub from actual model predictions so the McCormick
     # gating variable bound never clips the true prediction.
@@ -1067,7 +935,6 @@ def solve_ridge_xgb_embed_campaign_milp(
         fixed_keyword_sets=fixed_keyword_sets,
         fixed_budgets=fixed_budgets,
         train=train,
-        baseline_level_by_key=baseline_level_by_key,
         level_ub_overrides=level_ub_overrides,
         gating_panel=gating_panel,
     )
@@ -1077,12 +944,11 @@ def solve_ridge_xgb_embed_campaign_milp(
         bounds, config, planning_date, set_features, panel,
         w_ridge=w_ridge, w_xgb=w_xgb, gating_panel=gating_panel,
     )
-    # pred_over_base from Gurobi can differ slightly from sklearn on tree embed; use ensemble lift.
-    ext_pred = _external_incremental_pred_by_segment(
+    ext_pred = _external_level_pred_by_segment(
         plan, pipeline, panel, config, planning_date, set_features,
         candidates=candidates, gating_panel=gating_panel,
     )
-    plan = plan.drop(columns=["external_model_pred", "pred_over_base"], errors="ignore")
+    plan = plan.drop(columns=["external_model_pred"], errors="ignore")
     plan = plan.merge(ext_pred, on="segment", how="left")
     warn_milp_matches_ensemble_plan(
         plan,
@@ -1196,18 +1062,6 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
             max_blend = max(max_blend, w_ridge * ridge_b + w_xgb * xgb_b)
         cur = level_ub_overrides.get(seg, 0.0)
         level_ub_overrides[seg] = max(cur, max_blend * 1.1)
-
-    # --- Baseline levels for incremental objective ---
-    baseline_budget = float(config.evaluation.baseline_budget)
-    # Average baseline across all planning dates
-    baseline_level_by_key: dict[tuple[str, str], float] = {}
-    for t_idx, plan_date in enumerate(planning_dates):
-        day_baselines = baseline_levels_for_candidate_sets(
-            pipeline, k_map, config, pd.Timestamp(plan_date), set_features,
-            baseline_budget=baseline_budget,
-        )
-        for key, val in day_baselines.items():
-            baseline_level_by_key[key] = baseline_level_by_key.get(key, 0.0) + val
 
     # --- Build Gurobi model ---
     model = gp.Model("campaign_ridge_xgb_embed_multiday")
@@ -1351,53 +1205,22 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
                 )
 
     # --- Objective ---
-    objective_mode = str(config.evaluation.objective or "incremental").strip().lower()
     level_sum = gp.quicksum(
         seg_day_preds[(seg, t)] for seg in segments for t in range(n_days)
     )
-
-    if objective_mode == "incremental":
-        baseline_for_obj = baseline_level_by_key
-        if config.evaluation.apply_observed_budget_floor:
-            from utils.backends.prediction_gating import (
-                apply_gated_baseline_levels,
-            )
-            from utils.decisions import observed_min_daily_budget
-
-            min_budgets = observed_min_daily_budget(floor_panel, segments)
-            baseline_for_obj = apply_gated_baseline_levels(
-                baseline_level_by_key,
-                baseline_budget,
-                min_budgets,
-                budget_atol=float(config.evaluation.budget_floor_atol),
-            )
-        baseline_terms = []
-        for seg in segments:
-            for k in k_map.get(seg, []):
-                key = (seg, str(k))
-                if key not in y_vars:
-                    continue
-                f0 = float(baseline_for_obj.get(key, 0.0))
-                baseline_terms.append(f0 * y_vars[key])
-        if baseline_terms:
-            objective_expr = level_sum - gp.quicksum(baseline_terms)
-        else:
-            objective_expr = level_sum
-    else:
-        objective_expr = level_sum
 
     penalty = float((config.constraints or {}).get("budget_tiebreak_penalty", 1e-8))
     if penalty > 0:
         budget_sum = gp.quicksum(
             x_day_vars[(seg, t)] for seg in segments for t in range(n_days)
         )
-        model.setObjective(objective_expr - penalty * budget_sum, GRB.MAXIMIZE)
+        model.setObjective(level_sum - penalty * budget_sum, GRB.MAXIMIZE)
     else:
-        model.setObjective(objective_expr, GRB.MAXIMIZE)
+        model.setObjective(level_sum, GRB.MAXIMIZE)
 
     model.update()
     print(
-        f"[Info] Multi-day MILP ({objective_mode}): "
+        f"[Info] Multi-day MILP (levels): "
         f"{model.NumVars} vars, {model.NumConstrs} constrs "
         f"({model.NumIntVars} integer)",
         flush=True,
@@ -1453,7 +1276,7 @@ def solve_ridge_xgb_embed_multiday_campaign_milp(
         status_payload: dict[str, Any] = {
             "status": int(model.Status),
             "obj_val": float(model.ObjVal) if has_solution else None,
-            "objective": objective_mode,
+            "objective": "levels",
             "n_days": n_days,
             "n_segments": len(segments),
             "total_budget_per_day": total_budget,
@@ -1551,16 +1374,6 @@ def solve_tree_embed_multiday_campaign_milp(
             max_pred = max(max_pred, float(pipeline.predict(X_b)[0]))
         cur = level_ub_overrides.get(seg, 0.0)
         level_ub_overrides[seg] = max(cur, max_pred * 1.1)
-
-    baseline_budget = float(config.evaluation.baseline_budget)
-    baseline_level_by_key: dict[tuple[str, str], float] = {}
-    for plan_date in planning_dates:
-        day_baselines = baseline_levels_for_candidate_sets(
-            pipeline, k_map, config, pd.Timestamp(plan_date), set_features,
-            baseline_budget=baseline_budget,
-        )
-        for key, val in day_baselines.items():
-            baseline_level_by_key[key] = baseline_level_by_key.get(key, 0.0) + val
 
     model = gp.Model("campaign_tree_embed_multiday")
     model.setParam("OutputFlag", 1)
@@ -1687,53 +1500,22 @@ def solve_tree_embed_multiday_campaign_milp(
                     budget_atol=budget_atol,
                 )
 
-    objective_mode = str(config.evaluation.objective or "incremental").strip().lower()
     level_sum = gp.quicksum(
         seg_day_preds[(seg, t)] for seg in segments for t in range(n_days)
     )
-
-    if objective_mode == "incremental":
-        baseline_for_obj = baseline_level_by_key
-        if config.evaluation.apply_observed_budget_floor:
-            from utils.backends.prediction_gating import (
-                apply_gated_baseline_levels,
-            )
-            from utils.decisions import observed_min_daily_budget
-
-            min_budgets = observed_min_daily_budget(floor_panel, segments)
-            baseline_for_obj = apply_gated_baseline_levels(
-                baseline_level_by_key,
-                baseline_budget,
-                min_budgets,
-                budget_atol=float(config.evaluation.budget_floor_atol),
-            )
-        baseline_terms = []
-        for seg in segments:
-            for k in k_map.get(seg, []):
-                key = (seg, str(k))
-                if key not in y_vars:
-                    continue
-                f0 = float(baseline_for_obj.get(key, 0.0))
-                baseline_terms.append(f0 * y_vars[key])
-        if baseline_terms:
-            objective_expr = level_sum - gp.quicksum(baseline_terms)
-        else:
-            objective_expr = level_sum
-    else:
-        objective_expr = level_sum
 
     penalty = float((config.constraints or {}).get("budget_tiebreak_penalty", 1e-8))
     if penalty > 0:
         budget_sum = gp.quicksum(
             x_day_vars[(seg, t)] for seg in segments for t in range(n_days)
         )
-        model.setObjective(objective_expr - penalty * budget_sum, GRB.MAXIMIZE)
+        model.setObjective(level_sum - penalty * budget_sum, GRB.MAXIMIZE)
     else:
-        model.setObjective(objective_expr, GRB.MAXIMIZE)
+        model.setObjective(level_sum, GRB.MAXIMIZE)
 
     model.update()
     print(
-        f"[Info] Multi-day MILP ({objective_mode}): "
+        f"[Info] Multi-day MILP (levels): "
         f"{model.NumVars} vars, {model.NumConstrs} constrs "
         f"({model.NumIntVars} integer)",
         flush=True,
@@ -1788,7 +1570,7 @@ def solve_tree_embed_multiday_campaign_milp(
         status_payload: dict[str, Any] = {
             "status": int(model.Status),
             "obj_val": float(model.ObjVal) if has_solution else None,
-            "objective": objective_mode,
+            "objective": "levels",
             "n_days": n_days,
             "n_segments": len(segments),
             "total_budget_per_day": total_budget,
@@ -1881,11 +1663,6 @@ def solve_tree_embed_campaign_milp(
         cur = level_ub_overrides.get(seg, 0.0)
         level_ub_overrides[seg] = max(cur, max_pred * 1.1)
 
-    baseline_budget = float(config.evaluation.baseline_budget)
-    baseline_level_by_key = baseline_levels_for_candidate_sets(
-        pipeline, k_map, config, planning_date, set_features, baseline_budget=baseline_budget
-    )
-
     def segment_predictor(seg: str, x_var: Any, y_vars_map: dict, k_map_local: dict) -> Any:
         seg_pred = model.addVar(lb=-GRB.INFINITY, name=f"seg_pred_{seg.replace(' ', '_')}")
         for k in k_map_local.get(seg, []):
@@ -1915,11 +1692,10 @@ def solve_tree_embed_campaign_milp(
         fixed_keyword_sets=fixed_keyword_sets,
         fixed_budgets=fixed_budgets,
         train=train,
-        baseline_level_by_key=baseline_level_by_key,
         level_ub_overrides=level_ub_overrides,
         gating_panel=gating_panel,
     )
-    ext_pred = _external_incremental_pred_by_segment(
+    ext_pred = _external_level_pred_by_segment(
         plan,
         pipeline,
         panel,
@@ -1929,7 +1705,7 @@ def solve_tree_embed_campaign_milp(
         candidates=candidates,
         gating_panel=gating_panel,
     )
-    plan = plan.drop(columns=["external_model_pred", "pred_over_base"], errors="ignore")
+    plan = plan.drop(columns=["external_model_pred"], errors="ignore")
     plan = plan.merge(ext_pred, on="segment", how="left")
     if isinstance(pipeline, EnsembleModel):
         warn_milp_matches_ensemble_plan(

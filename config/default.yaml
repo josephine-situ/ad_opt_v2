@@ -72,9 +72,7 @@ model_policy:
 
 evaluation:
   use_ensemble: false
-  baseline_budget: 0
   weight_by_cv_rmse: true
-  objective: levels
   apply_observed_budget_floor: true
   max_level_ub: null
   milp_external_level_tol: 0.01

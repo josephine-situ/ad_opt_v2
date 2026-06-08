@@ -12,10 +12,7 @@ import numpy as np
 import pandas as pd
 from gurobipy import GRB
 
-from utils.backends.prediction_gating import (
-    apply_gated_baseline_levels,
-    gate_pred_vars_if_enabled,
-)
+from utils.backends.prediction_gating import gate_pred_vars_if_enabled
 from utils.decisions import (
     build_segment_list,
     candidates_by_segment,
@@ -77,39 +74,6 @@ def _eval_gurobi_expr(expr: Any, var_values: dict[Any, float]) -> float | None:
         return None
 
 
-def _baseline_var_values_for_pred(
-    seg: str,
-    x_vars: dict[str, Any],
-    y_vars: dict[tuple[str, str], Any],
-    k_map: dict[str, list[str]],
-    baseline_k: str,
-    baseline_budget: float,
-    model: gp.Model,
-    coeffs: dict[str, Any] | None,
-) -> dict[Any, float]:
-    values: dict[Any, float] = {x_vars[seg]: float(baseline_budget)}
-    for k in k_map.get(seg, []):
-        values[y_vars[(seg, k)]] = 1.0 if str(k) == str(baseline_k) else 0.0
-    return values
-
-
-def _baseline_keyword_sets_for_milp(
-    train: pd.DataFrame | None,
-    segments: list[str],
-    k_map: dict[str, list[str]],
-) -> dict[str, str]:
-    """Modal train keyword set per segment for f(0), matching ensemble evaluation."""
-    if train is not None and not train.empty:
-        from utils.evaluation import baseline_keyword_sets
-
-        ref = baseline_keyword_sets(train)
-        return {
-            str(seg): str(ref.get(seg, k_map.get(seg, [""])[0]))
-            for seg in segments
-        }
-    return {seg: str(k_map.get(seg, [""])[0]) for seg in segments}
-
-
 def _gurobi_debug_pred(
     model: gp.Model,
     seg: str,
@@ -130,152 +94,10 @@ def _gurobi_debug_pred(
     f_dec = _eval_gurobi_expr(pred_var, decision_vals)
     if f_dec is not None:
         return float(f_dec)
-    # Fallback for non-LinExpr predictors.
     f_dec = _predicted_value(pred_var)
     if f_dec is not None:
         return float(f_dec)
     return None
-
-
-def _gurobi_incremental_pred(
-    model: gp.Model,
-    seg: str,
-    pred_var: Any,
-    x_vars: dict[str, Any],
-    y_vars: dict[tuple[str, str], Any],
-    k_map: dict[str, list[str]],
-    baseline_k: str,
-    baseline_budget: float,
-    *,
-    coeffs: dict[str, Any] | None = None,
-) -> float | None:
-    """f(decision) - f(0) in solver space (kept for compatibility helpers)."""
-    if not model.SolCount:
-        return None
-    f_dec = _gurobi_debug_pred(
-        model,
-        seg,
-        pred_var,
-        x_vars,
-        y_vars,
-        k_map,
-        coeffs=coeffs,
-    )
-    baseline_vals = _baseline_var_values_for_pred(
-        seg,
-        x_vars,
-        y_vars,
-        k_map,
-        baseline_k,
-        baseline_budget,
-        model,
-        coeffs,
-    )
-    f0 = _eval_gurobi_expr(pred_var, baseline_vals)
-    if f0 is None:
-        # Gurobi 13+ disallows mutating Var.X; legacy fallback for non-LinExpr predictors.
-        saved_x = x_vars[seg].X
-        saved_y = {k: y_vars[(seg, k)].X for k in k_map.get(seg, [])}
-        try:
-            x_vars[seg].X = float(baseline_budget)
-            for k in k_map.get(seg, []):
-                y_vars[(seg, k)].X = 1.0 if str(k) == str(baseline_k) else 0.0
-            f0 = _predicted_value(pred_var)
-        except AttributeError:
-            f0 = None
-        finally:
-            try:
-                x_vars[seg].X = saved_x
-                for k, val in saved_y.items():
-                    y_vars[(seg, k)].X = val
-            except AttributeError:
-                pass
-    if f_dec is None or f0 is None:
-        return None
-    return float(f_dec) - float(f0)
-
-
-def _plan_incremental_pred(
-    model: gp.Model,
-    seg: str,
-    pred_var: Any,
-    chosen_k: str | None,
-    x_vars: dict[str, Any],
-    y_vars: dict[tuple[str, str], Any],
-    k_map: dict[str, list[str]],
-    baseline_budget: float,
-    *,
-    baseline_level_by_key: dict[tuple[str, str], float] | None = None,
-    coeffs: dict[str, Any] | None = None,
-) -> float | None:
-    """Incremental lift for the solved plan; tree backends use precomputed baseline levels."""
-    if baseline_level_by_key is not None and chosen_k is not None:
-        f_dec = _predicted_value(pred_var)
-        key = (seg, str(chosen_k))
-        f0 = baseline_level_by_key.get(key, baseline_level_by_key.get((str(seg), str(chosen_k))))
-        if f_dec is not None and f0 is not None:
-            return float(f_dec) - float(f0)
-    return _optimizer_incremental_pred(
-        model,
-        seg,
-        pred_var,
-        x_vars,
-        y_vars,
-        k_map,
-        str(chosen_k),
-        baseline_budget,
-        coeffs=coeffs,
-    )
-
-
-def _optimizer_incremental_pred(
-    model: gp.Model,
-    seg: str,
-    pred_var: Any,
-    x_vars: dict[str, Any],
-    y_vars: dict[tuple[str, str], Any],
-    k_map: dict[str, list[str]],
-    baseline_k: str,
-    baseline_budget: float,
-    *,
-    coeffs: dict[str, Any] | None = None,
-) -> float | None:
-    """f(plan) - f(0) where f(plan) is read directly from optimized expression value."""
-    if not model.SolCount:
-        return None
-    f_dec = _predicted_value(pred_var)
-    baseline_vals = _baseline_var_values_for_pred(
-        seg,
-        x_vars,
-        y_vars,
-        k_map,
-        baseline_k,
-        baseline_budget,
-        model,
-        coeffs,
-    )
-    f0 = _eval_gurobi_expr(pred_var, baseline_vals)
-    if f0 is None:
-        # Gurobi 13+ disallows mutating Var.X; legacy fallback for non-LinExpr predictors.
-        saved_x = x_vars[seg].X
-        saved_y = {k: y_vars[(seg, k)].X for k in k_map.get(seg, [])}
-        try:
-            x_vars[seg].X = float(baseline_budget)
-            for k in k_map.get(seg, []):
-                y_vars[(seg, k)].X = 1.0 if str(k) == str(baseline_k) else 0.0
-            f0 = _predicted_value(pred_var)
-        except AttributeError:
-            f0 = None
-        finally:
-            try:
-                x_vars[seg].X = saved_x
-                for k, val in saved_y.items():
-                    y_vars[(seg, k)].X = val
-            except AttributeError:
-                pass
-    if f_dec is None or f0 is None:
-        return None
-    return float(f_dec) - float(f0)
 
 
 def _budget_tiebreak_penalty(config: CampaignOptConfig) -> float:
@@ -285,78 +107,6 @@ def _budget_tiebreak_penalty(config: CampaignOptConfig) -> float:
     if penalty < 0:
         raise ValueError("constraints.budget_tiebreak_penalty must be non-negative")
     return penalty
-
-
-def _baseline_budget(config: CampaignOptConfig) -> float:
-    return float(config.evaluation.baseline_budget)
-
-
-def _milp_objective_mode(config: CampaignOptConfig) -> str:
-    mode = str(config.evaluation.objective or "incremental").strip().lower()
-    if mode not in ("levels", "incremental"):
-        raise ValueError(
-            f"evaluation.objective must be 'levels' or 'incremental', got {config.evaluation.objective!r}"
-        )
-    return mode
-
-
-def baseline_levels_from_coeffs(
-    coeffs: dict[str, Any],
-    segments: list[str],
-    k_map: dict[str, list[str]],
-    baseline_budget: float,
-    *,
-    n_planning_days: int = 1,
-    calendar_offsets: dict[tuple[str, int], float] | None = None,
-) -> dict[tuple[str, str], float]:
-    """
-    f_k(baseline_budget) per (segment, keyword_set) for incremental MILP objectives.
-
-    Matches evaluation: same keyword set at ``baseline_budget`` (default 0).
-    """
-    set_lift = coeffs.get("static_context_lift") or coeffs.get("keyword_set_effect", {})
-    seg_slope = coeffs.get("segment_budget_slope", {})
-    seg_intercept = coeffs.get("segment_intercept", {})
-    cal_offset = float(coeffs.get("calendar_offset", 0.0))
-    n_days = max(1, int(n_planning_days))
-    out: dict[tuple[str, str], float] = {}
-
-    for seg in segments:
-        beta = float(seg_slope.get(seg, seg_slope.get(str(seg), 0.0)))
-        alpha = float(seg_intercept.get(seg, seg_intercept.get(str(seg), 0.0)))
-        for k in k_map.get(seg, []):
-            kid = str(k)
-            lift = float(set_lift.get(kid, 0.0))
-            total = 0.0
-            for day_idx in range(n_days):
-                cal = cal_offset
-                if calendar_offsets is not None:
-                    cal = float(calendar_offsets.get((seg, day_idx), cal_offset))
-                total += alpha + beta * float(baseline_budget) + cal + lift
-            out[(seg, kid)] = total
-    return out
-
-
-def _incremental_objective_expr(
-    pred_vars: dict[str, Any],
-    y_vars: dict[tuple[str, str], Any],
-    segments: list[str],
-    k_map: dict[str, list[str]],
-    baseline_level_by_key: dict[tuple[str, str], float],
-) -> Any:
-    """Sum_s f_s(plan) - sum_{s,k} y_sk * f_k(baseline)."""
-    level_sum = gp.quicksum(pred_vars[s] for s in segments)
-    baseline_terms = []
-    for seg in segments:
-        for k in k_map.get(seg, []):
-            key = (seg, str(k))
-            if key not in y_vars:
-                continue
-            f0 = float(baseline_level_by_key.get(key, 0.0))
-            baseline_terms.append(f0 * y_vars[key])
-    if not baseline_terms:
-        return level_sum
-    return level_sum - gp.quicksum(baseline_terms)
 
 
 def _add_regional_order_constraints(
@@ -400,7 +150,6 @@ def solve_campaign_milp(
     segment_predictors_by_date: list[SegmentPredictor] | None = None,
     train: pd.DataFrame | None = None,
     solver_coeffs: dict[str, Any] | None = None,
-    baseline_level_by_key: dict[tuple[str, str], float] | None = None,
     planning_calendar_offsets: dict[tuple[str, int], float] | None = None,
     level_ub_overrides: dict[str, float] | None = None,
     gating_panel: pd.DataFrame | None = None,
@@ -411,18 +160,12 @@ def solve_campaign_milp(
     Each backend only supplies how predicted target is built per segment
     (linear budget slope, embedded trees, etc.).
 
-    The objective is ``evaluation.objective``:
-    - ``levels``: maximize ``sum_s f_s(plan)`` (total predicted target)
-    - ``incremental``: maximize lift ``sum_s f_s(plan) - sum_{s,k} y_sk * f_k(baseline_budget)``
-
-    When ``apply_observed_budget_floor`` is true, each ``f_s`` is zero below the
-    segment's minimum observed ``daily_budget``. Minus an optional budget tie-break.
+    Maximizes ``sum_s f_s(plan)`` (total predicted target), minus an optional
+    budget tie-break. When ``apply_observed_budget_floor`` is true, each ``f_s``
+    is zero below the segment's minimum observed ``daily_budget``.
 
     Pass ``model``, ``x_vars``, and ``y_vars`` when a backend adds constraints
     (e.g. exact tree embedding) before the objective is set.
-
-    Tree backends must pass ``baseline_level_by_key`` (per-candidate level at baseline).
-    Linear backends may omit it; levels are derived from ``solver_coeffs``.
     """
     segments = build_segment_list(candidates)
     k_map = candidates_by_segment(candidates)
@@ -495,60 +238,17 @@ def solve_campaign_milp(
     model.addConstr(gp.quicksum(x_vars[s] for s in segments) <= total_budget, name="total_budget")
     _add_regional_order_constraints(model, config, segments, x_vars)
 
-    baseline_budget = _baseline_budget(config)
-    objective_mode = _milp_objective_mode(config)
-    if baseline_level_by_key is None and (
-        objective_mode == "incremental" or solver_coeffs is not None
-    ):
-        if solver_coeffs is None:
-            if objective_mode == "incremental":
-                raise ValueError(
-                    "incremental MILP objective requires baseline_level_by_key or solver_coeffs"
-                )
-        else:
-            baseline_level_by_key = baseline_levels_from_coeffs(
-                solver_coeffs,
-                segments,
-                k_map,
-                baseline_budget,
-                n_planning_days=n_planning_days,
-                calendar_offsets=planning_calendar_offsets,
-            )
-
-    if baseline_level_by_key is not None and config.evaluation.apply_observed_budget_floor:
-        baseline_level_by_key = apply_gated_baseline_levels(
-            baseline_level_by_key,
-            baseline_budget,
-            min_budgets,
-            budget_atol=float(config.evaluation.budget_floor_atol),
-        )
-
     level_sum = gp.quicksum(pred_vars[s] for s in segments)
-    if objective_mode == "levels":
-        objective_expr = level_sum
-    else:
-        if baseline_level_by_key is None:
-            raise ValueError(
-                "incremental MILP objective requires baseline_level_by_key or solver_coeffs"
-            )
-        objective_expr = _incremental_objective_expr(
-            pred_vars, y_vars, segments, k_map, baseline_level_by_key
-        )
-
     penalty = _budget_tiebreak_penalty(config)
     if penalty > 0:
         model.setObjective(
-            objective_expr - penalty * gp.quicksum(x_vars[s] for s in segments),
+            level_sum - penalty * gp.quicksum(x_vars[s] for s in segments),
             GRB.MAXIMIZE,
         )
     else:
-        model.setObjective(objective_expr, GRB.MAXIMIZE)
+        model.setObjective(level_sum, GRB.MAXIMIZE)
     tb = f" − {penalty}×Σ budget" if penalty > 0 else ""
-    print(
-        f"[Info] MILP objective: {objective_mode} "
-        f"({'Σ segment level' if objective_mode == 'levels' else 'incremental lift'}{tb})",
-        flush=True,
-    )
+    print(f"[Info] MILP objective: Σ segment level{tb}", flush=True)
     model.optimize()
 
     if model.Status not in (GRB.OPTIMAL, GRB.SUBOPTIMAL, GRB.TIME_LIMIT):
@@ -607,18 +307,6 @@ def solve_campaign_milp(
                 "daily_budget": budget_out,
                 "keyword_set_id": chosen_k,
                 "milp_pred": milp_out,
-                "pred_over_base": _plan_incremental_pred(
-                    model,
-                    seg,
-                    pred_vars[seg],
-                    chosen_k,
-                    x_vars,
-                    y_vars,
-                    k_map,
-                    baseline_budget,
-                    baseline_level_by_key=baseline_level_by_key,
-                    coeffs=solver_coeffs,
-                ),
                 "external_model_pred": None,
                 "n_planning_days": n_planning_days,
             }
@@ -631,18 +319,18 @@ def solve_campaign_milp(
         status_payload: dict[str, Any] = {
             "status": int(model.Status),
             "obj_val": model.ObjVal if model.SolCount else None,
-            "objective": objective_mode,
+            "objective": "levels",
         }
         if model.SolCount and len(plan):
             milp = pd.to_numeric(plan["milp_pred"], errors="coerce")
             bud = pd.to_numeric(plan["daily_budget"], errors="coerce")
-            level_sum = float(milp.sum())
+            level_sum_val = float(milp.sum())
             budget_sum = float(bud.sum())
-            status_payload["predicted_level_sum"] = level_sum
+            status_payload["predicted_level_sum"] = level_sum_val
             status_payload["budget_sum"] = budget_sum
             status_payload["tiebreak_penalty"] = penalty
             status_payload["tiebreak_term"] = penalty * budget_sum
-            if objective_mode == "levels" and penalty > 0 and model.ObjVal is not None:
+            if penalty > 0 and model.ObjVal is not None:
                 status_payload["obj_val_as_level_sum_minus_tiebreak"] = float(
                     model.ObjVal
                 ) + penalty * budget_sum
