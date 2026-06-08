@@ -17,7 +17,7 @@ from utils.campaign_config import load_config
 from utils.paths import add_course_arg
 from utils.paths import gkp_dir
 from utils.ads_reporting import generate_kw_day_panel_report, write_to_file
-from utils.keyword_classification import collect_existing_keywords
+from utils.data_processing import existing_panel_keywords
 from utils.metrics import google_ads_metrics_client
 
 CAMPAIGN_OPT = "campaign_opt"
@@ -142,7 +142,7 @@ def _keywords_for_gkp_pull(course: str, keyword_planning_input_file: str) -> lis
                 if keyword:
                     keywords.append(keyword)
         return keywords
-    return sorted(collect_existing_keywords(course))
+    return existing_panel_keywords(course)
 
 
 def pull_keyword_planning(
@@ -159,7 +159,7 @@ def pull_keyword_planning(
     if keyword_planning_input_file:
         print(f"Keywords file: {keyword_planning_input_file}")
     else:
-        print(f"Keywords: {len(keywords)} from panel (processed/reports kw-day + keyword sets)")
+        print(f"Keywords: {len(keywords)} from kw-day-panel")
 
     if len(keywords) > 10_000:
         print("Error: Google Ads API supports up to 10,000 keywords per request.")

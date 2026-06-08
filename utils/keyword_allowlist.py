@@ -35,14 +35,6 @@ def _read_xlsx_first_sheet(path: Path) -> list[list[str]]:
     return rows
 
 
-def should_refresh_keyword_candidates(course: str, candidates_path: Path) -> bool:
-    """True when candidates are missing or older than the enrollment allowlist file."""
-    allow_path = require_enrollment_allowlist(course)
-    if not candidates_path.exists():
-        return True
-    return allow_path.stat().st_mtime > candidates_path.stat().st_mtime
-
-
 def load_enrollment_keyword_allowlist_ordered(course: str) -> list[str]:
     """
     Keywords from ``*Keywords*Enrollments*.xlsx`` in priority order.

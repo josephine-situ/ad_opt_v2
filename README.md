@@ -59,7 +59,12 @@ uv run prepare-data --google-ads-yaml ..\google-ads-prod.yaml --customer-id 1234
 `run-pipeline` builds keyword candidates, GKP set features, fits models, and writes the two-stage plan to `<course>/prod/two_stage_plan/`:
 
 ```powershell
-uv run run-pipeline --window-start 2026-05-12 --window-end 2026-05-25 --planning-date 2026-05-12
+# Full run: stage-1 keyword sets over a window, then stage-2 budgets (planning date defaults to window-start)
+uv run run-pipeline --window-start 2026-05-12 --window-end 2026-05-25
+
+# Daily refresh: reuse fixed keyword sets; stage-2 only (planning date defaults to tomorrow)
+uv run run-pipeline --skip-stage1
+uv run run-pipeline --skip-stage1 --planning-date 2026-05-13
 ```
 
 ### Backtest

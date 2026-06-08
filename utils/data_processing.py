@@ -125,6 +125,33 @@ def clean_keyword_sets_dataframe(
     return out
 
 
+def existing_panel_keywords(course: str, *, min_clicks: int = 1) -> list[str]:
+    """Unique cleaned keywords from the course kw-day-panel."""
+    from utils.paths import processed_dir, reports_dir
+
+    panel_path: Path | None = None
+    for path in (
+        processed_dir(course) / "kw-day-panel.csv",
+        reports_dir(course) / "kw-day-panel.csv",
+    ):
+        if path.is_file():
+            panel_path = path
+            break
+    if panel_path is None:
+        return []
+
+    df = pd.read_csv(panel_path)
+    if "keyword" not in df.columns:
+        raise KeyError(f"{panel_path} is missing a keyword column. Found: {list(df.columns)}")
+
+    if min_clicks > 0 and "clicks" in df.columns:
+        clicks = pd.to_numeric(df["clicks"], errors="coerce").fillna(0)
+        df = df.loc[clicks > 0]
+
+    keywords = clean_keyword_series(df["keyword"].dropna()).dropna().unique()
+    return sorted(str(kw) for kw in keywords if str(kw).strip())
+
+
 def _clean_match_type(match_type: pd.Series) -> pd.Series:
     return match_type.astype("string").str.replace("_", " ", regex=False).str.title().str.strip()
 

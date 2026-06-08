@@ -1192,14 +1192,10 @@ def ensure_segment_keyword_candidates(
     excluded_regions: list[str] | None = None,
     top_n_values: tuple[int, ...] | None = None,
 ) -> Path:
-    """Write segment-keyword-candidates and extended sets when missing or allowlist is newer."""
-    from utils.keyword_allowlist import should_refresh_keyword_candidates
-
+    """Write segment-keyword-candidates and extended sets."""
     require_enrollment_allowlist(course)
     processed = data_path(course, "processed")
     cand_path = processed / "segment-keyword-candidates.csv"
-    if not should_refresh_keyword_candidates(course, cand_path):
-        return cand_path
 
     caps = top_n_values if top_n_values is not None else DEFAULT_TOP_N_VALUES
     candidates, extended = build_segment_candidates(
