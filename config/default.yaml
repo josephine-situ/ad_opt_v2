@@ -1,0 +1,88 @@
+# Shared optimization defaults for all courses.
+# Per-course overrides: <course>/course.yaml
+
+target: conv_scaled_clicks
+secondary_metrics:
+  - all_conv
+
+decision_variables:
+  segment_budget:
+    enabled: true
+    var: x
+    bounds: historical
+  keyword_set:
+    enabled: true
+    var: y
+    cardinality: one_per_segment
+
+context_features:
+  calendar:
+    - day_of_week
+    - season
+    - days_to_next_course_start
+  keyword_set_static:
+    - embed_course_sim_mean
+    - num_unique_keywords
+  gkp_set:
+    - last_month_searches_mean
+    - competition_index_mean
+  match_type_set:
+    - embed_dispersion_broad
+    - embed_dispersion_phrase
+    - embed_dispersion_exact
+
+constraints:
+  # Daily MILP budget cap; numeric value from per-course daily_budget_cap.
+  total_budget: daily_budget_cap
+  regional_order:
+    - USA
+    - A
+    - B
+  excluded_regions:
+    - C
+  allowed_match_types:
+    - Broad
+    - "Phrase; Exact"
+  budget_tiebreak_penalty: 0.0001
+
+model_policy:
+  candidates:
+    - ridge
+    - random_forest
+    - xgboost
+    - ensemble_ridge_xgb
+  selection_metric: cv_rmse_levels
+  secondary_selection_metrics:
+    - holdout_r2_levels
+    - holdout_mae_levels
+  optimizer_winner: xgboost
+  optimizer_backend: auto
+  stability_check: false
+  validation:
+    scheme: time_series_cv
+    holdout_days: 75
+    cv_folds: 3
+    min_train_fraction: 0.5
+    min_train_days: 0
+    min_val_days: 21
+    min_train_rows: 50
+    min_val_rows: 20
+    tune_hyperparams: true
+    refit_on_full_data: true
+    recency_half_life_days: null
+
+evaluation:
+  use_ensemble: false
+  baseline_budget: 0
+  weight_by_cv_rmse: true
+  objective: levels
+  apply_observed_budget_floor: true
+  max_level_ub: null
+  milp_external_level_tol: 0.01
+  budget_floor_atol: 0.01
+
+backtest:
+  strategy: two_stage
+
+debug_write_lp: false
+modeling_lookback_days: null

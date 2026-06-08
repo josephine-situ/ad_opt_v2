@@ -16,16 +16,13 @@ from utils.decisions import apply_candidate_region_policy, historical_budget_bou
 from utils.linear_design import LinearMilpRidgeModel
 from utils.modeling import fit_ridge_full
 from utils.paths import processed_dir
-from utils.campaign_config import default_config_path, load_campaign_config
+from utils.campaign_config import load_config
 from utils.campaign_features import add_segment_column, build_keyword_set_feature_table, load_campaign_day_panel
 
 
 @pytest.mark.parametrize("budget", [0.0, 35.7, 120.0])
 def test_embed_linear_matches_predict_design_frame(budget: float):
-    config_path = default_config_path("sys_think", "default")
-    if not config_path.exists():
-        pytest.skip("sys_think config not present")
-    config = load_campaign_config(config_path)
+    config = load_config("sys_think")
     from utils.modeling_prep import prepare_modeling_data
 
     df = prepare_modeling_data(config).head(800)

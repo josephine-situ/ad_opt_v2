@@ -52,8 +52,6 @@ from utils.shrinkage import segment_budget_level_counts
 ENSEMBLE_CANDIDATE_NAMES = frozenset({"ensemble", "ensemble_ridge_xgb"})
 BASE_TOURNAMENT_CANDIDATES = [
     "ridge",
-    "power_log",
-    "power_level",
     "random_forest",
     "xgboost",
 ]
@@ -398,13 +396,6 @@ def fit_random_forest(
     )
 
 
-def _power_transform(df: pd.DataFrame, target: str) -> pd.DataFrame:
-    out = df.dropna(subset=[target, "daily_budget"]).copy()
-    out["y_log"] = np.log1p(out[target].astype(float))
-    out["log_budget"] = np.log(out["daily_budget"].astype(float).clip(lower=0.01))
-    return out
-
-
 def hyperparams_from_manifest(manifest: dict[str, Any], model_name: str) -> dict[str, Any] | None:
     """Best hyperparameters for a tournament candidate from a saved manifest."""
     top = manifest.get("best_hyperparams") or {}
@@ -593,57 +584,6 @@ def refit_winner_on_data(
     )
 
 
-def fit_power_log(
-    train, holdout, config, feature_cols, *, hyperparams: dict[str, Any] | None = None
-) -> ModelResult:
-    def _inv(p):
-        return np.expm1(p)
-
-    def _log_diag(ho, pred_log):
-        if "y_log" not in ho.columns:
-            return None
-        return float(r2_score(ho["y_log"], pred_log))
-
-    return _fit_and_evaluate(
-        "power_log",
-        "piecewise_linear",
-        build_estimator("power_log", hyperparams),
-        train,
-        holdout,
-        config,
-        feature_cols,
-        budget_col="log_budget",
-        transform_train=lambda d: _power_transform(d, config.target),
-        transform_holdout=lambda d: _power_transform(d, config.target),
-        inverse_pred=_inv,
-        log_r2_diagnostic=lambda ho, p: _log_diag(ho, p),
-        fit_y_col="y_log",
-        hyperparams=hyperparams,
-    )
-
-
-def fit_power_level(
-    train, holdout, config, feature_cols, *, hyperparams: dict[str, Any] | None = None
-) -> ModelResult:
-    def _to_log_budget(df):
-        out = df.dropna(subset=[config.target, "daily_budget"]).copy()
-        out["daily_budget"] = np.log(out["daily_budget"].astype(float).clip(lower=0.01))
-        return out
-
-    return _fit_and_evaluate(
-        "power_level",
-        "piecewise_linear",
-        build_estimator("power_level", hyperparams),
-        train,
-        holdout,
-        config,
-        feature_cols,
-        transform_train=_to_log_budget,
-        transform_holdout=_to_log_budget,
-        hyperparams=hyperparams,
-    )
-
-
 def fit_xgboost(
     train, holdout, config, feature_cols, *, hyperparams: dict[str, Any] | None = None
 ) -> ModelResult:
@@ -779,8 +719,6 @@ def fit_ensemble_ridge_xgb(
 
 FITTERS: dict[str, Callable[..., ModelResult]] = {
     "ridge": fit_ridge,
-    "power_log": fit_power_log,
-    "power_level": fit_power_level,
     "random_forest": fit_random_forest,
     "xgboost": fit_xgboost,
     "ensemble": fit_ensemble,

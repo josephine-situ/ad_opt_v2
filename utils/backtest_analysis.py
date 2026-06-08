@@ -20,10 +20,10 @@ from utils.decisions import region_of_segment
 REGIONS = ("USA", "A", "B")
 
 
-def backtest_window_dir(course: str, exp_name: str, start: str, end: str) -> Path:
+def backtest_window_dir(course: str, start: str, end: str) -> Path:
     from utils.paths import backtest_window_dir as _backtest_window_dir
 
-    return _backtest_window_dir(course, exp_name, start, end)
+    return _backtest_window_dir(course, start, end)
 
 
 def save_backtest_config(backtest_dir: Path, payload: dict[str, Any]) -> Path:

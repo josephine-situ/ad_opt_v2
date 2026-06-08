@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 
-from config import COURSE, COURSE_CONFIG
+from utils.paths import add_course_arg
 from utils.paths import data_path, gkp_dir
 from utils.campaign_features import build_keyword_set_feature_table
 from utils.tee_logging import setup_tee_logging
@@ -13,12 +13,7 @@ from utils.tee_logging import setup_tee_logging
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build GKP + semantic keyword-set features.")
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
+    add_course_arg(parser)
     args = parser.parse_args()
 
     setup_tee_logging(log_file=None, default_log_prefix="gkp_features")

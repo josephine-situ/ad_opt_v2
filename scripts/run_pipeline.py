@@ -7,10 +7,10 @@ import argparse
 import subprocess
 import sys
 
-from utils.paths import processed_dir
-from utils.campaign_config import default_config_path, load_campaign_config
-from config import COURSE, COURSE_CONFIG
+from utils.campaign_config import resolve_config
+from utils.paths import add_course_arg
 from utils.keyword_candidates import DEFAULT_TOP_N_VALUES
+from utils.paths import processed_dir
 from utils.tee_logging import setup_tee_logging
 
 
@@ -21,14 +21,8 @@ def _run(cmd: list[str]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run full two-stage campaign optimization pipeline.")
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
-    parser.add_argument("--config", default="")
-    parser.add_argument("--exp-name", default="default")
+    add_course_arg(parser)
+    parser.add_argument("--config", default="", help="Optional YAML/JSON config override")
     parser.add_argument("--budget", type=float, default=None)
     parser.add_argument("--planning-date", default="")
     parser.add_argument("--window-start", required=True, help="Stage-1 window start YYYY-MM-DD")
@@ -36,21 +30,20 @@ def main() -> None:
     parser.add_argument(
         "--skip-stage1",
         action="store_true",
-        help="Reuse fixed_keyword_sets.json from exp_dir/two_stage_plan",
+        help="Reuse fixed_keyword_sets.json from prod/two_stage_plan",
     )
     parser.add_argument("--skip-gkp", action="store_true")
     parser.add_argument("--skip-candidates", action="store_true")
     args = parser.parse_args()
 
-    config_path = default_config_path(args.course, args.exp_name) if not args.config else args.config
-    config = load_campaign_config(config_path)
+    config = resolve_config(args.course, args.config)
     py = sys.executable
     top_n_arg = ",".join(str(n) for n in DEFAULT_TOP_N_VALUES)
     course_flag = ["--course", args.course]
 
     log_path = setup_tee_logging(log_file=None, default_log_prefix="run_campaign_pipeline")
     print(f"Log file: {log_path}")
-    print(f"Config: {config_path}")
+    print(f"Course: {args.course}")
 
     panel_path = processed_dir(args.course) / "campaign-day-panel.csv"
     if not panel_path.exists():
@@ -72,17 +65,17 @@ def main() -> None:
     if not args.skip_gkp:
         _run([py, "-m", "scripts.build_gkp_set_features", *course_flag])
 
-    _run([py, "-m", "scripts.fit_models", "--config", str(config_path), *course_flag])
+    fit_cmd = [py, "-m", "scripts.fit_models", *course_flag]
+    if args.config:
+        fit_cmd.extend(["--config", args.config])
+    _run(fit_cmd)
 
-    default_b = COURSE_CONFIG[config.course].get("campaign_budget", 400.0)
-    budget = args.budget or default_b
+    budget = args.budget or float(getattr(config, "daily_budget_cap", 400.0))
 
     plan_cmd = [
         py,
         "-m",
         "scripts.plan_two_stage_campaign",
-        "--config",
-        str(config_path),
         *course_flag,
         "--window-start",
         args.window_start,
@@ -91,6 +84,8 @@ def main() -> None:
         "--budget",
         str(budget),
     ]
+    if args.config:
+        plan_cmd.extend(["--config", args.config])
     if args.planning_date:
         plan_cmd.extend(["--planning-date", args.planning_date])
     if args.skip_stage1:

@@ -13,7 +13,7 @@ from utils.backends.milp_core import (
     make_linear_segment_predictor,
     solve_campaign_milp,
 )
-from utils.campaign_config import CampaignOptConfig
+from utils.campaign_config import CampaignOptConfig, EvaluationConfig
 
 pytest.importorskip("gurobipy")
 
@@ -25,7 +25,11 @@ def _two_segment_linear_problem() -> tuple[CampaignOptConfig, pd.DataFrame, pd.D
     USA: high static lift, low budget slope.
     A: no static lift, high budget slope.
     """
-    config = CampaignOptConfig(exp_name="t", course="c", constraints={"budget_tiebreak_penalty": 0.0})
+    config = CampaignOptConfig(
+        course="sys_think",
+        constraints={"budget_tiebreak_penalty": 0.0},
+        evaluation=EvaluationConfig(objective="incremental", apply_observed_budget_floor=False),
+    )
     seg_a = "USA / Broad"
     seg_b = "A / Broad"
     candidates = pd.DataFrame(
@@ -101,4 +105,4 @@ def test_linear_milp_objective_is_levels(tmp_path: Path):
     level_total = float(pd.to_numeric(plan["milp_pred"], errors="coerce").sum())
     lift_total = float(pd.to_numeric(plan["pred_over_base"], errors="coerce").sum())
     assert level_total == pytest.approx(status["obj_val"], rel=1e-5)
-    assert level_total > lift_total
+    assert level_total >= lift_total

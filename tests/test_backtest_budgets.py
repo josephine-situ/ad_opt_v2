@@ -85,13 +85,14 @@ def test_load_fit_manifest_requires_optimizer_winner():
 
 def test_optimizer_manifest_requires_fit_artifacts(tmp_path: Path):
     config = CampaignOptConfig(
-        exp_name="t2",
         course="sys_think",
         model_policy=ModelPolicy(
             optimizer_winner="xgboost",
             optimizer_backend="tree_embed",
         ),
     )
+    config.prod_dir = lambda base=None: tmp_path
+    config.exp_dir = config.prod_dir
     with pytest.raises(FileNotFoundError, match="model_manifest.json"):
         load_fit_manifest(config)
 

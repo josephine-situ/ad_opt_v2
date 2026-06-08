@@ -76,14 +76,9 @@ def test_fit_mean_baseline_holdout():
 
 
 def test_prepare_modeling_data_filters_with_default_config():
-    path = pytest.importorskip("pathlib").Path(
-        "sys_think/opt_results/campaign/default/campaign_config.json"
-    )
-    if not path.exists():
-        pytest.skip("default config missing")
-    from utils.campaign_config import load_campaign_config
+    from utils.campaign_config import load_config
 
-    config = load_campaign_config(path)
+    config = load_config("sys_think")
     df = prepare_modeling_data(config)
     segments = set(df["segment"].astype(str))
     assert not any(s.startswith("C /") for s in segments)

@@ -13,7 +13,8 @@ from typing import Any, Iterable
 from dateutil.relativedelta import relativedelta
 from google.ads.googleads.client import GoogleAdsClient
 
-from config import COURSE, COURSE_CONFIG
+from utils.campaign_config import load_config
+from utils.paths import add_course_arg
 from utils.paths import gkp_dir
 from utils.ads_reporting import generate_kw_day_panel_report, write_to_file
 from utils.keyword_classification import collect_existing_keywords
@@ -57,8 +58,8 @@ def _resolve_date_range(
         resolved_start = start_date
         start_source = "--start-date"
     else:
-        resolved_start = COURSE_CONFIG[course]["min_date"]
-        start_source = f"config min_date ({resolved_start})"
+        resolved_start = load_config(course).min_date
+        start_source = f"course.yaml min_date ({resolved_start})"
     return resolved_start, resolved_end, start_source
 
 
@@ -173,7 +174,7 @@ def pull_keyword_planning(
     historical_metrics_options = google_ads_client.get_type("HistoricalMetricsOptions")
     current_date = datetime.now()
     start_date = datetime.strptime(
-        COURSE_CONFIG[course]["min_date"],
+        load_config(course).min_date,
         "%Y-%m-%d",
     ) - relativedelta(months=6)
     end_date = current_date - relativedelta(months=1)
@@ -224,12 +225,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Pull Google Ads input data for campaign_opt.",
     )
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
+    add_course_arg(parser)
     parser.add_argument(
         "--datasets",
         type=str,
@@ -258,7 +254,7 @@ def main() -> None:
         "--start-date",
         type=str,
         default="",
-        help="YYYY-MM-DD start date for campaign_opt reports. Defaults to min_date in config.py.",
+        help="YYYY-MM-DD start date for campaign_opt reports. Defaults to course.yaml min_date.",
     )
     parser.add_argument(
         "--end-date",

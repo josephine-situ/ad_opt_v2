@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
-from config import COURSE, COURSE_CONFIG
+from utils.paths import add_course_arg
 from utils.paths import data_dir, data_path, processed_dir
 from utils.campaign_metadata import read_keyword_day_index
 
@@ -1438,12 +1438,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Parse saved Google Ads change history HTML into budget and keyword CSVs."
     )
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
+    add_course_arg(parser)
     parser.add_argument(
         "--html-file",
         type=Path,

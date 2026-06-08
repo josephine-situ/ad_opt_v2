@@ -24,7 +24,7 @@ from utils.decisions import (
 )
 from utils.training_matrix import prep_xy
 from utils.optimize import _fit_and_save_embed_model
-from utils.campaign_config import default_config_path, load_campaign_config
+from utils.campaign_config import load_config
 from utils.campaign_features import (
     add_segment_column,
     build_keyword_set_feature_table,
@@ -69,10 +69,8 @@ def test_embed_matches_sklearn_at_tree_thresholds():
     """Embedding must be exact at every budget — especially at tree split thresholds."""
     from utils.modeling_prep import prepare_modeling_data, train_holdout_split
 
-    if not default_config_path("sys_think", "default").exists():
-        return
-    config = load_campaign_config(default_config_path("sys_think", "default"))
-    out_dir = config.exp_dir()
+    config = load_config("sys_think")
+    out_dir = config.prod_dir()
     manifest_path = out_dir / "model_manifest.json"
     if not manifest_path.exists():
         return

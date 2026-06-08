@@ -8,7 +8,6 @@ import joblib
 import pandas as pd
 
 from utils.backends.linear import solve_linear_campaign_milp
-from utils.backends.piecewise_linear import solve_piecewise_campaign_milp
 from utils.backends.tree_embed import (
     solve_ridge_xgb_embed_campaign_milp,
     solve_ridge_xgb_embed_multiday_campaign_milp,
@@ -28,7 +27,7 @@ from utils.campaign_config import CampaignOptConfig
 from utils.train_specs import get_train_spec
 from utils.campaign_features import build_keyword_set_feature_table
 
-_LINEAR_BACKENDS = frozenset({"linear", "piecewise_linear"})
+_LINEAR_BACKENDS = frozenset({"linear"})
 
 
 def require_optimizer_winner(config: CampaignOptConfig) -> str:
@@ -164,18 +163,6 @@ def run_optimizer(
 
     if backend == "linear":
         plan = solve_linear_campaign_milp(
-            config=config,
-            coeffs=coeffs,
-            candidates=candidates,
-            panel=panel,
-            total_budget=total_budget,
-            output_dir=output_dir,
-            write_outputs=write_outputs,
-            **milp_kwargs,
-        )
-        return _finalize_plan(plan)
-    if backend == "piecewise_linear":
-        plan = solve_piecewise_campaign_milp(
             config=config,
             coeffs=coeffs,
             candidates=candidates,

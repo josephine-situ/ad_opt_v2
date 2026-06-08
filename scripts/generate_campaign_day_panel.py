@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 
-from config import COURSE, COURSE_CONFIG
+from utils.paths import add_course_arg
 from utils.paths import data_path, processed_dir
 from utils.data_processing import generate_campaign_day_panel
 
@@ -14,12 +14,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate active campaign-day aggregates and campaign summary."
     )
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
+    add_course_arg(parser)
     parser.add_argument(
         "--kw-day-panel-file",
         default="",

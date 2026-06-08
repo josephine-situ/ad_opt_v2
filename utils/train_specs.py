@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Callable
+from typing import Any
 
-import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
@@ -21,8 +20,6 @@ _RIDGE_ALPHA_GRID = {"alpha": [10.0, 100.0]}
 
 DEFAULT_HYPERPARAM_GRIDS: dict[str, dict[str, list[Any]]] = {
     "ridge": dict(_RIDGE_ALPHA_GRID),
-    "power_log": dict(_RIDGE_ALPHA_GRID),
-    "power_level": dict(_RIDGE_ALPHA_GRID),
     "random_forest": {
         "n_estimators": _AD_OPT_XGB_GRID["n_estimators"],
         "max_depth": _AD_OPT_XGB_GRID["max_depth"],
@@ -38,31 +35,15 @@ class TrainSpec:
     backend: str
     estimator: Any
     budget_col: str = "daily_budget"
-    transform: Callable[[pd.DataFrame, str], pd.DataFrame] | None = None
-    inverse_pred: Callable[[np.ndarray], np.ndarray] | None = None
+    transform: Any | None = None
+    inverse_pred: Any | None = None
     fit_y_col: str | None = None
-
-
-def power_transform(df: pd.DataFrame, target: str) -> pd.DataFrame:
-    out = df.dropna(subset=["daily_budget"]).copy()
-    if target in out.columns:
-        out["y_log"] = np.log1p(out[target].astype(float))
-    else:
-        out["y_log"] = 0.0
-    out["log_budget"] = np.log(out["daily_budget"].astype(float).clip(lower=0.01))
-    return out
-
-
-def power_level_transform(df: pd.DataFrame, target: str) -> pd.DataFrame:
-    out = df.dropna(subset=["daily_budget"]).copy()
-    out["daily_budget"] = np.log(out["daily_budget"].astype(float).clip(lower=0.01))
-    return out
 
 
 def build_estimator(name: str, hyperparams: dict[str, Any] | None = None) -> Any:
     """Build a sklearn estimator for ``name`` using optional tuned hyperparameters."""
     hp = hyperparams or {}
-    if name in ("ridge", "power_log", "power_level"):
+    if name == "ridge":
         return Ridge(alpha=float(hp.get("alpha", 1.0)))
     if name == "random_forest":
         return RandomForestRegressor(
@@ -91,21 +72,6 @@ def build_estimator(name: str, hyperparams: dict[str, Any] | None = None) -> Any
 def get_train_specs() -> dict[str, TrainSpec]:
     specs: dict[str, TrainSpec] = {
         "ridge": TrainSpec("ridge", "linear", build_estimator("ridge")),
-        "power_log": TrainSpec(
-            "power_log",
-            "piecewise_linear",
-            build_estimator("power_log"),
-            budget_col="log_budget",
-            transform=power_transform,
-            inverse_pred=np.expm1,
-            fit_y_col="y_log",
-        ),
-        "power_level": TrainSpec(
-            "power_level",
-            "piecewise_linear",
-            build_estimator("power_level"),
-            transform=power_level_transform,
-        ),
         "random_forest": TrainSpec(
             "random_forest",
             "tree_embed",

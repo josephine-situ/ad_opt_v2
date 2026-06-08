@@ -77,56 +77,6 @@ def _eval_gurobi_expr(expr: Any, var_values: dict[Any, float]) -> float | None:
         return None
 
 
-def _sos2_weights_at_x(knots: list[float], x: float) -> list[float]:
-    """Piecewise-linear (SOS2) weights for budget ``x`` on ``knots``."""
-    xs = [float(k) for k in knots]
-    x = float(x)
-    n = len(xs)
-    if n == 0:
-        return []
-    if n == 1:
-        return [1.0]
-    if x <= xs[0]:
-        w = [0.0] * n
-        w[0] = 1.0
-        return w
-    if x >= xs[-1]:
-        w = [0.0] * n
-        w[-1] = 1.0
-        return w
-    for i in range(n - 1):
-        lo, hi = xs[i], xs[i + 1]
-        if lo <= x <= hi:
-            span = hi - lo
-            t = (x - lo) / span if span > 0 else 0.0
-            w = [0.0] * n
-            w[i] = 1.0 - t
-            w[i + 1] = t
-            return w
-    w = [0.0] * n
-    w[-1] = 1.0
-    return w
-
-
-def _piecewise_lambda_values(
-    model: gp.Model,
-    seg: str,
-    budget: float,
-    pw_seg: dict[str, list[float]],
-) -> dict[Any, float]:
-    weights = _sos2_weights_at_x(pw_seg["knots"], budget)
-    out: dict[Any, float] = {}
-    prefix = f"lam_{seg}["
-    for v in model.getVars():
-        vn = v.VarName
-        if not vn.startswith(prefix):
-            continue
-        idx = int(vn[len(prefix) : -1])
-        if idx < len(weights):
-            out[v] = weights[idx]
-    return out
-
-
 def _baseline_var_values_for_pred(
     seg: str,
     x_vars: dict[str, Any],
@@ -140,9 +90,6 @@ def _baseline_var_values_for_pred(
     values: dict[Any, float] = {x_vars[seg]: float(baseline_budget)}
     for k in k_map.get(seg, []):
         values[y_vars[(seg, k)]] = 1.0 if str(k) == str(baseline_k) else 0.0
-    pw = (coeffs or {}).get("piecewise_budget")
-    if pw and seg in pw:
-        values.update(_piecewise_lambda_values(model, seg, baseline_budget, pw[seg]))
     return values
 
 
@@ -180,9 +127,6 @@ def _gurobi_debug_pred(
     decision_vals: dict[Any, float] = {x_vars[seg]: decision_budget}
     for k in k_map.get(seg, []):
         decision_vals[y_vars[(seg, k)]] = float(y_vars[(seg, k)].X)
-    pw = (coeffs or {}).get("piecewise_budget")
-    if pw and seg in pw:
-        decision_vals.update(_piecewise_lambda_values(model, seg, decision_budget, pw[seg]))
     f_dec = _eval_gurobi_expr(pred_var, decision_vals)
     if f_dec is not None:
         return float(f_dec)
@@ -356,12 +300,6 @@ def _milp_objective_mode(config: CampaignOptConfig) -> str:
     return mode
 
 
-def _piecewise_budget_level_at(pw_seg: dict[str, list[float]], budget: float) -> float:
-    weights = _sos2_weights_at_x(pw_seg["knots"], budget)
-    vals = pw_seg["values"]
-    return float(sum(weights[i] * float(vals[i]) for i in range(len(weights))))
-
-
 def baseline_levels_from_coeffs(
     coeffs: dict[str, Any],
     segments: list[str],
@@ -376,7 +314,6 @@ def baseline_levels_from_coeffs(
 
     Matches evaluation: same keyword set at ``baseline_budget`` (default 0).
     """
-    pw = coeffs.get("piecewise_budget")
     set_lift = coeffs.get("static_context_lift") or coeffs.get("keyword_set_effect", {})
     seg_slope = coeffs.get("segment_budget_slope", {})
     seg_intercept = coeffs.get("segment_intercept", {})
@@ -395,10 +332,7 @@ def baseline_levels_from_coeffs(
                 cal = cal_offset
                 if calendar_offsets is not None:
                     cal = float(calendar_offsets.get((seg, day_idx), cal_offset))
-                if pw is not None and seg in pw:
-                    total += _piecewise_budget_level_at(pw[seg], baseline_budget) + cal + lift
-                else:
-                    total += alpha + beta * float(baseline_budget) + cal + lift
+                total += alpha + beta * float(baseline_budget) + cal + lift
             out[(seg, kid)] = total
     return out
 
@@ -475,7 +409,7 @@ def solve_campaign_milp(
     Single entry point for segment budget + keyword-set MILPs.
 
     Each backend only supplies how predicted target is built per segment
-    (linear budget slope, piecewise budget curve, embedded trees, etc.).
+    (linear budget slope, embedded trees, etc.).
 
     The objective is ``evaluation.objective``:
     - ``levels``: maximize ``sum_s f_s(plan)`` (total predicted target)
@@ -488,7 +422,7 @@ def solve_campaign_milp(
     (e.g. exact tree embedding) before the objective is set.
 
     Tree backends must pass ``baseline_level_by_key`` (per-candidate level at baseline).
-    Linear/piecewise backends may omit it; levels are derived from ``solver_coeffs``.
+    Linear backends may omit it; levels are derived from ``solver_coeffs``.
     """
     segments = build_segment_list(candidates)
     k_map = candidates_by_segment(candidates)
@@ -755,56 +689,3 @@ def make_linear_segment_predictors_for_dates(
         for i in range(n_dates)
     ]
 
-
-def make_piecewise_segment_predictor(
-    coeffs: dict[str, Any],
-    panel: pd.DataFrame,
-    segments: list[str],
-    n_knots: int,
-    model: gp.Model,
-) -> SegmentPredictor:
-    """Must use the same ``model`` instance passed to ``solve_campaign_milp``."""
-    """Piecewise-linear budget curve per segment (SOS2-style lambda weights)."""
-    pw = coeffs.get("piecewise_budget")
-    if pw is None:
-        pw = _build_piecewise_budget(panel, segments, coeffs, n_knots)
-
-    set_lift = coeffs.get("static_context_lift") or coeffs.get("keyword_set_effect", {})
-    cal_offset = float(coeffs.get("calendar_offset", 0.0))
-    # Store per-segment lambda vars on the model object via closure
-    lam_vars: dict[str, Any] = {}
-
-    def _predict(seg: str, x_var: Any, y_vars: dict, k_map: dict[str, list[str]]) -> Any:
-        knots = np.array(pw[seg]["knots"])
-        vals = np.array(pw[seg]["values"])
-        n = len(knots)
-        if seg not in lam_vars:
-            lam_vars[seg] = model.addVars(n, lb=0, ub=1, name=f"lam_{seg}")
-        lam = lam_vars[seg]
-        model.addConstr(gp.quicksum(lam[i] for i in range(n)) == 1, name=f"conv_{seg}")
-        model.addConstr(gp.quicksum(lam[i] * knots[i] for i in range(n)) == x_var, name=f"budget_pw_{seg}")
-        expr = gp.quicksum(lam[i] * vals[i] for i in range(n)) + cal_offset
-        for k in k_map.get(seg, []):
-            expr += float(set_lift.get(str(k), 0.0)) * y_vars[(seg, k)]
-        return expr
-
-    return _predict
-
-
-def _build_piecewise_budget(
-    panel: pd.DataFrame,
-    segments: list[str],
-    coeffs: dict[str, Any],
-    n_knots: int,
-) -> dict[str, dict[str, list[float]]]:
-    pw: dict[str, dict[str, list[float]]] = {}
-    for seg in segments:
-        sub = panel[panel["segment"] == seg]["daily_budget"].dropna()
-        lo, hi = (float(sub.min()), float(sub.max())) if len(sub) >= 2 else (1.0, 100.0)
-        knots = np.linspace(lo, hi, n_knots)
-        slope = float(coeffs.get("segment_budget_slope", {}).get(seg, 0.01))
-        a = max(float(coeffs.get("segment_intercept", {}).get(seg, 0.0)), 1e-6)
-        b = 0.85 if slope > 0 else 0.5
-        vals = a * np.power(np.clip(knots, 1e-6, None), b)
-        pw[seg] = {"knots": knots.tolist(), "values": vals.tolist()}
-    return pw

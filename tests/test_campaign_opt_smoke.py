@@ -5,43 +5,35 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import pytest
 
 from utils.coefficients import export_linear_solver_coeffs
+from utils.campaign_config import CampaignOptConfig, ModelPolicy, load_config
 from utils.modeling_prep import prepare_modeling_data, train_holdout_split
 from utils.modeling import run_tournament
 from utils.optimize import _resolve_backend, require_optimizer_winner
-from utils.campaign_config import CampaignOptConfig, ModelPolicy, load_campaign_config
 
 
 def test_optimizer_winner_resolves_tree_embed_backend():
     config = CampaignOptConfig(
-        exp_name="t",
         course="sys_think",
         model_policy=ModelPolicy(optimizer_winner="xgboost"),
     )
-    manifest = {"winner": "power_level", "backend": "piecewise_linear"}
+    manifest = {"winner": "ridge", "backend": "linear"}
     assert require_optimizer_winner(config) == "xgboost"
     assert _resolve_backend(config, manifest) == "tree_embed"
 
 
 def test_config_load():
-    path = Path("sys_think/opt_results/campaign/default/campaign_config.json")
-    if not path.exists():
-        pytest.skip("default config missing")
-    cfg = load_campaign_config(path)
+    cfg = load_config("sys_think")
     assert cfg.course == "sys_think"
+    assert cfg.target == "conv_scaled_clicks"
 
 
 def test_tournament_on_synthetic(monkeypatch, synthetic_sys_think_data):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    config_path = Path("sys_think/opt_results/campaign/default/campaign_config.json")
-    if not config_path.exists():
-        pytest.skip("config missing")
-    config = load_campaign_config(config_path)
+    config = load_config("sys_think")
     config.model_policy.candidates = ["ridge"]
     config.model_policy.validation.holdout_days = 30
 
@@ -63,10 +55,7 @@ def test_tournament_on_synthetic(monkeypatch, synthetic_sys_think_data):
 def test_linear_coeffs_export(monkeypatch, synthetic_sys_think_data, tmp_path):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    config_path = Path("sys_think/opt_results/campaign/default/campaign_config.json")
-    if not config_path.exists():
-        pytest.skip("config missing")
-    config = load_campaign_config(config_path)
+    config = load_config("sys_think")
     df = prepare_modeling_data(config)
     config.target = "clicks"
     coeffs = export_linear_solver_coeffs(df, config, tmp_path / "c.json")

@@ -2,7 +2,7 @@
 
 ``run_two_stage_backtest``
     Inputs: config, modeling panel, candidates, campaign panel, date window,
-    budget cap, output dir under ``sys_think/opt_results/.../backtest/<start>_<end>/``.
+    budget cap, output dir under ``<course>/backtests/<start>_<end>/``.
     Outputs: ``fixed_keyword_sets.json``, ``stage1_keyword_sets/``,
     ``plans/YYYYMMDD/{campaign_plan,plan_vs_actual}.csv``,
     ``daily_backtest_summary.csv`` (+ ``.json``).

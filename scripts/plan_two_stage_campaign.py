@@ -10,9 +10,9 @@ from pathlib import Path
 import pandas as pd
 
 from utils.modeling_prep import load_planning_inputs, optimizer_manifest_for_backtest
-from utils.campaign_config import default_config_path, load_campaign_config
+from utils.campaign_config import resolve_config
+from utils.paths import add_course_arg
 from utils.two_stage_plan import optimize_budgets_for_day, select_keyword_sets_for_window
-from config import COURSE, COURSE_CONFIG
 from utils.tee_logging import setup_tee_logging
 
 
@@ -20,14 +20,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Two-stage campaign plan (stage-1 keyword sets + stage-2 budgets)."
     )
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
-    parser.add_argument("--config", default="")
-    parser.add_argument("--exp-name", default="default")
+    add_course_arg(parser)
+    parser.add_argument("--config", default="", help="Optional YAML/JSON config override")
     parser.add_argument("--budget", type=float, default=None)
     parser.add_argument("--window-start", required=True, help="Stage-1 window start YYYY-MM-DD")
     parser.add_argument("--window-end", required=True, help="Stage-1 window end YYYY-MM-DD")
@@ -44,23 +38,22 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         default="",
-        help="Write stage outputs here (default: exp_dir/two_stage_plan)",
+        help="Write stage outputs here (default: prod/two_stage_plan)",
     )
     args = parser.parse_args()
 
-    config_path = default_config_path(args.course, args.exp_name) if not args.config else args.config
-    config = load_campaign_config(config_path)
-    out_dir = Path(args.output_dir) if args.output_dir else config.exp_dir() / "two_stage_plan"
+    config = resolve_config(args.course, args.config)
+    out_dir = Path(args.output_dir) if args.output_dir else config.prod_dir() / "two_stage_plan"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     setup_tee_logging(log_file=None, default_log_prefix="plan_two_stage")
-    print(f"Config: {config_path}")
+    print(f"Course: {config.course}")
     print(f"Output: {out_dir}")
 
     manifest = optimizer_manifest_for_backtest(config)
     df, panel, candidates = load_planning_inputs(config)
 
-    total_budget = args.budget or float(COURSE_CONFIG[config.course].get("campaign_budget", 400.0))
+    total_budget = args.budget or float(getattr(config, "daily_budget_cap", 400.0))
     window_start = pd.Timestamp(args.window_start)
     window_end = pd.Timestamp(args.window_end)
     planning_date = pd.Timestamp(args.planning_date) if args.planning_date else window_start

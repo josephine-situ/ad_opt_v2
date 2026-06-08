@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import argparse
 
-from config import COURSE, COURSE_CONFIG
+from utils.campaign_config import resolve_config
+from utils.paths import add_course_arg
 from utils.decisions import parse_allowed_match_types, parse_excluded_regions
-from utils.campaign_config import default_config_path, load_campaign_config
 from utils.keyword_candidates import (
     DEFAULT_TOP_N_VALUES,
     build_segment_candidates,
@@ -19,14 +19,8 @@ from utils.tee_logging import setup_tee_logging
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build segment keyword-set candidates.")
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
-    parser.add_argument("--config", default="")
-    parser.add_argument("--exp-name", default="default")
+    add_course_arg(parser)
+    parser.add_argument("--config", default="", help="Optional YAML/JSON config override")
     parser.add_argument("--top-n", type=int, default=30, help="Panel rank cap when --top-n-values is not set")
     parser.add_argument(
         "--top-n-values",
@@ -48,8 +42,7 @@ def main() -> None:
 
     setup_tee_logging(log_file=None, default_log_prefix="build_candidates")
 
-    config_path = default_config_path(args.course, args.exp_name) if not args.config else args.config
-    config = load_campaign_config(config_path)
+    config = resolve_config(args.course, args.config)
     course = config.course
     allowed_match_types = parse_allowed_match_types(config.constraints)
     excluded_regions = parse_excluded_regions(config.constraints)

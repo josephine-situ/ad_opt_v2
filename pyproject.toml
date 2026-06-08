@@ -17,6 +17,7 @@ dependencies = [
     "sentence-transformers>=3.4.0",
     "pyarrow>=19.0.0",
     "holidays>=0.97",
+    "pyyaml>=6.0",
     "scikit-learn>=1.6.0",
     "joblib>=1.4.0",
 ]
@@ -39,9 +40,6 @@ backtest = "scripts.backtest:main"
 run-pipeline = "scripts.run_pipeline:main"
 fit-models = "scripts.fit_models:main"
 analyze-backtest = "scripts.analyze_backtest:main"
-
-[tool.setuptools]
-py-modules = ["config"]
 
 [tool.setuptools.packages.find]
 where = ["."]

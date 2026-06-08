@@ -10,7 +10,7 @@ from utils.campaign_config import CampaignOptConfig
 
 def test_budget_tiebreak_penalty_default():
     config = CampaignOptConfig(exp_name="t", course="c")
-    assert _budget_tiebreak_penalty(config) == 1e-8
+    assert _budget_tiebreak_penalty(config) == 0.0001
 
 
 def test_budget_tiebreak_penalty_override():

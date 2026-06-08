@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 
 from utils.paths import data_path, gkp_dir, processed_dir
-from config import COURSE_CONFIG
 from utils.data_processing import _extract_region_from_campaign
 from utils.date_features import add_calendar_features
 from utils.gkp_features import (

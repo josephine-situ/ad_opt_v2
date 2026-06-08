@@ -7,7 +7,7 @@ import argparse
 import subprocess
 import sys
 
-from config import COURSE, COURSE_CONFIG
+from utils.paths import add_course_arg
 from utils.paths import data_path, processed_dir, reports_dir
 from utils.tee_logging import setup_tee_logging
 
@@ -19,12 +19,7 @@ def _run(cmd: list[str]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare campaign input data for a course.")
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
+    add_course_arg(parser)
     parser.add_argument(
         "--skip-pull",
         action="store_true",

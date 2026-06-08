@@ -9,9 +9,7 @@ import pandas as pd
 import pytest
 
 GOLDEN_DIR = Path("tests/fixtures/backtest_golden/2026-05-12_2026-05-25")
-LIVE_DIR = Path(
-    "sys_think/opt_results/campaign/default/backtest/2026-05-12_2026-05-25"
-)
+LIVE_DIR = Path("sys_think/backtests/2026-05-12_2026-05-25")
 
 NUMERIC_TOL = 1e-4
 

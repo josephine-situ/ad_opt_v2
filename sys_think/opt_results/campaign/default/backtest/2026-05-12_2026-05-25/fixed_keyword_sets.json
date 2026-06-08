@@ -1,8 +1,0 @@
-{
-  "A / Broad": "synthetic_A_Broad_allowlist_n10_1",
-  "A / Phrase; Exact": "ks_0005",
-  "B / Broad": "synthetic_B_Broad_top_conv_n10_11",
-  "B / Phrase; Exact": "synthetic_B_Phrase; Exact_semantic_n20_39",
-  "USA / Broad": "synthetic_USA_Broad_allowlist_n10_45",
-  "USA / Phrase; Exact": "synthetic_USA_Phrase; Exact_semantic_n40_66"
-}

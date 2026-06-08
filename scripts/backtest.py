@@ -9,22 +9,16 @@ import pandas as pd
 
 from utils.backtest_analysis import analyze_backtest_run, backtest_window_dir, save_backtest_config
 from utils.backtest_two_stage import run_two_stage_backtest
+from utils.campaign_config import resolve_config
+from utils.paths import add_course_arg
 from utils.modeling_prep import load_planning_inputs
-from utils.campaign_config import default_config_path, load_campaign_config
-from config import COURSE, COURSE_CONFIG
 from utils.tee_logging import setup_tee_logging
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Two-stage walk-forward campaign backtest.")
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
-    parser.add_argument("--config", default="")
-    parser.add_argument("--exp-name", default="default")
+    add_course_arg(parser)
+    parser.add_argument("--config", default="", help="Optional YAML/JSON config override")
     parser.add_argument("--start", required=True, help="Backtest start date YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="Backtest end date YYYY-MM-DD")
     parser.add_argument(
@@ -65,8 +59,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config_path = default_config_path(args.course, args.exp_name) if not args.config else args.config
-    config = load_campaign_config(config_path)
+    config = resolve_config(args.course, args.config)
     if args.optimizer_backend:
         config.model_policy.optimizer_backend = args.optimizer_backend
     if args.optimizer_winner:
@@ -76,17 +69,17 @@ def main() -> None:
 
     start = pd.Timestamp(args.day or args.start)
     end = pd.Timestamp(args.day or args.end)
-    out_dir = backtest_window_dir(args.course, args.exp_name, args.start, args.end)
+    out_dir = backtest_window_dir(args.course, args.start, args.end)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     setup_tee_logging(log_file=None, default_log_prefix="backtest_two_stage")
     print(f"Backtest window: {start.date()} → {end.date()} (strategy=two_stage)")
 
+    default_budget = float(getattr(config, "daily_budget_cap", 400.0))
     save_backtest_config(
         out_dir,
         {
             "course": config.course,
-            "exp_name": args.exp_name,
             "start_day": args.start,
             "end_day": args.end,
             "strategy": "two_stage",
@@ -95,8 +88,7 @@ def main() -> None:
             "optimizer_winner": config.model_policy.optimizer_winner,
             "optimizer_backend": config.model_policy.optimizer_backend,
             "skip_stage1": args.skip_stage1,
-            "total_budget": args.budget
-            or float(COURSE_CONFIG[config.course].get("campaign_budget", 400.0)),
+            "total_budget": args.budget or default_budget,
         },
     )
 
@@ -108,7 +100,7 @@ def main() -> None:
     df, panel, candidates = load_planning_inputs(config)
     if args.use_actual_budget and args.budget is not None:
         print("[Warn] --budget ignored when --use-actual-budget is set")
-    total_budget = args.budget or float(COURSE_CONFIG[config.course].get("campaign_budget", 400.0))
+    total_budget = args.budget or default_budget
 
     summary = run_two_stage_backtest(
         config,

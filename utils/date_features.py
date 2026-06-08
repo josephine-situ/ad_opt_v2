@@ -9,12 +9,11 @@ import holidays
 import numpy as np
 import pandas as pd
 
-from config import COURSE_CONFIG
-
-
 def course_start_dates(course: str) -> list[str]:
-    cfg = COURSE_CONFIG.get(course, {})
-    return list(cfg.get("start_dates") or [])
+    from utils.campaign_config import load_config
+
+    cfg = load_config(course)
+    return list(getattr(cfg, "start_dates", None) or [])
 
 
 def region_to_country_code(region: object) -> str:

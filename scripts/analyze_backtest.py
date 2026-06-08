@@ -7,26 +7,20 @@ import argparse
 import sys
 from pathlib import Path
 
-from config import COURSE, COURSE_CONFIG
 from utils.backtest_analysis import analyze_backtest_run, backtest_window_dir
-from utils.campaign_config import default_config_path, load_campaign_config
+from utils.campaign_config import resolve_config
+from utils.paths import add_course_arg
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Summarize campaign backtest results.")
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
-    parser.add_argument("--exp-name", default="default")
+    add_course_arg(parser)
     parser.add_argument("--start", default="", help="Backtest window start YYYY-MM-DD")
     parser.add_argument("--end", default="", help="Backtest window end YYYY-MM-DD")
     parser.add_argument(
         "--backtest-dir",
         default="",
-        help="Explicit backtest output directory (overrides exp/start/end)",
+        help="Explicit backtest output directory (overrides course/start/end)",
     )
     parser.add_argument("--no-latex", action="store_true")
     args = parser.parse_args()
@@ -37,9 +31,9 @@ def main() -> None:
     else:
         if not args.start or not args.end:
             parser.error("Provide --start and --end, or --backtest-dir")
-        config = load_campaign_config(default_config_path(args.course, args.exp_name))
+        config = resolve_config(args.course)
         target = config.target
-        backtest_dir = backtest_window_dir(args.course, args.exp_name, args.start, args.end)
+        backtest_dir = backtest_window_dir(args.course, args.start, args.end)
 
     if not backtest_dir.exists():
         print(f"Backtest directory not found: {backtest_dir}")

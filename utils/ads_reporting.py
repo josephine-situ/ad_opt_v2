@@ -6,7 +6,7 @@ from typing import Any
 from google.ads.googleads.client import GoogleAdsClient
 
 from utils.paths import reports_dir
-from config import COURSE_CONFIG
+from utils.campaign_config import load_config
 from utils.gaql_queries import KW_DAY_PANEL_REPORT_QUERY, KW_KEYWORD_ALL_CONV_QUERY
 from utils.metrics import google_ads_metrics_client
 from utils.report_row_generators import aggregate_kw_all_conv_totals, generate_kw_day_panel_rows
@@ -45,7 +45,7 @@ def generate_kw_day_panel_report(
         key = (row["date"], row["keyword"], row["campaign"], row["match_type"])
         click_rows[key] = row
 
-    conversion_action_list = "', '".join(COURSE_CONFIG[output_course]["conversion_actions"])
+    conversion_action_list = "', '".join(load_config(output_course).conversion_actions)
     conv_query = KW_KEYWORD_ALL_CONV_QUERY.format(
         start_date=start_date,
         end_date=end_date,

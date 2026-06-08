@@ -18,21 +18,15 @@ from utils.modeling import (
     warn_if_not_tournament_winner,
 )
 from utils.optimize import require_optimizer_winner
-from config import COURSE, COURSE_CONFIG
-from utils.campaign_config import default_config_path, load_campaign_config
+from utils.campaign_config import resolve_config
+from utils.paths import add_course_arg
 from utils.tee_logging import setup_tee_logging
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fit campaign response models.")
-    parser.add_argument(
-        "--course",
-        default=COURSE,
-        choices=sorted(COURSE_CONFIG.keys()),
-        help=f"Course key (default: {COURSE})",
-    )
-    parser.add_argument("--config", default="")
-    parser.add_argument("--exp-name", default="default")
+    add_course_arg(parser)
+    parser.add_argument("--config", default="", help="Optional YAML/JSON config override")
     parser.add_argument(
         "--skip-evaluation-ensemble",
         action="store_true",
@@ -40,9 +34,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config_path = default_config_path(args.course, args.exp_name) if not args.config else args.config
-    config = load_campaign_config(config_path)
-    out_dir = config.exp_dir()
+    config = resolve_config(args.course, args.config)
+    out_dir = config.prod_dir()
 
     setup_tee_logging(log_file=None, default_log_prefix="fit_models")
 
@@ -70,7 +63,7 @@ def main() -> None:
     print(f"Saved feature artifacts under {out_dir / 'features'}")
 
     winner, metrics_table, manifest = run_tournament(train, holdout, config, export_dir=out_dir)
-    manifest["config_path"] = str(config_path)
+    manifest["course"] = config.course
     manifest["feature_artifacts"] = artifact_paths
 
     save_manifest(manifest, winner, out_dir / "model_manifest.json")

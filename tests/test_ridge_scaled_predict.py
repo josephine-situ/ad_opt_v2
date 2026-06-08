@@ -11,11 +11,11 @@ from utils.linear_design import (
     ridge_numeric_scale_column_names,
     scale_milp_design_matrix,
 )
-from utils.campaign_config import default_config_path, load_campaign_config
+from utils.campaign_config import load_config
 
 
 def test_scaled_train_predict_matches_scaled_matrix():
-    config = load_campaign_config(default_config_path("sys_think", "default"))
+    config = load_config("sys_think")
     df = prepare_modeling_data(config).head(400)
     design = build_linear_milp_design_matrix(df, config)
     artifact = fit_linear_milp_ridge(design, config, alpha=1.0)
