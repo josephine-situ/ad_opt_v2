@@ -50,7 +50,6 @@ from utils.campaign_features import (
     add_segment_match_type_indicators,
     build_keyword_set_feature_table,
     get_context_feature_columns,
-    version_run_vector_for_date,
 )
 from utils.date_features import calendar_vector_for_date
 
@@ -72,9 +71,6 @@ def build_candidate_feature_rows(
     for seg in sorted(k_map.keys()):
         region = region_of_segment(seg)
         cal = calendar_vector_for_date(planning_date, region, config.course)
-        regime = version_run_vector_for_date(
-            planning_date, course=config.course, segment=seg, panel=panel
-        )
         for kid in k_map[seg]:
             kid = str(kid)
             row: dict = {
@@ -83,7 +79,6 @@ def build_candidate_feature_rows(
                 "daily_budget": 0.0,
                 "keyword_set_id": kid,
                 **cal,
-                **regime,
             }
             if kid in set_feats.index:
                 for col in feature_cols:
@@ -435,7 +430,7 @@ def diagnose_plan_sklearn_path_gap(
         f"gated={float(gated_decision[worst]):.6g}\n"
         f"  segment min observed budget={float(mins.get(seg, 0.0)):.4g}"
     )
-    feat_cols = sorted(set(feature_cols) | {"daily_budget", "days_since_version_start"})
+    feat_cols = sorted(set(feature_cols) | {"daily_budget"})
     e_row = embed_path_rows.iloc[worst]
     d_row = decision_path_rows.iloc[worst]
     diffs = []

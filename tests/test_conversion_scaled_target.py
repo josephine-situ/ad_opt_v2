@@ -6,7 +6,6 @@ import pandas as pd
 
 from utils.campaign_features import (
     add_conversion_scaled_clicks_target,
-    add_version_run_features,
     compute_segment_conv_per_click_rates,
 )
 
@@ -54,24 +53,3 @@ def test_conv_scaled_clicks_uses_fixed_rates_not_subset_panel():
     out = add_conversion_scaled_clicks_target(tail, rates=rates)
     expected_rate = (10.0 + 10.0 + 0.0) / (100.0 + 100.0 + 100.0)
     assert out.iloc[0]["conv_scaled_clicks"] == 100.0 * expected_rate
-
-
-def test_days_since_version_start_from_summary():
-    panel = pd.DataFrame(
-        {
-            "date": pd.to_datetime(["2024-01-10", "2024-01-15"]),
-            "campaign_version": [1, 2],
-            "region": ["USA", "USA"],
-            "match_types": ["Broad", "Broad"],
-        }
-    )
-    summary = pd.DataFrame(
-        {
-            "campaign_version": [1, 2],
-            "start_date": ["2024-01-01", "2024-01-12"],
-            "keyword_set_id": ["ks1", "ks2"],
-        }
-    )
-    out = add_version_run_features(panel, summary)
-    assert out.loc[0, "days_since_version_start"] == 9.0
-    assert out.loc[1, "days_since_version_start"] == 3.0

@@ -33,7 +33,6 @@ from utils.train_specs import TrainSpec, get_train_spec
 from utils.campaign_features import (
     build_keyword_set_feature_table,
     get_context_feature_columns,
-    version_run_vector_for_date,
 )
 from utils.date_features import calendar_vector_for_date
 
@@ -623,21 +622,12 @@ def build_segment_decision_rows(
         seg = str(dec["segment"])
         region = region_of_segment(seg)
         cal = calendar_vector_for_date(planning_date, region, course)
-        ver = dec["campaign_version"] if "campaign_version" in dec.index else None
-        regime = version_run_vector_for_date(
-            planning_date,
-            course=course,
-            campaign_version=ver,
-            segment=seg,
-            panel=panel,
-        )
         row: dict[str, Any] = {
             "segment": seg,
             "region": region,
             "daily_budget": float(dec["daily_budget"]),
             "keyword_set_id": str(dec["keyword_set_id"]),
             **cal,
-            **regime,
         }
         kid = row["keyword_set_id"]
         if kid in set_feats.index:

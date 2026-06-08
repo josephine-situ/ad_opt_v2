@@ -71,9 +71,6 @@ def install_synthetic_sys_think_data(
         lambda _course="sys_think": None,
     )
 
-    import utils.campaign_features as campaign_features
-
-    campaign_features._version_start_cache.pop(course, None)
     return dst
 
 

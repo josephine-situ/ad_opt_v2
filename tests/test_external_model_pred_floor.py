@@ -128,5 +128,3 @@ def test_build_plan_prediction_rows_uses_embed_template():
     assert "is_broad_match" in embed_path.columns
     mins = observed_min_daily_budget(panel, ["B / Broad"])
     assert mins["B / Broad"] == 12.35
-    assert embed_path["days_since_version_start"].notna().all()
-    assert decision_path["days_since_version_start"].notna().all()

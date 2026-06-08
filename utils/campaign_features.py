@@ -439,7 +439,6 @@ CALENDAR_BASELINE_COLS = [
     "is_weekend",
     "is_public_holiday",
     "days_to_next_course_start",
-    "days_since_version_start",
 ]
 CALENDAR_EXTENDED_COLS = CALENDAR_BASELINE_COLS + ["month_sin", "month_cos"]
 MT_COHESION_FEATURE_COLS = [f"embed_cohesion_{mt.lower()}" for mt in MATCH_TYPE_LIST_COLS]
@@ -595,118 +594,6 @@ def load_course_conv_per_click_rates(course: str) -> pd.DataFrame:
     return compute_segment_conv_per_click_rates(panel)
 
 
-_version_start_cache: dict[str, dict[object, pd.Timestamp]] = {}
-
-
-def version_start_dates(summary: pd.DataFrame) -> dict[object, pd.Timestamp]:
-    """``campaign_version`` -> version ``start_date``."""
-    if "campaign_version" not in summary.columns or "start_date" not in summary.columns:
-        return {}
-    starts = summary[["campaign_version", "start_date"]].drop_duplicates()
-    return {
-        row["campaign_version"]: pd.Timestamp(row["start_date"])
-        for _, row in starts.iterrows()
-    }
-
-
-def version_start_dates_for_course(course: str) -> dict[object, pd.Timestamp]:
-    if course not in _version_start_cache:
-        _version_start_cache[course] = version_start_dates(load_campaign_summary(course))
-    return _version_start_cache[course]
-
-
-def version_starts_from_panel(panel: pd.DataFrame) -> dict[object, pd.Timestamp]:
-    """Earliest panel date per ``campaign_version`` (fallback when summary lacks start_date)."""
-    if panel.empty or "campaign_version" not in panel.columns or "date" not in panel.columns:
-        return {}
-    work = panel.copy()
-    work["date"] = pd.to_datetime(work["date"])
-    return {
-        ver: pd.Timestamp(d)
-        for ver, d in work.groupby("campaign_version")["date"].min().items()
-        if not pd.isna(ver)
-    }
-
-
-def version_for_segment_on_date(
-    panel: pd.DataFrame,
-    segment: str,
-    on_date: pd.Timestamp,
-) -> object | None:
-    """``campaign_version`` active for ``segment`` on ``on_date`` (latest row on or before date)."""
-    if panel.empty or "campaign_version" not in panel.columns:
-        return None
-    sub = panel.copy()
-    sub["date"] = pd.to_datetime(sub["date"])
-    seg_mask = sub["segment"].astype(str) == str(segment)
-    sub = sub.loc[seg_mask]
-    if sub.empty:
-        return None
-    d = pd.Timestamp(on_date).normalize()
-    on_day = sub[sub["date"] == d]
-    row = on_day.iloc[-1] if not on_day.empty else sub[sub["date"] <= d].sort_values("date").iloc[-1]
-    ver = row.get("campaign_version")
-    return None if pd.isna(ver) else ver
-
-
-def days_since_version_start_value(
-    on_date: pd.Timestamp,
-    campaign_version: object | None,
-    *,
-    course: str | None = None,
-    version_starts: dict[object, pd.Timestamp] | None = None,
-) -> float:
-    if campaign_version is None or pd.isna(campaign_version):
-        return float("nan")
-    starts = version_starts if version_starts is not None else version_start_dates_for_course(course or "")
-    start = starts.get(campaign_version)
-    if start is None:
-        return float("nan")
-    return float((pd.Timestamp(on_date).normalize() - pd.Timestamp(start).normalize()).days)
-
-
-def version_run_vector_for_date(
-    planning_date: pd.Timestamp,
-    *,
-    course: str,
-    campaign_version: object | None = None,
-    segment: str | None = None,
-    panel: pd.DataFrame | None = None,
-) -> dict[str, float]:
-    """Regime features tied to campaign version start (for scoring / MILP rows)."""
-    ver = campaign_version
-    if (ver is None or pd.isna(ver)) and segment is not None and panel is not None:
-        ver = version_for_segment_on_date(panel, segment, planning_date)
-    starts = dict(version_start_dates_for_course(course))
-    if panel is not None:
-        for k, v in version_starts_from_panel(panel).items():
-            starts.setdefault(k, v)
-    return {
-        "days_since_version_start": days_since_version_start_value(
-            planning_date, ver, version_starts=starts
-        )
-    }
-
-
-def add_version_run_features(panel: pd.DataFrame, summary: pd.DataFrame) -> pd.DataFrame:
-    """Add ``days_since_version_start`` from summary version ``start_date``."""
-    if "campaign_version" not in panel.columns:
-        out = panel.copy()
-        out["days_since_version_start"] = np.nan
-        return out
-    starts = version_start_dates(summary)
-    if not starts:
-        out = panel.copy()
-        out["days_since_version_start"] = np.nan
-        return out
-
-    out = panel.copy()
-    out["date"] = pd.to_datetime(out["date"])
-    start_s = out["campaign_version"].map(starts)
-    out["days_since_version_start"] = (out["date"] - start_s).dt.days.astype(float)
-    return out
-
-
 def add_conversion_scaled_clicks_target(
     panel: pd.DataFrame,
     *,
@@ -754,7 +641,6 @@ def build_modeling_frame(
     panel = add_segment_match_type_indicators(panel)
     summary = load_campaign_summary(course)
     panel = attach_keyword_set_to_panel(panel, summary)
-    panel = add_version_run_features(panel, summary)
 
     set_feats = build_keyword_set_feature_table(course)
     panel = panel.merge(set_feats, on="keyword_set_id", how="left")
