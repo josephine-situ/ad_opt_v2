@@ -1,4 +1,4 @@
-"""Per-course data, production, and backtest path helpers."""
+"""Per-course data, production, experiments, and backtest path helpers."""
 
 from __future__ import annotations
 
@@ -61,6 +61,16 @@ def data_path(course: str, *parts: str) -> Path:
 def prod_dir(course: str = DEFAULT_COURSE) -> Path:
     """Production pipeline outputs (model fit, two-stage plans)."""
     return course_root(course) / "prod"
+
+
+def experiments_dir(course: str = DEFAULT_COURSE) -> Path:
+    """Research and debug outputs (feature ablations, modeling-frame dumps)."""
+    return course_root(course) / "experiments"
+
+
+def diagnostics_dir(course: str = DEFAULT_COURSE) -> Path:
+    """Ablation and diagnostic experiment outputs."""
+    return experiments_dir(course) / "diagnostics"
 
 
 def backtests_dir(course: str = DEFAULT_COURSE) -> Path:

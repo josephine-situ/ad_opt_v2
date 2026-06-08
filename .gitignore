@@ -17,8 +17,7 @@ backtest_verify.log
 */prod/**/_assert_check/
 TODO.md
 
-*/prod/diagnostics/
-*/prod/features/
+*/experiments/
 */prod/holdout_metrics*.json
 */prod/model_manifest.json
 */prod/winner_model.joblib

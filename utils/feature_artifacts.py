@@ -19,7 +19,10 @@ def save_modeling_artifacts(
     train: pd.DataFrame,
     holdout: pd.DataFrame,
 ) -> dict[str, str]:
-    """Write wide modeling frames and design matrices under ``out_dir/features/``."""
+    """Write wide modeling frames and design matrices under ``out_dir/features/``.
+
+    Pass ``experiments_dir(course)`` so debug dumps stay out of ``prod/``.
+    """
     out_dir = Path(out_dir)
     feat_dir = out_dir / "features"
     feat_dir.mkdir(parents=True, exist_ok=True)

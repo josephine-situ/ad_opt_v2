@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import yaml
 
-from utils.paths import DEFAULT_COURSE, REPO_ROOT, course_yaml_path, prod_dir
+from utils.paths import DEFAULT_COURSE, REPO_ROOT, course_yaml_path, experiments_dir, prod_dir
 
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "default.yaml"
 
@@ -68,14 +68,24 @@ def _attach_dirs(cfg: SimpleNamespace) -> SimpleNamespace:
             return Path(base)
         return prod_dir(cfg.course)
 
+    def _experiments_dir(base: Path | None = None) -> Path:
+        if base is not None:
+            return Path(base)
+        return experiments_dir(cfg.course)
+
     cfg.prod_dir = _prod_dir
     cfg.exp_dir = _prod_dir  # backward-compatible alias
+    cfg.experiments_dir = _experiments_dir
     return cfg
 
 
 def _ns_values(value) -> dict:
     if isinstance(value, SimpleNamespace):
-        return {k: _ns_values(v) for k, v in vars(value).items() if k not in ("exp_dir", "prod_dir")}
+        return {
+            k: _ns_values(v)
+            for k, v in vars(value).items()
+            if k not in ("exp_dir", "prod_dir", "experiments_dir")
+        }
     return value
 
 

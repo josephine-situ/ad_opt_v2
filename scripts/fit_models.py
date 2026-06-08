@@ -59,8 +59,9 @@ def main() -> None:
     print(f"Train rows: {len(train)}, holdout rows: {len(holdout)}")
     print(f"Validation scheme: {config.model_policy.validation.scheme}")
 
-    artifact_paths = save_modeling_artifacts(out_dir, config, train, holdout)
-    print(f"Saved feature artifacts under {out_dir / 'features'}")
+    exp_dir = config.experiments_dir()
+    artifact_paths = save_modeling_artifacts(exp_dir, config, train, holdout)
+    print(f"Saved feature artifacts under {exp_dir / 'features'}")
 
     winner, metrics_table, manifest = run_tournament(train, holdout, config, export_dir=out_dir)
     manifest["course"] = config.course

@@ -13,6 +13,7 @@ config/
   course.yaml                  # optional per-course overrides
   data/                        # inputs + processed panels
   prod/                        # model fit + production pipeline outputs
+  experiments/                 # debug dumps + ablation diagnostics (not prod)
   backtests/<start>_<end>/     # walk-forward backtest windows
 scripts/                       # CLI entry points
 utils/                         # library code
@@ -47,15 +48,33 @@ Courses are discovered automatically (top-level dirs with a `data/` folder).
 
 ## Quick start (sys_think)
 
+Shared data prep (required for both flows):
+
 ```powershell
 uv run prepare-data --google-ads-yaml ..\google-ads-prod.yaml --customer-id 1234567890
+```
+
+### Production
+
+`run-pipeline` builds keyword candidates, GKP set features, fits models, and writes the two-stage plan to `<course>/prod/two_stage_plan/`:
+
+```powershell
+uv run run-pipeline --window-start 2026-05-12 --window-end 2026-05-25 --planning-date 2026-05-12
+```
+
+### Backtest
+
+Build modeling artifacts (skip if you already ran production), then walk-forward over the window:
+
+```powershell
 uv run python -m scripts.build_keyword_candidates --verify
 uv run python -m scripts.build_gkp_set_features
 uv run fit-models
-uv run run-pipeline --window-start 2026-05-12 --window-end 2026-05-25 --planning-date 2026-05-12
 uv run backtest --start 2026-05-12 --end 2026-05-25 --use-actual-budget --analyze
 uv run analyze-backtest --start 2026-05-12 --end 2026-05-25
 ```
+
+`--analyze` on `backtest` runs the same summary as `analyze-backtest`; use the latter to re-summarize an existing window without re-running the backtest.
 
 Use `--course <name>` on any command. Use `--config path.yaml` for a one-off override file.
 
@@ -66,6 +85,7 @@ Use `--course <name>` on any command. Use `--config path.yaml` for a one-off ove
 | Processed panels | `<course>/data/processed/` |
 | Model fit | `<course>/prod/model_manifest.json`, `holdout_metrics.json` |
 | Production plan | `<course>/prod/two_stage_plan/` |
+| Experiments / debug | `<course>/experiments/features/`, `experiments/diagnostics/` |
 | Backtest window | `<course>/backtests/<start>_<end>/` |
 
 ## Tests

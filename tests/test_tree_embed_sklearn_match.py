@@ -65,13 +65,13 @@ def _milp_level_at_budget(
     return float(pred_var.X)
 
 
-def test_embed_matches_sklearn_at_tree_thresholds():
+def test_embed_matches_sklearn_at_tree_thresholds(tmp_path):
     """Embedding must be exact at every budget — especially at tree split thresholds."""
     from utils.modeling_prep import prepare_modeling_data, train_holdout_split
 
     config = load_config("sys_think")
-    out_dir = config.prod_dir()
-    manifest_path = out_dir / "model_manifest.json"
+    manifest_path = config.prod_dir() / "model_manifest.json"
+    out_dir = tmp_path
     if not manifest_path.exists():
         return
     import json
