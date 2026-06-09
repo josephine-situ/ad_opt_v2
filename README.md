@@ -23,7 +23,7 @@ tests/
 ## Setup
 
 ```powershell
-uv sync --extra optimization --extra ml
+uv sync
 ```
 
 Keep Google Ads credentials outside the repo (`.gitignore` excludes `google-ads*.yaml`).
@@ -55,40 +55,41 @@ The pipeline expects a hierarchical Google Ads account structure with a single *
 
 ### Campaign and ad group structure
 
-Each course account contains **one campaign per (Course Name, Match Type, Region) tuple**. Each campaign contains **exactly one ad group** matching the same tuple, and each ad group contains **only keywords with the matching type**.
+Each course account contains **one campaign per (Course Name, Region, Match Type) tuple**. Match types are configured as **`Broad`** or **`Phrase; Exact`** (see `allowed_match_types` in `config/default.yaml`). Each campaign contains **exactly one ad group** matching the same tuple.
 
 **Example for System Thinking:**
 
 ```
 System Thinking Course Account
 │
-├── Campaign: Course - System Thinking - USA - Exact
-│   └── Ad Group: Course - System Thinking - USA - Exact
-│       ├── Keyword: [systems thinking course] (Exact Match)
-│       └── Keyword: [mit systems thinking] (Exact Match)
-│
-├── Campaign: Course - System Thinking - USA - Phrase
-│   └── Ad Group: Course - System Thinking - USA - Phrase
-│       ├── Keyword: "systems thinking" (Phrase Match)
-│       └── Keyword: "mit xpro systems thinking" (Phrase Match)
-│
 ├── Campaign: Course - System Thinking - USA - Broad
 │   └── Ad Group: Course - System Thinking - USA - Broad
 │       ├── Keyword: systems thinking course (Broad Match)
 │       └── Keyword: strategic thinking workshop (Broad Match)
 │
-├── Campaign: Course - System Thinking - A - Exact
-│   └── Ad Group: Course - System Thinking - A - Exact
-│       └── [Exact match keywords for Region A]
+├── Campaign: Course - System Thinking - USA - Phrase; Exact
+│   └── Ad Group: Course - System Thinking - USA - Phrase; Exact
+│       ├── Keyword: [systems thinking course] (Exact Match)
+│       ├── Keyword: [mit systems thinking] (Exact Match)
+│       ├── Keyword: "systems thinking" (Phrase Match)
+│       └── Keyword: "mit xpro systems thinking" (Phrase Match)
+│
+├── Campaign: Course - System Thinking - A - Broad
+│   └── Ad Group: Course - System Thinking - A - Broad
+│       └── [Broad match keywords for Region A]
+│
+├── Campaign: Course - System Thinking - A - Phrase; Exact
+│   └── Ad Group: Course - System Thinking - A - Phrase; Exact
+│       └── [Phrase and Exact match keywords for Region A]
 │
 └── ... (additional Region × Match Type combinations)
 ```
 
 **Key principles:**
 
-- **One campaign = one (Course, Region, Match Type) tuple** — maps to an optimizer segment such as `USA / Phrase; Exact` (Phrase and Exact may share one campaign when configured as `Phrase; Exact`)
+- **One campaign = one (Course, Region, Match Type) tuple** — maps to an optimizer segment such as `USA / Broad` or `USA / Phrase; Exact`
 - **One ad group per campaign** — simplifies keyword-set pushes
-- **Match type isolation** — each ad group contains only keywords of one match type (or the configured combined type)
+- **Match type grouping** — `Broad` campaigns contain only broad keywords; `Phrase; Exact` campaigns contain both phrase and exact keywords in the same ad group
 - **Campaign-level daily budgets** — set from stage-2 `campaign_plan.csv` per segment
 - **Keyword sets** — add, pause, or remove keywords from the ad group when stage 1 selects a new `keyword_set_id`
 
@@ -96,12 +97,12 @@ This structure ensures stage-1 keyword sets and stage-2 budgets map cleanly to G
 
 ### Experiment campaigns and naming
 
-Experiment campaigns use a **different bidding strategy** than production. Mark them with **`Experiment` in the campaign name** (e.g. `… - Search - Experiment - …`). The pipeline excludes them automatically:
+The past experiment campaigns used a **different bidding strategy** (manual CPC) than production. Mark them with **`Experiment` in the campaign name** (e.g. `… - Search - Experiment - …`). The pipeline excludes them automatically:
 
 - **API pulls** — `campaign.name NOT LIKE '%Experiment%'` in `utils/gaql_queries.py`
 - **Change-history parsing** — `is_search_campaign()` skips names containing `Experiment`
 
-Keep experiment data in change history and raw exports if you need it for analysis, but it will not enter optimization panels. Avoid putting `Experiment` in production campaign names. Region `C` is also excluded from optimization (`excluded_regions` in `config/default.yaml`).
+Avoid putting `Experiment` in production campaign names. Region `C` is also excluded from optimization (`excluded_regions` in `config/default.yaml`).
 
 ## Change history
 
@@ -117,7 +118,7 @@ Keep experiment data in change history and raw exports if you need it for analys
 
 3. **Change History API** (not yet wired) — replace manual HTML saves going forward.
 
-`prepare-data` requires `campaign-summary.csv` before it can build `campaign-day-panel.csv`. Commit updated summary/keyword-set CSVs to git after keyword changes or budget appends.
+`prepare-data` requires `campaign-summary.csv` before it can build `campaign-day-panel.csv`. It also writes `segment-conv-per-click-rates.csv` (course-wide `sum(all_conv)/sum(clicks)` per region × match type) used as fixed scaling for the `conv_scaled_clicks` target. Commit updated summary/keyword-set CSVs to git after keyword changes or budget appends.
 
 ## Config
 
@@ -151,14 +152,13 @@ Courses are discovered automatically (top-level dirs with a `data/` folder).
 
 ```powershell
 uv run prepare-data --google-ads-yaml ..\google-ads-prod.yaml --customer-id 1234567890
-uv run run-pipeline --skip-stage1
-# optional: uv run run-pipeline --skip-stage1 --planning-date 2026-05-13
+uv run run-pipeline --skip-stage1 --skip-candidates --skip-gkp
 ```
 
 ### Monthly / ad-hoc stage 1
 
 ```powershell
-uv run run-pipeline --window-start 2026-05-12 --window-end 2026-06-11
+uv run run-pipeline --window-start 2026-06-15 --window-end 2026-07-15
 ```
 
 `run-pipeline` always runs `fit-models` and (by default) rebuilds keyword candidates and GKP set features. Use `--skip-candidates` / `--skip-gkp` on daily runs if those inputs have not changed. Use `--skip-monitoring` to skip plan-vs-actual scoring.
@@ -203,51 +203,50 @@ Almost everything is **regenerated** each run. `pull_input_data` rewrites `data/
 |----------|-----|
 | `data/processed/campaign-summary.csv` | Campaign versions and budget intervals; update via change-history parse or budget append |
 | `data/processed/campaign-keyword-sets.csv` | Historical keyword sets for candidate pool |
-| `fixed_keyword_sets.json` | Active keyword-set assignment between stage-1 runs (lives under `prod/two_stage_plan/`, gitignored — add a gitignore exception or copy to a tracked path if you want it in git) |
+| `prod/two_stage_plan/fixed_keyword_sets.json` | Active keyword-set assignment between stage-1 runs |
 | `data/gkp/*Keywords*Enrollments*.xlsx` | Allowlist input |
 | `data/Change history*.html` | Bootstrap archive for keyword changes (optional once summary CSVs are current) |
 | `config/`, `<course>/course.yaml` | Pipeline configuration |
+| `prod/monitoring/daily_metrics.csv` | Append-only plan-vs-actual scores (optional; not gitignored) |
 
-With those in git plus API credentials, a fresh clone can run `prepare-data` → `run-pipeline`.
+With those in git plus API credentials, a fresh clone can run `prepare-data` → `run-pipeline`. Monitoring history is optional for reruns but needed for rolling bias/nRMSE trends.
+
+### Production monitoring (keep on disk)
+
+Plan-vs-actual scoring (see **Production monitoring** above) appends to a cumulative history and reads saved stage-2 plans. Do not delete these between daily runs:
+
+| Artifact | Keep? | Why |
+|----------|-------|-----|
+| `prod/monitoring/daily_metrics.csv` | **Yes** | Append-only score history; 7d/30d rolling stats read from here |
+| `prod/monitoring/plan_vs_actual/YYYYMMDD/` | **Yes** | Per-segment detail for each scored day |
+| `prod/monitoring/rolling_summary.json` | Optional | Regenerated from `daily_metrics.csv` on every `run-pipeline` |
+| `prod/two_stage_plan/stage2_budgets/YYYYMMDD/` | **Yes, ~lookback window** | Monitoring scores a day only if that date's `campaign_plan.csv` still exists; default lookback is 7 days (`monitoring.lookback_days` in `config/default.yaml`). Also the budget push source for that planning date. |
+
+`prod/monitoring/` is not gitignored — commit `daily_metrics.csv` (and detail dirs if you want audits in git). Other `prod/two_stage_plan/` outputs are gitignored except `fixed_keyword_sets.json`; retain recent `stage2_budgets/` dirs locally for monitoring and budget pushes.
 
 ### Regenerated each run (no backup needed)
 
 | Artifact | How |
 |----------|-----|
 | `data/reports/kw-day-panel.csv` | Full API re-pull (`prepare-data`) from `min_date` to today |
-| `data/processed/kw-day-panel.csv`, `campaign-day-panel.csv` | `process_input_data` + `generate_campaign_day_panel` |
+| `data/processed/kw-day-panel.csv`, `campaign-day-panel.csv`, `segment-conv-per-click-rates.csv` | `process_input_data` + `generate_campaign_day_panel` |
 | Candidate / feature CSVs, keyword-set display | `run-pipeline` (or individual build scripts) |
-| `prod/*.joblib`, stage-2 plans, model manifests | `run-pipeline` |
+| `prod/*.joblib`, model manifests, today's stage-2 plan | `run-pipeline` |
 
 ### Ephemeral (gitignored working files)
 
-- `prod/two_stage_plan/stage2_budgets/` — today's push source
+- `prod/two_stage_plan/` except `fixed_keyword_sets.json` — stage-1 outputs, `stage2_budgets/` (keep on disk per monitoring section above; prune dirs once scored and past lookback)
 - `experiments/`, backtest MILP/plan dirs, `logs/`
 
 Processed panels are git-tracked today but are optional in git if you always run `prepare-data` first; the summary CSVs are what you cannot reconstruct from the API alone.
 
-## Quick start (sys_think)
+## Backtest
 
-Shared data prep (required for both flows):
+Data prep:
 
 ```powershell
 uv run prepare-data --google-ads-yaml ..\google-ads-prod.yaml --customer-id 1234567890
 ```
-
-### Production
-
-`run-pipeline` builds keyword candidates, GKP set features, fits models, and writes the two-stage plan to `<course>/prod/two_stage_plan/`:
-
-```powershell
-# Full run: stage-1 keyword sets over a window, then stage-2 budgets (planning date defaults to window-start)
-uv run run-pipeline --window-start 2026-05-12 --window-end 2026-05-25
-
-# Daily refresh: reuse fixed keyword sets; stage-2 only (planning date defaults to tomorrow)
-uv run run-pipeline --skip-stage1
-uv run run-pipeline --skip-stage1 --planning-date 2026-05-13
-```
-
-### Backtest
 
 Build modeling artifacts (skip if you already ran production), then walk-forward over the window:
 

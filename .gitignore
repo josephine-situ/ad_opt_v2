@@ -28,7 +28,8 @@ TODO.md
 */prod/ridge_embed_coeffs.json
 */prod/campaign_plan.csv
 */prod/solver_status.json
-*/prod/two_stage_plan/
+*/prod/two_stage_plan/*
+!*/prod/two_stage_plan/fixed_keyword_sets.json
 
 */backtests/**/plans/
 */backtests/**/stage1_keyword_sets/
