@@ -1,7 +1,7 @@
 # System Thinking course overrides (merged on top of config/default.yaml).
 
 min_date: "2024-06-01"
-daily_budget_cap: 412.7
+daily_budget_cap: 354
 
 # MILP optimizer: XGB trees embedded in Gurobi (backend auto from optimizer_winner).
 model_policy:
@@ -26,6 +26,7 @@ start_dates:
   - "2026-02-02"
   - "2026-04-06"
   - "2026-06-15"
+  - "2026-10-05"
 
 conversion_actions:
   - Purchase
