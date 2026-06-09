@@ -7,6 +7,8 @@ import pandas as pd
 from utils.campaign_features import (
     add_conversion_scaled_clicks_target,
     compute_segment_conv_per_click_rates,
+    export_segment_conv_per_click_rates,
+    load_course_conv_per_click_rates,
 )
 
 
@@ -53,3 +55,31 @@ def test_conv_scaled_clicks_uses_fixed_rates_not_subset_panel():
     out = add_conversion_scaled_clicks_target(tail, rates=rates)
     expected_rate = (10.0 + 10.0 + 0.0) / (100.0 + 100.0 + 100.0)
     assert out.iloc[0]["conv_scaled_clicks"] == 100.0 * expected_rate
+
+
+def test_load_course_conv_per_click_rates_reads_export(monkeypatch, tmp_path):
+    panel = pd.DataFrame(
+        {
+            "region": ["USA", "USA", "A"],
+            "match_types": ["Broad", "Broad", "Phrase; Exact"],
+            "clicks": [100.0, 50.0, 40.0],
+            "all_conv": [10.0, 4.0, 1.0],
+        }
+    )
+    course = "test_course"
+    processed = tmp_path / course / "data" / "processed"
+    processed.mkdir(parents=True)
+    export_segment_conv_per_click_rates(panel, processed / "segment-conv-per-click-rates.csv")
+
+    def _data_paths(course_name: str) -> dict:
+        base = tmp_path / course_name / "data"
+        return {"processed": base / "processed", "gkp": base / "gkp", "cache": base / "cache"}
+
+    monkeypatch.setattr("utils.campaign_features.data_paths", _data_paths)
+
+    rates = load_course_conv_per_click_rates(course)
+    expected = compute_segment_conv_per_click_rates(panel)
+    pd.testing.assert_frame_equal(
+        rates.reset_index(drop=True),
+        expected[["region", "match_types", "conv_per_click"]].reset_index(drop=True),
+    )

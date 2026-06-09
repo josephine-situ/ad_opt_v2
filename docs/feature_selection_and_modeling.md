@@ -12,7 +12,8 @@ This document records how the **default** experiment chose context features, hyp
 
 | Item | Choice |
 |------|--------|
-| **Target** | `conv_scaled_clicks` |
+| **Target** | `conv_scaled_clicks` — `clicks × conv_per_click` per segment, where `conv_per_click = sum(all_conv) / sum(clicks)` over the full campaign-day panel |
+| **Segment conv/click rates** | `data/processed/segment-conv-per-click-rates.csv` (exported by `prepare-data`; read at modeling time) |
 | **Context features** | 10 columns (shipped 20 minus correlated/redundant; see below) |
 | **Optimizer model** | `xgboost` (`optimizer_winner`; fixed in config, not auto-switched from tournament) |
 | **Evaluation model** | `xgboost` (`evaluation.use_ensemble: false`) |

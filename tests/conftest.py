@@ -9,12 +9,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from utils.campaign_features import export_segment_conv_per_click_rates
+
 
 _SYNTHETIC_PANEL_FILES = (
     "campaign-day-panel.csv",
     "campaign-summary.csv",
     "campaign-keyword-sets.csv",
     "kw-day-panel.csv",
+    "segment-conv-per-click-rates.csv",
 )
 
 
@@ -100,11 +103,13 @@ def synthetic_course(tmp_path_factory):
                     "daily_budget": 50.0 + i * 30 + (d.dayofyear % 20),
                     "clicks": max(0, int(5 + i * 3 + d.dayofyear % 7)),
                     "cost": 40.0,
+                    "all_conv": float((d.dayofyear + i) % 5) * 0.1,
                     "keyword_set_id": f"ks_{i}",
                 }
             )
     panel = pd.DataFrame(rows)
     panel.to_csv(base / "campaign-day-panel.csv", index=False)
+    export_segment_conv_per_click_rates(panel, base / "segment-conv-per-click-rates.csv")
 
     summary = panel[
         ["campaign_version", "region", "match_types", "daily_budget", "keyword_set_id"]

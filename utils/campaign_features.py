@@ -20,6 +20,8 @@ from utils.gkp_features import (
     load_gkp_keyword_stats,
 )
 
+SEGMENT_CONV_PER_CLICK_RATES_CSV = "segment-conv-per-click-rates.csv"
+
 EMBED_MODEL_DEFAULT = "sentence-transformers/all-MiniLM-L6-v2"
 COURSE_ANCHORS = [
     "system thinking",
@@ -623,7 +625,7 @@ def compute_segment_conv_per_click_rates(panel: pd.DataFrame) -> pd.DataFrame:
     Course-wide conv/click per (region, match_types) from all rows in ``panel``.
 
     Requires columns: region, match_types, clicks, all_conv.
-    Returns columns: region, match_types, conv_per_click.
+    Returns columns: region, match_types, seg_clicks, seg_conv, conv_per_click.
     """
     work = panel.copy()
     for col in ("region", "match_types", "clicks", "all_conv"):
@@ -652,13 +654,39 @@ def compute_segment_conv_per_click_rates(panel: pd.DataFrame) -> pd.DataFrame:
             f"{bad.to_dict(orient='records')}"
         )
     seg["conv_per_click"] = seg["seg_conv"] / seg["seg_clicks"]
-    return seg[["region", "match_types", "conv_per_click"]]
+    return seg[["region", "match_types", "seg_clicks", "seg_conv", "conv_per_click"]]
+
+
+def segment_conv_per_click_rates_path(course: str) -> Path:
+    return data_paths(course)["processed"] / SEGMENT_CONV_PER_CLICK_RATES_CSV
+
+
+def export_segment_conv_per_click_rates(
+    panel: pd.DataFrame,
+    path: str | Path,
+) -> pd.DataFrame:
+    """Write course-wide segment conv/click rates next to the campaign-day panel."""
+    rates = compute_segment_conv_per_click_rates(panel)
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    rates.to_csv(output_path, index=False)
+    return rates
 
 
 def load_course_conv_per_click_rates(course: str) -> pd.DataFrame:
-    """Fixed conv/click per segment from the full processed campaign-day panel."""
-    panel = load_campaign_day_panel(course)
-    return compute_segment_conv_per_click_rates(panel)
+    """Fixed conv/click per segment from ``segment-conv-per-click-rates.csv``."""
+    path = segment_conv_per_click_rates_path(course)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing {path}; run prepare-data (or generate_campaign_day_panel) "
+            "to export segment conv/click rates."
+        )
+    rates = pd.read_csv(path)
+    required = {"region", "match_types", "conv_per_click"}
+    missing = required - set(rates.columns)
+    if missing:
+        raise ValueError(f"{path} is missing required columns: {sorted(missing)}")
+    return rates[list(required)].copy()
 
 
 def add_conversion_scaled_clicks_target(
@@ -671,8 +699,8 @@ def add_conversion_scaled_clicks_target(
     """
     Add ``clicks * conv_per_click`` using fixed segment rates.
 
-    When ``rates`` is omitted, uses ``course`` (full campaign-day panel) if set,
-    otherwise rates from all rows in ``panel``. Rates do not vary by date.
+    When ``rates`` is omitted, loads fixed rates from ``course``'s exported CSV if set,
+    otherwise computes rates from all rows in ``panel``. Rates do not vary by date.
     """
     out = panel.copy()
     if "clicks" not in out.columns:
