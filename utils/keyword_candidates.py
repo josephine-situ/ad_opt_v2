@@ -16,12 +16,14 @@ from utils.campaign_features import (
     anchor_matrix,
     _pairwise_mean_distance,
     add_segment_column,
+    count_unique_keywords_in_set,
     data_paths,
+    keyword_set_content_fingerprint,
     load_campaign_summary,
     load_keyword_sets,
     load_or_build_embeddings,
 )
-from utils.data_processing import join_keyword_field, normalize_keyword
+from utils.data_processing import join_keyword_field
 from utils.keyword_allowlist import (
     allowlist_keys_in_order,
     enrollment_allowlist_keywords,
@@ -86,14 +88,13 @@ def _build_segment_panel_maps(
         if sub.empty:
             continue
         for kw in sub["keyword"].dropna().astype(str):
-            key = normalize_keyword(kw)
-            if not key:
+            if not kw:
                 continue
-            if allowlist is not None and key not in allowlist:
+            if allowlist is not None and kw not in allowlist:
                 continue
-            panel_keys_by_mt[mt].add(key)
-            keys_in_segment.add(key)
-            canonical[key] = kw
+            panel_keys_by_mt[mt].add(kw)
+            keys_in_segment.add(kw)
+            canonical[kw] = kw
 
     return panel_keys_by_mt, canonical, keys_in_segment
 
@@ -201,7 +202,7 @@ def _top_keywords_for_match_type_slice(
     if sub.empty or volume_col not in sub.columns:
         return []
     sub = sub.copy()
-    sub["_kw_key"] = sub["keyword"].astype(str).map(normalize_keyword)
+    sub["_kw_key"] = sub["keyword"].astype(str)
     agg = (
         sub.groupby("_kw_key", as_index=False)
         .agg(
@@ -255,13 +256,12 @@ def _keywords_from_panel_by_match_type(
     allowed = _segment_allowed_match_types(segment_row)
     by_mt: dict[str, list[str]] = {mt: [] for mt in allowed}
     pad_keys = allowlist_keys_ordered or []
-    pad_canon = {normalize_keyword(k): k for k in (enrollment_canonical or [])}
+    pad_canon = {k: k for k in (enrollment_canonical or [])}
 
     for mt in allowed:
         sub = kw_day[(kw_day["region"] == region) & (kw_day["match_type"] == mt)].copy()
         if allowed_keywords:
-            sub["_kw_key"] = sub["keyword"].astype(str).map(normalize_keyword)
-            sub = sub[sub["_kw_key"].isin(allowed_keywords)]
+            sub = sub[sub["keyword"].astype(str).isin(allowed_keywords)]
         ranked = _top_keywords_for_match_type_slice(
             sub,
             top_n=top_n,
@@ -271,7 +271,7 @@ def _keywords_from_panel_by_match_type(
         n_ranked = len(ranked)
         padded = 0
         if pad_keys and n_ranked < top_n:
-            seen = {normalize_keyword(k) for k in ranked}
+            seen = set(ranked)
             for key in pad_keys:
                 if key in seen:
                     continue
@@ -311,14 +311,13 @@ def _fill_pool_to_top_n(
     if n_ranked >= top_n:
         return pool[:top_n]
 
-    seen = {normalize_keyword(k) for k in pool}
-    canonical = {normalize_keyword(k): k for k in enrollment_canonical}
+    seen = set(pool)
     out = list(pool)
     padded = 0
     for key in allowlist_ranked:
         if key in seen:
             continue
-        out.append(canonical.get(key, key))
+        out.append(key)
         seen.add(key)
         padded += 1
         if len(out) >= top_n:
@@ -410,24 +409,37 @@ def _union_keywords_from_match_types(by_mt: dict[str, list[str]]) -> list[str]:
     out: list[str] = []
     for mt in ("Broad", "Phrase", "Exact"):
         for kw in by_mt.get(mt, []):
-            key = normalize_keyword(kw)
-            if key not in seen:
-                seen.add(key)
+            if kw and kw not in seen:
+                seen.add(kw)
                 out.append(kw)
     return sorted(out)
 
 
+def _dedupe_keywords_preserve_order(keywords: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for kw in keywords:
+        if kw and kw not in seen:
+            seen.add(kw)
+            out.append(kw)
+    return out
+
+
 def _match_type_lists_to_columns(by_mt: dict[str, list[str]], *, positive_col: str) -> dict[str, str]:
-    cols = {
-        MATCH_TYPE_COLS[mt]: join_keyword_field(by_mt.get(mt, []))
+    deduped_mt = {
+        mt: _dedupe_keywords_preserve_order(by_mt.get(mt, []))
         for mt in ("Broad", "Phrase", "Exact")
     }
-    cols[positive_col] = join_keyword_field(_union_keywords_from_match_types(by_mt))
+    cols = {
+        MATCH_TYPE_COLS[mt]: join_keyword_field(deduped_mt.get(mt, []))
+        for mt in ("Broad", "Phrase", "Exact")
+    }
+    cols[positive_col] = join_keyword_field(_union_keywords_from_match_types(deduped_mt))
     return cols
 
 
 def _frozenset_union(by_mt: dict[str, list[str]]) -> frozenset[str]:
-    return frozenset(normalize_keyword(k) for ks in by_mt.values() for k in ks if k)
+    return frozenset(k for ks in by_mt.values() for k in ks if k)
 
 
 # Re-export for backward compatibility; canonical definition in campaign_features.
@@ -625,13 +637,10 @@ def _select_embedding_keywords_for_pool(
     top_n: int,
     selector,
 ) -> list[str]:
-    canon: dict[str, str] = {}
     pool_lower: list[str] = []
     for k in intersection_pool:
-        kl = normalize_keyword(k)
-        if kl in emb_map:
-            canon[kl] = k
-            pool_lower.append(kl)
+        if k in emb_map:
+            pool_lower.append(k)
     if not pool_lower:
         return []
     selected_lower = selector(
@@ -640,7 +649,7 @@ def _select_embedding_keywords_for_pool(
         anchor_matrix,
         set_size=min(top_n, len(pool_lower)),
     )
-    return [canon[kw] for kw in selected_lower]
+    return [k for k in selected_lower]
 
 
 def _apply_embedding_variant_by_match_type(
@@ -702,11 +711,27 @@ def _apply_embedding_variant_by_match_type(
     return by_mt
 
 
-def _target_set_size(summary: pd.DataFrame, segment: str, *, top_n: int, fallback: int) -> int:
+def _target_set_size(
+    summary: pd.DataFrame,
+    segment: str,
+    keyword_sets: pd.DataFrame,
+    *,
+    top_n: int,
+    fallback: int,
+    positive_col: str = "positive_keywords",
+) -> int:
     seg = summary[summary["segment"] == segment]
-    if "num_unique_keywords" in seg.columns and seg["num_unique_keywords"].notna().any():
-        size = int(seg["num_unique_keywords"].median())
-        return max(5, min(size, top_n))
+    set_ids = seg["keyword_set_id"].dropna().astype(str).unique()
+    ks = keyword_sets[keyword_sets["keyword_set_id"].astype(str).isin(set_ids)]
+    if not ks.empty:
+        sizes = ks.drop_duplicates("keyword_set_id").apply(
+            lambda row: count_unique_keywords_in_set(row, positive_col=positive_col),
+            axis=1,
+        )
+        positive = sizes[sizes > 0]
+        if not positive.empty:
+            size = int(positive.median())
+            return max(5, min(size, top_n))
     return fallback
 
 
@@ -831,6 +856,12 @@ def build_segment_candidates(
     hist_df = pd.DataFrame(hist_rows)
     existing_ids = set(keyword_sets["keyword_set_id"].astype(str))
 
+    fingerprint_to_id: dict[frozenset[str], str] = {}
+    for _, ks_row in keyword_sets.iterrows():
+        fp = keyword_set_content_fingerprint(ks_row, positive_col=positive_col)
+        if fp:
+            fingerprint_to_id.setdefault(fp, str(ks_row["keyword_set_id"]))
+
     synthetic_sets: list[dict] = []
     synth_cand: list[dict] = []
     synth_idx = 0
@@ -867,16 +898,29 @@ def build_segment_candidates(
                 f"allowlist size {len(allowed_keywords)}; pools from all campaigns in region)"
             )
 
-            segment_seen: set[frozenset[str]] = set()
             any_pool = bool(keys_in_segment) or bool(allowlist_keys_ordered)
 
-            def _emit_allowlist(by_mt: dict[str, list[str]], suffix: str, source: str) -> None:
+            def _emit_synthetic_set(
+                by_mt: dict[str, list[str]],
+                suffix: str,
+                source: str,
+            ) -> None:
                 nonlocal synth_idx, any_pool
-                key = _frozenset_union(by_mt)
-                if not key or key in segment_seen:
+                fp = _frozenset_union(by_mt)
+                if not fp:
                     return
-                segment_seen.add(key)
                 any_pool = True
+                if fp in fingerprint_to_id:
+                    synth_cand.append(
+                        {
+                            "segment": segment,
+                            "region": row["region"],
+                            "match_types": row["match_types"],
+                            "keyword_set_id": fingerprint_to_id[fp],
+                            "source": source,
+                        }
+                    )
+                    return
                 synth_idx += 1
                 new_id, synth_idx = _next_synthetic_id(
                     segment,
@@ -895,6 +939,10 @@ def build_segment_candidates(
                     source=source,
                     positive_col=positive_col,
                 )
+                fingerprint_to_id[fp] = new_id
+
+            def _emit_allowlist(by_mt: dict[str, list[str]], suffix: str, source: str) -> None:
+                _emit_synthetic_set(by_mt, suffix, source)
 
             if include_allowlist_synthetic and allowed_keywords and not multi_top_n:
                 allow_cap = len(allowlist_keys_ordered) or 1
@@ -953,24 +1001,7 @@ def build_segment_candidates(
                 )
 
                 if include_top_conv_synthetic:
-                    synth_idx += 1
-                    new_id, synth_idx = _next_synthetic_id(
-                        segment,
-                        conv_suffix,
-                        synthetic_prefix=synthetic_prefix,
-                        synth_idx=synth_idx,
-                        existing_ids=existing_ids,
-                    )
-                    _append_synthetic_set(
-                        synthetic_sets=synthetic_sets,
-                        synth_cand=synth_cand,
-                        segment=segment,
-                        row=row,
-                        new_id=new_id,
-                        by_match_type=pool_by_mt,
-                        source=conv_source,
-                        positive_col=positive_col,
-                    )
+                    _emit_synthetic_set(pool_by_mt, conv_suffix, conv_source)
                     seen_variants.add(_frozenset_union(pool_by_mt))
 
                 if need_embeddings and (keys_in_segment or allowlist_keys_ordered):
@@ -1065,24 +1096,7 @@ def build_segment_candidates(
                     for suffix, source, variant_by_mt in semantic_variants:
                         if not _is_distinct_variant_mt(variant_by_mt, pool_by_mt, seen_variants):
                             continue
-                        synth_idx += 1
-                        new_id, synth_idx = _next_synthetic_id(
-                            segment,
-                            suffix,
-                            synthetic_prefix=synthetic_prefix,
-                            synth_idx=synth_idx,
-                            existing_ids=existing_ids,
-                        )
-                        _append_synthetic_set(
-                            synthetic_sets=synthetic_sets,
-                            synth_cand=synth_cand,
-                            segment=segment,
-                            row=row,
-                            new_id=new_id,
-                            by_match_type=variant_by_mt,
-                            source=source,
-                            positive_col=positive_col,
-                        )
+                        _emit_synthetic_set(variant_by_mt, suffix, source)
 
             if not any_pool:
                 continue
@@ -1177,7 +1191,7 @@ def verify_segment_keyword_candidates(
                 continue
             for kw in str(ext_row[col]).split(";"):
                 kw = kw.strip()
-                if kw and normalize_keyword(kw) not in allowlist:
+                if kw and kw not in allowlist:
                     issues.append(
                         f"Allowlist violation in {set_id!r} ({col}): {kw!r}"
                     )

@@ -22,6 +22,7 @@ version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "google-ads" },
+    { name = "gurobipy" },
     { name = "holidays" },
     { name = "joblib" },
     { name = "numpy" },
@@ -33,16 +34,14 @@ dependencies = [
     { name = "requests" },
     { name = "scikit-learn" },
     { name = "sentence-transformers" },
+    { name = "shap" },
+    { name = "xgboost" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "black" },
     { name = "pytest" },
-]
-ml = [
-    { name = "shap" },
-    { name = "xgboost" },
 ]
 notebook = [
     { name = "ipykernel" },
@@ -51,15 +50,12 @@ notebook = [
     { name = "seaborn" },
     { name = "statsmodels" },
 ]
-optimization = [
-    { name = "gurobipy" },
-]
 
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
     { name = "google-ads", specifier = ">=29.1.0" },
-    { name = "gurobipy", marker = "extra == 'optimization'", specifier = ">=10.0.1" },
+    { name = "gurobipy", specifier = ">=10.0.1" },
     { name = "holidays", specifier = ">=0.97" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=7.2.0" },
     { name = "joblib", specifier = ">=1.4.0" },
@@ -76,11 +72,11 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.6.0" },
     { name = "seaborn", marker = "extra == 'notebook'", specifier = ">=0.13.2" },
     { name = "sentence-transformers", specifier = ">=3.4.0" },
-    { name = "shap", marker = "extra == 'ml'", specifier = ">=0.46.0" },
+    { name = "shap", specifier = ">=0.46.0" },
     { name = "statsmodels", marker = "extra == 'notebook'", specifier = ">=0.14.6" },
-    { name = "xgboost", marker = "extra == 'ml'", specifier = ">=2.1.0" },
+    { name = "xgboost", specifier = ">=2.1.0" },
 ]
-provides-extras = ["ml", "optimization", "notebook", "dev"]
+provides-extras = ["notebook", "dev"]
 
 [[package]]
 name = "annotated-doc"

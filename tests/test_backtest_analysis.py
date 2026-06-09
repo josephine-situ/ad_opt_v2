@@ -66,22 +66,20 @@ def test_compile_and_summarize_from_plan_vs_actual(tmp_path: Path):
     assert actual_row["Conversions USA"] == pytest.approx(1.0)
 
 
-def test_summarize_prefers_raw_lift_totals():
+def test_summarize_uses_pred_lift_totals():
     eval_df = pd.DataFrame(
         {
             "Day": ["2025-01-01", "2025-01-02"],
             "pred_lift_total": [1.0, 1.0],
-            "pred_lift_raw_total": [2.0, 4.0],
-            "actual_model_lift_total": [0.0, 0.0],
-            "actual_model_lift_raw_total": [-1.0, -3.0],
+            "actual_model_lift_total": [0.5, 0.5],
             "opt_budget_total": [100.0, 100.0],
             "act_budget_total": [90.0, 90.0],
         }
     )
     summary = summarize_performance(eval_df, target="clicks")
-    assert summary.loc[summary["scenario"] == "Model", "conversions"].iloc[0] == 3.0
-    assert summary.loc[summary["scenario"] == "Actual", "conversions"].iloc[0] == -2.0
-    assert summary["lift_source"].iloc[0] == "raw"
+    assert summary.loc[summary["scenario"] == "Model", "conversions"].iloc[0] == 1.0
+    assert summary.loc[summary["scenario"] == "Actual", "conversions"].iloc[0] == 0.5
+    assert "lift_source" not in summary.columns
 
 
 def test_compile_empty_summary_falls_back_to_campaign_plans(tmp_path: Path):

@@ -358,15 +358,6 @@ def regional_breakdown(
     return pd.DataFrame(rows)
 
 
-def _daily_lift_total_column(df: pd.DataFrame, clipped_col: str, raw_col: str) -> str:
-    """Prefer signed daily totals when present (clipped totals are often ~0 for market rows)."""
-    if raw_col in df.columns:
-        raw = pd.to_numeric(df[raw_col], errors="coerce")
-        if raw.notna().any():
-            return raw_col
-    return clipped_col
-
-
 def summarize_performance(
     eval_df: pd.DataFrame,
     *,
@@ -386,13 +377,8 @@ def summarize_performance(
             return 0.0, 0.0
         return float(s.mean()), float(s.sem()) if len(s) > 1 else 0.0
 
-    model_lift_col = _daily_lift_total_column(df, "pred_lift_total", "pred_lift_raw_total")
-    actual_lift_col = _daily_lift_total_column(
-        df, "actual_model_lift_total", "actual_model_lift_raw_total"
-    )
-
-    model_conv_m, model_conv_se = _mean_se(model_lift_col)
-    actual_conv_m, actual_conv_se = _mean_se(actual_lift_col)
+    model_conv_m, model_conv_se = _mean_se("pred_lift_total")
+    actual_conv_m, actual_conv_se = _mean_se("actual_model_lift_total")
     model_budget_m, model_budget_se = _mean_se("opt_budget_total")
     actual_budget_m, actual_budget_se = _mean_se("act_budget_total")
 
@@ -438,9 +424,6 @@ def summarize_performance(
         },
     ]
     out = pd.DataFrame(rows)
-    out["lift_source"] = (
-        "raw" if actual_lift_col.endswith("_raw_total") or model_lift_col.endswith("_raw_total") else "clipped"
-    )
     if "rmse_pred_vs_actual_model_lift" in df.columns:
         out["mean_rmse_model_vs_actual"] = float(
             pd.to_numeric(df["rmse_pred_vs_actual_model_lift"], errors="coerce").mean()

@@ -4,12 +4,12 @@
   "end": "2026-05-25",
   "n_days": 14,
   "fixed_keyword_sets": {
-    "A / Broad": "synthetic_A_Broad_allowlist_n10_1",
+    "A / Broad": "synthetic_A_Broad_semantic_n10_3",
     "A / Phrase; Exact": "ks_0005",
-    "B / Broad": "synthetic_B_Broad_top_conv_n10_11",
-    "B / Phrase; Exact": "synthetic_B_Phrase; Exact_semantic_n20_39",
+    "B / Broad": "synthetic_B_Broad_top_conv_n20_14",
+    "B / Phrase; Exact": "ks_0017",
     "USA / Broad": "synthetic_USA_Broad_allowlist_n10_45",
-    "USA / Phrase; Exact": "synthetic_USA_Phrase; Exact_semantic_n40_66"
+    "USA / Phrase; Exact": "ks_0025"
   },
   "budget_mode": "actual",
   "mean_rmse_model_lift": null,
