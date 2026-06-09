@@ -856,11 +856,21 @@ def build_segment_candidates(
     hist_df = pd.DataFrame(hist_rows)
     existing_ids = set(keyword_sets["keyword_set_id"].astype(str))
 
-    fingerprint_to_id: dict[frozenset[str], str] = {}
+    set_id_region: dict[str, str] = {}
+    for segment, grp in summary.groupby("segment", sort=False):
+        region = str(grp["region"].iloc[0])
+        for set_id in grp["keyword_set_id"].dropna().unique():
+            set_id_region.setdefault(str(set_id), region)
+
+    fingerprint_to_id: dict[tuple[str, frozenset[str]], str] = {}
     for _, ks_row in keyword_sets.iterrows():
         fp = keyword_set_content_fingerprint(ks_row, positive_col=positive_col)
-        if fp:
-            fingerprint_to_id.setdefault(fp, str(ks_row["keyword_set_id"]))
+        if not fp:
+            continue
+        set_id = str(ks_row["keyword_set_id"])
+        region = set_id_region.get(set_id)
+        if region:
+            fingerprint_to_id.setdefault((region, fp), set_id)
 
     synthetic_sets: list[dict] = []
     synth_cand: list[dict] = []
@@ -910,13 +920,14 @@ def build_segment_candidates(
                 if not fp:
                     return
                 any_pool = True
-                if fp in fingerprint_to_id:
+                fp_key = (str(row["region"]), fp)
+                if fp_key in fingerprint_to_id:
                     synth_cand.append(
                         {
                             "segment": segment,
                             "region": row["region"],
                             "match_types": row["match_types"],
-                            "keyword_set_id": fingerprint_to_id[fp],
+                            "keyword_set_id": fingerprint_to_id[fp_key],
                             "source": source,
                         }
                     )
@@ -939,7 +950,7 @@ def build_segment_candidates(
                     source=source,
                     positive_col=positive_col,
                 )
-                fingerprint_to_id[fp] = new_id
+                fingerprint_to_id[fp_key] = new_id
 
             def _emit_allowlist(by_mt: dict[str, list[str]], suffix: str, source: str) -> None:
                 _emit_synthetic_set(by_mt, suffix, source)

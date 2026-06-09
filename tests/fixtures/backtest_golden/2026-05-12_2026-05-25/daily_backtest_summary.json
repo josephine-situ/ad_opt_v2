@@ -6,14 +6,14 @@
   "fixed_keyword_sets": {
     "A / Broad": "synthetic_A_Broad_allowlist_n10_1",
     "A / Phrase; Exact": "ks_0005",
-    "B / Broad": "synthetic_B_Broad_top_conv_n10_11",
-    "B / Phrase; Exact": "synthetic_B_Phrase; Exact_semantic_n20_39",
-    "USA / Broad": "synthetic_USA_Broad_allowlist_n10_45",
-    "USA / Phrase; Exact": "synthetic_USA_Phrase; Exact_semantic_n40_66"
+    "B / Broad": "synthetic_B_Broad_top_conv_n20_10",
+    "B / Phrase; Exact": "synthetic_B_Phrase; Exact_top_conv_n40_36",
+    "USA / Broad": "synthetic_USA_Broad_allowlist_n10_37",
+    "USA / Phrase; Exact": "synthetic_USA_Phrase; Exact_top_conv_n40_54"
   },
   "budget_mode": "actual",
   "mean_rmse_model_lift": null,
-  "mean_holdout_r2": -2.54238299277701,
-  "mean_holdout_rmse": 0.2581069163459681,
-  "mean_plan_budget_total": 362.0507142857142
+  "mean_holdout_r2": -2.542161115830725,
+  "mean_holdout_rmse": 0.258079495607335,
+  "mean_plan_budget_total": 362.91285714285704
 }

@@ -18,67 +18,55 @@ USA / Phrase; Exact,ks_0024,historical,ks_0024.csv
 USA / Phrase; Exact,ks_0025,historical,ks_0025.csv
 A / Broad,synthetic_A_Broad_allowlist_n10_1,synthetic_allowlist_n10,synthetic_A_Broad_allowlist_n10_1.csv
 A / Broad,synthetic_A_Broad_top_conv_n10_2,synthetic_top_conv_n10,synthetic_A_Broad_top_conv_n10_2.csv
-A / Broad,synthetic_A_Broad_semantic_n10_3,synthetic_semantic_n10,synthetic_A_Broad_semantic_n10_3.csv
-A / Broad,synthetic_A_Broad_allowlist_n20_4,synthetic_allowlist_n20,synthetic_A_Broad_allowlist_n20_4.csv
-A / Broad,synthetic_A_Broad_top_conv_n20_5,synthetic_top_conv_n20,synthetic_A_Broad_top_conv_n20_5.csv
-A / Broad,synthetic_A_Broad_semantic_n20_6,synthetic_semantic_n20,synthetic_A_Broad_semantic_n20_6.csv
-A / Broad,synthetic_A_Broad_allowlist_n40_7,synthetic_allowlist_n40,synthetic_A_Broad_allowlist_n40_7.csv
-A / Broad,synthetic_A_Broad_top_conv_n40_8,synthetic_top_conv_n40,synthetic_A_Broad_top_conv_n40_8.csv
-A / Broad,synthetic_A_Broad_semantic_n40_9,synthetic_semantic_n40,synthetic_A_Broad_semantic_n40_9.csv
-B / Broad,synthetic_B_Broad_allowlist_n10_10,synthetic_allowlist_n10,synthetic_B_Broad_allowlist_n10_10.csv
-B / Broad,synthetic_B_Broad_top_conv_n10_11,synthetic_top_conv_n10,synthetic_B_Broad_top_conv_n10_11.csv
-B / Broad,synthetic_B_Broad_semantic_n10_12,synthetic_semantic_n10,synthetic_B_Broad_semantic_n10_12.csv
-B / Broad,synthetic_B_Broad_allowlist_n20_13,synthetic_allowlist_n20,synthetic_B_Broad_allowlist_n20_13.csv
-B / Broad,synthetic_B_Broad_top_conv_n20_14,synthetic_top_conv_n20,synthetic_B_Broad_top_conv_n20_14.csv
-B / Broad,synthetic_B_Broad_semantic_n20_15,synthetic_semantic_n20,synthetic_B_Broad_semantic_n20_15.csv
-B / Broad,synthetic_B_Broad_allowlist_n40_16,synthetic_allowlist_n40,synthetic_B_Broad_allowlist_n40_16.csv
-B / Broad,synthetic_B_Broad_top_conv_n40_17,synthetic_top_conv_n40,synthetic_B_Broad_top_conv_n40_17.csv
-B / Broad,synthetic_B_Broad_semantic_n40_18,synthetic_semantic_n40,synthetic_B_Broad_semantic_n40_18.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_n10_19,synthetic_allowlist_n10,synthetic_A_Phrase; Exact_allowlist_n10_19.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_n10_20,synthetic_top_conv_n10,synthetic_A_Phrase; Exact_top_conv_n10_20.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_semantic_n10_21,synthetic_semantic_n10,synthetic_A_Phrase; Exact_semantic_n10_21.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_dispersion_n10_22,synthetic_dispersion_n10,synthetic_A_Phrase; Exact_dispersion_n10_22.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_composite_n10_23,synthetic_composite_n10,synthetic_A_Phrase; Exact_composite_n10_23.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_n20_24,synthetic_allowlist_n20,synthetic_A_Phrase; Exact_allowlist_n20_24.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_n20_25,synthetic_top_conv_n20,synthetic_A_Phrase; Exact_top_conv_n20_25.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_semantic_n20_26,synthetic_semantic_n20,synthetic_A_Phrase; Exact_semantic_n20_26.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_dispersion_n20_27,synthetic_dispersion_n20,synthetic_A_Phrase; Exact_dispersion_n20_27.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_composite_n20_28,synthetic_composite_n20,synthetic_A_Phrase; Exact_composite_n20_28.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_n40_29,synthetic_allowlist_n40,synthetic_A_Phrase; Exact_allowlist_n40_29.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_n40_30,synthetic_top_conv_n40,synthetic_A_Phrase; Exact_top_conv_n40_30.csv
-A / Phrase; Exact,synthetic_A_Phrase; Exact_semantic_n40_31,synthetic_semantic_n40,synthetic_A_Phrase; Exact_semantic_n40_31.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_n10_32,synthetic_allowlist_n10,synthetic_B_Phrase; Exact_allowlist_n10_32.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_n10_33,synthetic_top_conv_n10,synthetic_B_Phrase; Exact_top_conv_n10_33.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_semantic_n10_34,synthetic_semantic_n10,synthetic_B_Phrase; Exact_semantic_n10_34.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_dispersion_n10_35,synthetic_dispersion_n10,synthetic_B_Phrase; Exact_dispersion_n10_35.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_composite_n10_36,synthetic_composite_n10,synthetic_B_Phrase; Exact_composite_n10_36.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_n20_37,synthetic_allowlist_n20,synthetic_B_Phrase; Exact_allowlist_n20_37.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_n20_38,synthetic_top_conv_n20,synthetic_B_Phrase; Exact_top_conv_n20_38.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_semantic_n20_39,synthetic_semantic_n20,synthetic_B_Phrase; Exact_semantic_n20_39.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_dispersion_n20_40,synthetic_dispersion_n20,synthetic_B_Phrase; Exact_dispersion_n20_40.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_composite_n20_41,synthetic_composite_n20,synthetic_B_Phrase; Exact_composite_n20_41.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_n40_42,synthetic_allowlist_n40,synthetic_B_Phrase; Exact_allowlist_n40_42.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_n40_43,synthetic_top_conv_n40,synthetic_B_Phrase; Exact_top_conv_n40_43.csv
-B / Phrase; Exact,synthetic_B_Phrase; Exact_semantic_n40_44,synthetic_semantic_n40,synthetic_B_Phrase; Exact_semantic_n40_44.csv
-USA / Broad,synthetic_USA_Broad_allowlist_n10_45,synthetic_allowlist_n10,synthetic_USA_Broad_allowlist_n10_45.csv
-USA / Broad,synthetic_USA_Broad_top_conv_n10_46,synthetic_top_conv_n10,synthetic_USA_Broad_top_conv_n10_46.csv
-USA / Broad,synthetic_USA_Broad_semantic_n10_47,synthetic_semantic_n10,synthetic_USA_Broad_semantic_n10_47.csv
-USA / Broad,synthetic_USA_Broad_allowlist_n20_48,synthetic_allowlist_n20,synthetic_USA_Broad_allowlist_n20_48.csv
-USA / Broad,synthetic_USA_Broad_top_conv_n20_49,synthetic_top_conv_n20,synthetic_USA_Broad_top_conv_n20_49.csv
-USA / Broad,synthetic_USA_Broad_semantic_n20_50,synthetic_semantic_n20,synthetic_USA_Broad_semantic_n20_50.csv
-USA / Broad,synthetic_USA_Broad_allowlist_n40_51,synthetic_allowlist_n40,synthetic_USA_Broad_allowlist_n40_51.csv
-USA / Broad,synthetic_USA_Broad_top_conv_n40_52,synthetic_top_conv_n40,synthetic_USA_Broad_top_conv_n40_52.csv
-USA / Broad,synthetic_USA_Broad_semantic_n40_53,synthetic_semantic_n40,synthetic_USA_Broad_semantic_n40_53.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_n10_54,synthetic_allowlist_n10,synthetic_USA_Phrase; Exact_allowlist_n10_54.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_n10_55,synthetic_top_conv_n10,synthetic_USA_Phrase; Exact_top_conv_n10_55.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_semantic_n10_56,synthetic_semantic_n10,synthetic_USA_Phrase; Exact_semantic_n10_56.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_dispersion_n10_57,synthetic_dispersion_n10,synthetic_USA_Phrase; Exact_dispersion_n10_57.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_composite_n10_58,synthetic_composite_n10,synthetic_USA_Phrase; Exact_composite_n10_58.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_n20_59,synthetic_allowlist_n20,synthetic_USA_Phrase; Exact_allowlist_n20_59.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_n20_60,synthetic_top_conv_n20,synthetic_USA_Phrase; Exact_top_conv_n20_60.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_semantic_n20_61,synthetic_semantic_n20,synthetic_USA_Phrase; Exact_semantic_n20_61.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_dispersion_n20_62,synthetic_dispersion_n20,synthetic_USA_Phrase; Exact_dispersion_n20_62.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_composite_n20_63,synthetic_composite_n20,synthetic_USA_Phrase; Exact_composite_n20_63.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_n40_64,synthetic_allowlist_n40,synthetic_USA_Phrase; Exact_allowlist_n40_64.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_n40_65,synthetic_top_conv_n40,synthetic_USA_Phrase; Exact_top_conv_n40_65.csv
-USA / Phrase; Exact,synthetic_USA_Phrase; Exact_semantic_n40_66,synthetic_semantic_n40,synthetic_USA_Phrase; Exact_semantic_n40_66.csv
+A / Broad,synthetic_A_Broad_allowlist_n20_3,synthetic_allowlist_n20,synthetic_A_Broad_allowlist_n20_3.csv
+A / Broad,synthetic_A_Broad_top_conv_n20_4,synthetic_top_conv_n20,synthetic_A_Broad_top_conv_n20_4.csv
+A / Broad,synthetic_A_Broad_allowlist_n40_5,synthetic_allowlist_n40,synthetic_A_Broad_allowlist_n40_5.csv
+A / Broad,synthetic_A_Broad_top_conv_n40_6,synthetic_top_conv_n40,synthetic_A_Broad_top_conv_n40_6.csv
+B / Broad,synthetic_B_Broad_allowlist_n10_7,synthetic_allowlist_n10,synthetic_B_Broad_allowlist_n10_7.csv
+B / Broad,synthetic_B_Broad_top_conv_n10_8,synthetic_top_conv_n10,synthetic_B_Broad_top_conv_n10_8.csv
+B / Broad,synthetic_B_Broad_allowlist_n20_9,synthetic_allowlist_n20,synthetic_B_Broad_allowlist_n20_9.csv
+B / Broad,synthetic_B_Broad_top_conv_n20_10,synthetic_top_conv_n20,synthetic_B_Broad_top_conv_n20_10.csv
+B / Broad,synthetic_B_Broad_allowlist_n40_11,synthetic_allowlist_n40,synthetic_B_Broad_allowlist_n40_11.csv
+B / Broad,synthetic_B_Broad_top_conv_n40_12,synthetic_top_conv_n40,synthetic_B_Broad_top_conv_n40_12.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_n10_13,synthetic_allowlist_n10,synthetic_A_Phrase; Exact_allowlist_n10_13.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_n10_14,synthetic_top_conv_n10,synthetic_A_Phrase; Exact_top_conv_n10_14.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_semantic_n10_15,synthetic_semantic_n10,synthetic_A_Phrase; Exact_semantic_n10_15.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_dispersion_n10_16,synthetic_dispersion_n10,synthetic_A_Phrase; Exact_dispersion_n10_16.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_composite_n10_17,synthetic_composite_n10,synthetic_A_Phrase; Exact_composite_n10_17.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_n20_18,synthetic_allowlist_n20,synthetic_A_Phrase; Exact_allowlist_n20_18.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_n20_19,synthetic_top_conv_n20,synthetic_A_Phrase; Exact_top_conv_n20_19.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_semantic_n20_20,synthetic_semantic_n20,synthetic_A_Phrase; Exact_semantic_n20_20.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_dispersion_n20_21,synthetic_dispersion_n20,synthetic_A_Phrase; Exact_dispersion_n20_21.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_composite_n20_22,synthetic_composite_n20,synthetic_A_Phrase; Exact_composite_n20_22.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_allowlist_n40_23,synthetic_allowlist_n40,synthetic_A_Phrase; Exact_allowlist_n40_23.csv
+A / Phrase; Exact,synthetic_A_Phrase; Exact_top_conv_n40_24,synthetic_top_conv_n40,synthetic_A_Phrase; Exact_top_conv_n40_24.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_n10_25,synthetic_allowlist_n10,synthetic_B_Phrase; Exact_allowlist_n10_25.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_n10_26,synthetic_top_conv_n10,synthetic_B_Phrase; Exact_top_conv_n10_26.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_semantic_n10_27,synthetic_semantic_n10,synthetic_B_Phrase; Exact_semantic_n10_27.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_dispersion_n10_28,synthetic_dispersion_n10,synthetic_B_Phrase; Exact_dispersion_n10_28.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_composite_n10_29,synthetic_composite_n10,synthetic_B_Phrase; Exact_composite_n10_29.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_n20_30,synthetic_allowlist_n20,synthetic_B_Phrase; Exact_allowlist_n20_30.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_n20_31,synthetic_top_conv_n20,synthetic_B_Phrase; Exact_top_conv_n20_31.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_semantic_n20_32,synthetic_semantic_n20,synthetic_B_Phrase; Exact_semantic_n20_32.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_dispersion_n20_33,synthetic_dispersion_n20,synthetic_B_Phrase; Exact_dispersion_n20_33.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_composite_n20_34,synthetic_composite_n20,synthetic_B_Phrase; Exact_composite_n20_34.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_allowlist_n40_35,synthetic_allowlist_n40,synthetic_B_Phrase; Exact_allowlist_n40_35.csv
+B / Phrase; Exact,synthetic_B_Phrase; Exact_top_conv_n40_36,synthetic_top_conv_n40,synthetic_B_Phrase; Exact_top_conv_n40_36.csv
+USA / Broad,synthetic_USA_Broad_allowlist_n10_37,synthetic_allowlist_n10,synthetic_USA_Broad_allowlist_n10_37.csv
+USA / Broad,synthetic_USA_Broad_top_conv_n10_38,synthetic_top_conv_n10,synthetic_USA_Broad_top_conv_n10_38.csv
+USA / Broad,synthetic_USA_Broad_allowlist_n20_39,synthetic_allowlist_n20,synthetic_USA_Broad_allowlist_n20_39.csv
+USA / Broad,synthetic_USA_Broad_top_conv_n20_40,synthetic_top_conv_n20,synthetic_USA_Broad_top_conv_n20_40.csv
+USA / Broad,synthetic_USA_Broad_allowlist_n40_41,synthetic_allowlist_n40,synthetic_USA_Broad_allowlist_n40_41.csv
+USA / Broad,synthetic_USA_Broad_top_conv_n40_42,synthetic_top_conv_n40,synthetic_USA_Broad_top_conv_n40_42.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_n10_43,synthetic_allowlist_n10,synthetic_USA_Phrase; Exact_allowlist_n10_43.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_n10_44,synthetic_top_conv_n10,synthetic_USA_Phrase; Exact_top_conv_n10_44.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_semantic_n10_45,synthetic_semantic_n10,synthetic_USA_Phrase; Exact_semantic_n10_45.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_dispersion_n10_46,synthetic_dispersion_n10,synthetic_USA_Phrase; Exact_dispersion_n10_46.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_composite_n10_47,synthetic_composite_n10,synthetic_USA_Phrase; Exact_composite_n10_47.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_n20_48,synthetic_allowlist_n20,synthetic_USA_Phrase; Exact_allowlist_n20_48.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_n20_49,synthetic_top_conv_n20,synthetic_USA_Phrase; Exact_top_conv_n20_49.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_semantic_n20_50,synthetic_semantic_n20,synthetic_USA_Phrase; Exact_semantic_n20_50.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_dispersion_n20_51,synthetic_dispersion_n20,synthetic_USA_Phrase; Exact_dispersion_n20_51.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_composite_n20_52,synthetic_composite_n20,synthetic_USA_Phrase; Exact_composite_n20_52.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_allowlist_n40_53,synthetic_allowlist_n40,synthetic_USA_Phrase; Exact_allowlist_n40_53.csv
+USA / Phrase; Exact,synthetic_USA_Phrase; Exact_top_conv_n40_54,synthetic_top_conv_n40,synthetic_USA_Phrase; Exact_top_conv_n40_54.csv
