@@ -32,7 +32,7 @@ from utils.keyword_allowlist import (
     load_enrollment_keyword_allowlist,
     load_enrollment_keyword_allowlist_ordered,
 )
-from utils.paths import require_enrollment_allowlist
+from utils.paths import enrollment_allowlist_path, require_enrollment_allowlist
 
 MATCH_TYPE_COLS = {
     "Broad": "broad_keywords",
@@ -1123,6 +1123,35 @@ def build_segment_candidates(
     return candidates, extended
 
 
+def _keyword_candidate_build_input_paths(course: str) -> list[Path]:
+    processed = data_path(course, "processed")
+    paths = [
+        processed / "campaign-summary.csv",
+        processed / "campaign-keyword-sets.csv",
+        processed / "kw-day-panel.csv",
+    ]
+    allowlist = enrollment_allowlist_path(course)
+    if allowlist is not None:
+        paths.append(allowlist)
+    return paths
+
+
+def _segment_keyword_candidates_are_current(course: str) -> bool:
+    processed = data_path(course, "processed")
+    cand_path = processed / "segment-keyword-candidates.csv"
+    ext_path = processed / "campaign-keyword-sets-extended.csv"
+    if not cand_path.is_file() or not ext_path.is_file():
+        return False
+
+    input_mtimes = [p.stat().st_mtime for p in _keyword_candidate_build_input_paths(course) if p.is_file()]
+    if not input_mtimes:
+        return False
+
+    latest_input = max(input_mtimes)
+    output_mtime = min(cand_path.stat().st_mtime, ext_path.stat().st_mtime)
+    return output_mtime >= latest_input
+
+
 def write_segment_keyword_candidate_files(
     course: str,
     candidates: pd.DataFrame,
@@ -1216,13 +1245,18 @@ def ensure_segment_keyword_candidates(
     allowed_match_types: list[str] | None = None,
     excluded_regions: list[str] | None = None,
     top_n_values: tuple[int, ...] | None = None,
+    force_rebuild: bool = False,
 ) -> Path:
-    """Write segment-keyword-candidates and extended sets."""
+    """Return path to segment-keyword-candidates.csv, rebuilding only when stale or missing."""
     require_enrollment_allowlist(course)
     processed = data_path(course, "processed")
     cand_path = processed / "segment-keyword-candidates.csv"
-
     caps = top_n_values if top_n_values is not None else DEFAULT_TOP_N_VALUES
+
+    if not force_rebuild and _segment_keyword_candidates_are_current(course):
+        print(f"[keyword_candidates] Reusing {cand_path} (inputs unchanged)")
+        return cand_path
+
     candidates, extended = build_segment_candidates(
         course,
         top_n_values=list(caps),
