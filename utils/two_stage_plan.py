@@ -3,7 +3,7 @@
 Stage 1 (``select_keyword_sets_for_window``)
     Inputs: ``CampaignOptConfig``, optimizer manifest, modeling panel, keyword
     candidates, campaign panel, window dates, total budget.
-    Outputs: ``fixed_keyword_sets.json``, ``keyword_set_plan.csv`` under
+    Outputs: ``fixed_keyword_sets.json``, ``campaign_plan.csv`` under
     ``output_dir``.
 
 Stage 2 (``optimize_budgets_for_day``)
@@ -78,7 +78,6 @@ def select_keyword_sets_for_window(
 
     with open(output_dir / "fixed_keyword_sets.json", "w", encoding="utf-8") as f:
         json.dump(fixed_keyword_sets, f, indent=2)
-    set_plan.to_csv(output_dir / "keyword_set_plan.csv", index=False)
     return fixed_keyword_sets, set_plan
 
 

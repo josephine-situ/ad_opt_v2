@@ -41,16 +41,17 @@ def _load_fixed_keyword_sets(out_dir: Path) -> dict[str, str]:
         if fixed:
             return fixed
 
-    plan_path = out_dir / "stage1_keyword_sets" / "keyword_set_plan.csv"
-    if plan_path.is_file():
-        set_plan = pd.read_csv(plan_path)
-        fixed = {
-            str(row["segment"]): str(row["keyword_set_id"])
-            for _, row in set_plan.iterrows()
-            if pd.notna(row.get("keyword_set_id"))
-        }
-        if fixed:
-            return fixed
+    for plan_name in ("campaign_plan.csv", "keyword_set_plan.csv"):
+        plan_path = out_dir / "stage1_keyword_sets" / plan_name
+        if plan_path.is_file():
+            set_plan = pd.read_csv(plan_path)
+            fixed = {
+                str(row["segment"]): str(row["keyword_set_id"])
+                for _, row in set_plan.iterrows()
+                if pd.notna(row.get("keyword_set_id"))
+            }
+            if fixed:
+                return fixed
 
     raise FileNotFoundError(
         f"No prior stage-1 keyword sets found under {out_dir}. "
@@ -115,7 +116,11 @@ def run_two_stage_backtest(
         fixed_keyword_sets = _load_fixed_keyword_sets(out_dir)
         src = out_dir / "fixed_keyword_sets.json"
         if not src.is_file():
-            src = out_dir / "stage1_keyword_sets" / "keyword_set_plan.csv"
+            for name in ("campaign_plan.csv", "keyword_set_plan.csv"):
+                candidate = out_dir / "stage1_keyword_sets" / name
+                if candidate.is_file():
+                    src = candidate
+                    break
         print(
             f"  [stage1] Skipped — reusing {len(fixed_keyword_sets)} keyword sets from {src}"
         )

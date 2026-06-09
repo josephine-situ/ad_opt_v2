@@ -28,7 +28,6 @@ TODO.md
 */prod/ridge_embed_coeffs.json
 */prod/campaign_plan.csv
 */prod/solver_status.json
-*/prod/keyword_set_plan.csv
 */prod/two_stage_plan/
 
 */backtests/**/plans/
@@ -61,3 +60,5 @@ SUMMARY.MD
 /data/
 /opt_results/
 */opt_results/
+
+*backtests/

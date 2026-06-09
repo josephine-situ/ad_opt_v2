@@ -171,7 +171,7 @@ Pipeline push is **manual today** (no upload script yet). After each run, apply:
 | **Keywords in each campaign ad group** | `<course>/data/processed/keyword-sets-display/<keyword_set_id>.csv` — columns `Broad`, `Phrase`, `Exact` | After **stage 1** when `fixed_keyword_sets.json` assigns new sets (compare to live ad groups; add, pause, or remove to match) |
 | **Campaign daily budgets** | `<course>/prod/two_stage_plan/stage2_budgets/YYYYMMDD/campaign_plan.csv` — `daily_budget` per `segment` | **Every daily stage-2 run** — one budget per segment (Region × Match Type) → corresponding campaign |
 
-Map each `segment` row (e.g. `USA / Phrase; Exact`) to the campaign for that region and match type. Keyword-set display files are keyed by `keyword_set_id` from `fixed_keyword_sets.json` or `stage1_keyword_sets/keyword_set_plan.csv`.
+Map each `segment` row (e.g. `USA / Phrase; Exact`) to the campaign for that region and match type. Keyword-set display files are keyed by `keyword_set_id` from `fixed_keyword_sets.json` or `stage1_keyword_sets/campaign_plan.csv` (multi-day window plan; same filename as stage 2).
 
 ## What to keep between runs
 
