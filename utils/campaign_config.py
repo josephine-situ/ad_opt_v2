@@ -11,6 +11,7 @@ import yaml
 from utils.paths import DEFAULT_COURSE, REPO_ROOT, course_yaml_path, experiments_dir, prod_dir
 
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "default.yaml"
+DEFAULT_SOLVER_TIME_LIMIT = 600
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -131,6 +132,11 @@ def EvaluationConfig(**kwargs) -> SimpleNamespace:
 
 def MonitoringConfig(**kwargs) -> SimpleNamespace:
     return _to_ns(_deep_merge(_section_defaults("monitoring"), kwargs))
+
+
+def solver_time_limit(config: SimpleNamespace) -> int:
+    """Gurobi TimeLimit (seconds) for MILP solves."""
+    return getattr(config, "solver_time_limit", DEFAULT_SOLVER_TIME_LIMIT)
 
 
 def CampaignOptConfig(course: str = DEFAULT_COURSE, **overrides) -> SimpleNamespace:

@@ -89,4 +89,5 @@ monitoring:
     - 30
 
 debug_write_lp: false
+solver_time_limit: 600
 modeling_lookback_days: null

@@ -1305,7 +1305,7 @@ def solve_tree_embed_multiday_campaign_milp(
     total_budget: float,
     output_dir: Path,
     planning_dates: list[pd.Timestamp],
-    time_limit: int = 100,
+    time_limit: int = 600,
     write_outputs: bool = True,
     fixed_keyword_sets: dict[str, str] | None = None,
     gating_panel: pd.DataFrame | None = None,

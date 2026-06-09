@@ -23,7 +23,7 @@ from utils.modeling import (
     warn_if_not_tournament_winner,
 )
 from utils.evaluation import add_optimizer_plan_columns
-from utils.campaign_config import CampaignOptConfig
+from utils.campaign_config import CampaignOptConfig, solver_time_limit
 from utils.train_specs import get_train_spec
 from utils.campaign_features import build_keyword_set_feature_table
 
@@ -124,6 +124,7 @@ def run_optimizer(
         planning_dates=dates,
         train=train,
         gating_panel=gating_panel,
+        time_limit=solver_time_limit(config),
     )
 
     if backend in _LINEAR_BACKENDS:
@@ -192,6 +193,7 @@ def run_optimizer(
                 write_outputs=write_outputs,
                 fixed_keyword_sets=fixed_keyword_sets,
                 gating_panel=gating_panel,
+                time_limit=milp_kwargs["time_limit"],
             )
             return _finalize_plan(plan, embed_path)
         plan = solve_tree_embed_campaign_milp(
@@ -207,6 +209,7 @@ def run_optimizer(
             fixed_keyword_sets=fixed_keyword_sets,
             fixed_budgets=fixed_budgets,
             gating_panel=gating_panel,
+            time_limit=milp_kwargs["time_limit"],
         )
         return _finalize_plan(plan, embed_path)
     if backend == "ridge_xgb_embed":
@@ -231,6 +234,7 @@ def run_optimizer(
                 write_outputs=write_outputs,
                 fixed_keyword_sets=fixed_keyword_sets,
                 gating_panel=gating_panel,
+                time_limit=milp_kwargs["time_limit"],
             )
             return _finalize_plan(plan, embed_path)
         plan = solve_ridge_xgb_embed_campaign_milp(
@@ -246,6 +250,7 @@ def run_optimizer(
             fixed_keyword_sets=fixed_keyword_sets,
             fixed_budgets=fixed_budgets,
             gating_panel=gating_panel,
+            time_limit=milp_kwargs["time_limit"],
         )
         return _finalize_plan(plan, embed_path)
     raise ValueError(f"Unknown backend: {backend}")
