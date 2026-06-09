@@ -11,9 +11,9 @@
     "USA / Broad": "synthetic_USA_Broad_allowlist_n10_37",
     "USA / Phrase; Exact": "synthetic_USA_Phrase; Exact_top_conv_n40_54"
   },
-  "budget_mode": "actual",
-  "mean_rmse_model_lift": null,
+  "budget_mode": "fixed",
+  "mean_rmse_model_level": null,
   "mean_holdout_r2": -2.542161115830725,
   "mean_holdout_rmse": 0.258079495607335,
-  "mean_plan_budget_total": 362.91285714285704
+  "mean_plan_budget_total": 399.6757142857144
 }

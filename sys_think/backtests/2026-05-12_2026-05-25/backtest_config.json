@@ -4,8 +4,8 @@
   "end_day": "2026-05-25",
   "strategy": "two_stage",
   "target": "conv_scaled_clicks",
-  "budget_mode": "actual",
+  "budget_mode": "fixed",
   "optimizer_winner": "xgboost",
-  "skip_stage1": false,
+  "skip_stage1": true,
   "total_budget": 412.7
 }
