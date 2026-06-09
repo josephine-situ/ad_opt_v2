@@ -460,7 +460,6 @@ def parse_keyword_detail(detail: str) -> tuple[str, str, bool] | None:
     keyword = clean_keyword_text(keyword)
     if not keyword:
         return None
-    keyword = keyword.lower()
     return keyword, match_type, negative
 
 

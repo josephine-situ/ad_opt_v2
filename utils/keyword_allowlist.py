@@ -8,8 +8,8 @@ import pandas as pd
 
 from utils.campaign_features import MATCH_TYPE_LIST_COLS, resolve_positive_keyword_column
 from utils.data_processing import (
+    clean_keyword_text,
     join_keyword_field,
-    normalize_keyword,
     split_keyword_field,
 )
 from utils.paths import require_enrollment_allowlist
@@ -51,7 +51,7 @@ def load_enrollment_keyword_allowlist_ordered(course: str) -> list[str]:
     for row in rows[1:]:
         if not row or not str(row[0]).strip():
             continue
-        kw = normalize_keyword(row[0])
+        kw = clean_keyword_text(row[0])
         if not kw:
             continue
         enroll = 0.0
@@ -107,8 +107,9 @@ def enrollment_allowlist_keywords(
     """
     Full enrollment allowlist as a keyword list for one segment.
 
-    Uses panel spelling when a keyword appears in the segment's region for that match type
-    (from any campaign configuration in the region); otherwise the normalized allowlist text.
+    Uses panel keywords when a keyword appears in the segment's region for that match type
+    (from any campaign configuration in the region); otherwise the allowlist text.
+    Panel and allowlist keywords are cleaned at ingest.
     """
     if not allowlist:
         return []
@@ -126,9 +127,8 @@ def enrollment_allowlist_keywords(
         for mt in allowed_mt:
             sub = kw_day[(kw_day["region"] == region) & (kw_day["match_type"] == mt)]
             for kw in sub["keyword"].dropna().astype(str):
-                key = normalize_keyword(kw)
-                if key in allowlist:
-                    canonical[key] = kw
+                if kw in allowlist:
+                    canonical[kw] = kw
 
     keys_in_order = allowlist_keys_in_order(allowlist, allowlist_order)
 
@@ -141,10 +141,9 @@ def filter_keyword_list(keywords: list[str], allowlist: set[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for kw in keywords:
-        key = normalize_keyword(kw)
-        if key in allowlist and key not in seen:
-            seen.add(key)
-            out.append(kw or key)
+        if kw in allowlist and kw not in seen:
+            seen.add(kw)
+            out.append(kw)
     return out
 
 

@@ -47,10 +47,11 @@ def _clean_campaign(campaign: pd.Series) -> pd.Series:
 
 
 def clean_keyword_text(keyword: object, *, strict: bool = False) -> str | None:
-    """Strip Ads keyword artifacts and collapse internal whitespace.
+    """Canonicalize one keyword token for storage and matching.
 
-    Removes quotes, bracket wrappers, ``+`` broad-match modifiers, and stray apostrophes.
-    When ``strict=True``, rejects non-alphanumeric keywords and returns ``None``.
+    Strips Ads syntax (quotes, brackets, ``+`` modifiers), collapses whitespace,
+    and lowercases. When ``strict=True``, rejects non-ASCII-alphanumeric keywords
+    and returns ``None``.
     """
     if keyword is None or (isinstance(keyword, float) and pd.isna(keyword)):
         return None if strict else ""
@@ -58,7 +59,7 @@ def clean_keyword_text(keyword: object, *, strict: bool = False) -> str | None:
     text = str(keyword).strip()
     for char in ("'", '"', "+", "[", "]"):
         text = text.replace(char, "")
-    text = " ".join(text.split()).strip()
+    text = " ".join(text.split()).strip().lower()
 
     if not text:
         return None if strict else ""
@@ -67,15 +68,10 @@ def clean_keyword_text(keyword: object, *, strict: bool = False) -> str | None:
     return text
 
 
-def clean_keyword_series(keyword: pd.Series, *, lowercase: bool = True) -> pd.Series:
-    """Apply :func:`clean_keyword_text` to each value (vectorized)."""
-    out = keyword.astype("string")
-    for char in ("'", '"', "+", "[", "]"):
-        out = out.str.replace(char, "", regex=False)
-    out = out.str.split().str.join(" ").str.strip()
-    if lowercase:
-        out = out.str.lower()
-    return out
+def clean_keyword_series(keyword: pd.Series) -> pd.Series:
+    """Vectorized :func:`clean_keyword_text` (keeps nulls as null)."""
+    cleaned = keyword.map(clean_keyword_text)
+    return cleaned.astype("string")
 
 
 KEYWORD_SET_LIST_COLUMNS = (
@@ -85,12 +81,6 @@ KEYWORD_SET_LIST_COLUMNS = (
     "phrase_keywords",
     "exact_keywords",
 )
-
-
-def normalize_keyword(keyword: str) -> str:
-    """Normalized key for matching (clean + lowercase)."""
-    text = clean_keyword_text(keyword)
-    return text.lower() if text else ""
 
 
 def split_keyword_field(raw: object) -> list[str]:
@@ -106,7 +96,7 @@ def join_keyword_field(keywords: list[str]) -> str:
 
 
 def clean_keyword_list_field(raw: object) -> str:
-    """Clean each token in a keyword list field and rejoin."""
+    """Clean a semicolon-separated keyword column (split → :func:`clean_keyword_text` each → join)."""
     cleaned = [text for part in split_keyword_field(raw) if (text := clean_keyword_text(part))]
     return join_keyword_field(cleaned)
 
@@ -115,7 +105,12 @@ def clean_keyword_sets_dataframe(
     keyword_sets: pd.DataFrame,
     list_cols: tuple[str, ...] | None = None,
 ) -> pd.DataFrame:
-    """Clean semicolon-separated keyword columns once at load time."""
+    """Clean semicolon-separated keyword columns once at load time.
+
+    Downstream code assumes keyword tokens are already canonical (see
+    :func:`clean_keyword_text`). Ingest boundaries: this helper, ``clean_keyword_series``
+    (kw-day panel), allowlist xlsx load, and change-history parsing.
+    """
     cols = [c for c in (list_cols or KEYWORD_SET_LIST_COLUMNS) if c in keyword_sets.columns]
     if not cols:
         return keyword_sets.copy()

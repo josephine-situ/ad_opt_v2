@@ -8,7 +8,11 @@ import numpy as np
 import pandas as pd
 
 from utils.paths import data_path, gkp_dir, processed_dir
-from utils.data_processing import _extract_region_from_campaign, clean_keyword_sets_dataframe
+from utils.data_processing import (
+    _extract_region_from_campaign,
+    clean_keyword_sets_dataframe,
+    split_keyword_field,
+)
 from utils.date_features import add_calendar_features
 from utils.gkp_features import (
     aggregate_gkp_to_keyword_sets,
@@ -36,6 +40,57 @@ MATCH_TYPE_LIST_COLS = {
     "Phrase": "phrase_keywords",
     "Exact": "exact_keywords",
 }
+
+
+def _keyword_set_row_get(row: pd.Series | dict, col: str):
+    if isinstance(row, dict):
+        return row.get(col)
+    return row[col] if col in row.index else None
+
+
+def keywords_from_keyword_set_row(
+    row: pd.Series | dict,
+    *,
+    positive_col: str = "positive_keywords",
+) -> tuple[str, ...]:
+    """Unique keywords from match-type list columns, else ``positive_col`` (values already cleaned at load)."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    has_mt = False
+    for col in MATCH_TYPE_LIST_COLS.values():
+        raw = _keyword_set_row_get(row, col)
+        if raw is None or (isinstance(raw, float) and pd.isna(raw)) or not str(raw).strip():
+            continue
+        has_mt = True
+        for part in split_keyword_field(raw):
+            if part and part not in seen:
+                seen.add(part)
+                ordered.append(part)
+    if not has_mt:
+        raw = _keyword_set_row_get(row, positive_col)
+        if raw is not None and not (isinstance(raw, float) and pd.isna(raw)):
+            for part in split_keyword_field(raw):
+                if part and part not in seen:
+                    seen.add(part)
+                    ordered.append(part)
+    return tuple(sorted(ordered))
+
+
+def count_unique_keywords_in_set(
+    row: pd.Series | dict,
+    *,
+    positive_col: str = "positive_keywords",
+) -> int:
+    """Count unique keywords in a keyword-set row (historical or synthetic)."""
+    return len(keywords_from_keyword_set_row(row, positive_col=positive_col))
+
+
+def keyword_set_content_fingerprint(
+    row: pd.Series | dict,
+    *,
+    positive_col: str = "positive_keywords",
+) -> frozenset[str]:
+    return frozenset(keywords_from_keyword_set_row(row, positive_col=positive_col))
 
 
 def data_paths(course: str = "sys_think") -> dict[str, Path]:
@@ -271,12 +326,7 @@ def keyword_set_semantic_features(
     rows = []
     for _, row in keyword_sets.iterrows():
         set_id = row["keyword_set_id"]
-        raw = row.get(positive_col, "")
-        keywords = (
-            [k.strip().lower() for k in str(raw).split(";") if k.strip()]
-            if pd.notna(raw)
-            else []
-        )
+        keywords = list(keywords_from_keyword_set_row(row, positive_col=positive_col))
         matched = [emb_map[k] for k in keywords if k in emb_map]
         if not matched:
             rows.append(
@@ -541,16 +591,12 @@ def build_keyword_set_feature_table(course: str) -> pd.DataFrame:
     gkp_kw = load_gkp_keyword_stats(paths["gkp"])
     gkp_set = aggregate_gkp_to_keyword_sets(keyword_sets, gkp_kw, positive_col=positive_col)
 
-    summary = load_campaign_summary(course)
-    if "num_unique_keywords" in summary.columns:
-        counts = summary.groupby("keyword_set_id")["num_unique_keywords"].max().reset_index()
-    elif not sem.empty and "n_positive" in sem.columns:
-        counts = sem[["keyword_set_id", "n_positive"]].rename(
-            columns={"n_positive": "num_unique_keywords"}
-        )
-    else:
-        counts = keyword_sets[["keyword_set_id"]].drop_duplicates().copy()
-        counts["num_unique_keywords"] = 0
+    counts = keyword_sets.drop_duplicates(subset=["keyword_set_id"]).copy()
+    counts["num_unique_keywords"] = counts.apply(
+        lambda row: count_unique_keywords_in_set(row, positive_col=positive_col),
+        axis=1,
+    )
+    counts = counts[["keyword_set_id", "num_unique_keywords"]]
 
     out = (
         sem.merge(gkp_set, on="keyword_set_id", how="left")

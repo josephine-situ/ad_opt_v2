@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from utils.data_processing import clean_keyword_text, normalize_keyword
+from utils.data_processing import clean_keyword_text
 from utils.keyword_allowlist import (
     enrollment_allowlist_keywords,
     filter_keyword_list,
@@ -16,17 +16,17 @@ from utils.keyword_allowlist import (
 from utils.paths import gkp_dir, require_enrollment_allowlist
 
 
-def test_normalize_keyword_strips_brackets():
-    assert normalize_keyword('[mit systems thinking]') == "mit systems thinking"
+def test_clean_keyword_text_strips_brackets():
+    assert clean_keyword_text("[mit systems thinking]") == "mit systems thinking"
 
 
 def test_clean_keyword_text_collapses_whitespace():
     assert clean_keyword_text("system  dynamics") == "system dynamics"
-    assert normalize_keyword("system  thinking  training") == "system thinking training"
+    assert clean_keyword_text("system  thinking  training") == "system thinking training"
 
 
 def test_clean_keyword_text_strips_ads_artifacts():
-    assert clean_keyword_text('[MIT systems thinking]') == "MIT systems thinking"
+    assert clean_keyword_text('[MIT systems thinking]') == "mit systems thinking"
     assert clean_keyword_text('"phrase match"') == "phrase match"
     assert clean_keyword_text("broad +match") == "broad match"
 
@@ -44,11 +44,11 @@ def test_enrollment_allowlist_ordered_collapses_whitespace():
 def test_filter_keyword_list_respects_allowlist():
     allowlist = {"mit systems thinking", "systems thinking course"}
     out = filter_keyword_list(
-        ["MIT systems thinking", "random keyword", "systems thinking course"],
+        ["mit systems thinking", "random keyword", "systems thinking course"],
         allowlist,
     )
     assert len(out) == 2
-    assert normalize_keyword(out[0]) in allowlist
+    assert out[0] in allowlist
 
 
 def test_filter_keyword_sets_dataframe_drops_empty_sets():
@@ -75,17 +75,17 @@ def test_filter_keyword_sets_dataframe_drops_empty_sets():
     assert "other" not in filtered.iloc[0]["broad_keywords"]
 
 
-def test_enrollment_allowlist_keywords_uses_panel_spelling():
+def test_enrollment_allowlist_keywords_uses_panel_keywords():
     allowlist = {"mit systems thinking", "systems thinking course"}
     kw_day = pd.DataFrame(
         [
-            {"region": "B", "match_type": "Broad", "keyword": "MIT systems thinking"},
+            {"region": "B", "match_type": "Broad", "keyword": "mit systems thinking"},
             {"region": "USA", "match_type": "Broad", "keyword": "other"},
         ]
     )
     row = pd.Series({"region": "B", "match_types": "Broad"})
     out = enrollment_allowlist_keywords(allowlist, kw_day, row)
-    assert out == ["MIT systems thinking", "systems thinking course"]
+    assert out == ["mit systems thinking", "systems thinking course"]
 
 
 def test_enrollment_allowlist_keywords_respects_priority_order():
