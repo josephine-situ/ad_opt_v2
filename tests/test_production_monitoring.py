@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from utils.campaign_config import CampaignOptConfig, MonitoringConfig
+from utils.evaluation import compare_saved_plan_to_actual, saved_plan_monitoring_metrics
 from utils.metrics import CampaignOptMonitoringClient
 from utils.production_monitoring import (
     append_daily_metrics,
@@ -150,3 +151,76 @@ def test_plan_path_for_date(tmp_path: Path, monkeypatch):
     )
     path = plan_path_for_date(config, pd.Timestamp("2026-06-08"))
     assert path == tmp_path / "prod" / "two_stage_plan" / "stage2_budgets" / "20260608" / "campaign_plan.csv"
+
+
+def test_compare_saved_plan_to_actual_uses_milp_pred():
+    config = CampaignOptConfig(course="sys_think", target="clicks")
+    plan = pd.DataFrame(
+        {
+            "segment": ["USA / Broad", "USA / Phrase; Exact"],
+            "region": ["USA", "USA"],
+            "daily_budget": [40.0, 60.0],
+            "keyword_set_id": ["ks_a", "ks_b"],
+            "milp_pred": [10.0, 20.0],
+            "external_model_pred": [9.5, 19.5],
+        }
+    )
+    day_df = pd.DataFrame(
+        {
+            "segment": ["USA / Broad", "USA / Phrase; Exact"],
+            "date": pd.Timestamp("2026-06-08"),
+            "daily_budget": [35.0, 55.0],
+            "keyword_set_id": ["ks_a", "ks_b"],
+            "clicks": [8.0, 18.0],
+        }
+    )
+    comp = compare_saved_plan_to_actual(plan, day_df, config)
+    assert list(comp["pred_level"]) == pytest.approx([10.0, 20.0])
+    assert comp["plan_pred_source"].iloc[0] == "milp_pred"
+    assert comp["observed_clicks"].iloc[0] == pytest.approx(26.0)
+    metrics = saved_plan_monitoring_metrics(comp, "clicks")
+    assert metrics["pred_total"] == pytest.approx(30.0)
+    assert metrics["observed_total"] == pytest.approx(26.0)
+
+
+def test_score_production_day_from_saved_plan(tmp_path: Path, monkeypatch):
+    config = CampaignOptConfig(course="sys_think", target="clicks", monitoring=MonitoringConfig())
+    score_date = pd.Timestamp("2026-06-08")
+    plan_dir = tmp_path / "prod" / "two_stage_plan" / "stage2_budgets" / "20260608"
+    plan_dir.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "segment": ["USA / Broad"],
+            "region": ["USA"],
+            "daily_budget": [40.0],
+            "keyword_set_id": ["ks_a"],
+            "milp_pred": [12.0],
+        }
+    ).to_csv(plan_dir / "campaign_plan.csv", index=False)
+
+    day_df = pd.DataFrame(
+        {
+            "segment": ["USA / Broad"],
+            "date": score_date,
+            "daily_budget": [40.0],
+            "keyword_set_id": ["ks_a"],
+            "clicks": [10.0],
+        }
+    )
+
+    monkeypatch.setattr(
+        config,
+        "prod_dir",
+        lambda base=None: tmp_path / "prod" if base is None else Path(base),
+    )
+    monkeypatch.setattr(
+        "utils.production_monitoring.prepare_modeling_data",
+        lambda _config: day_df,
+    )
+
+    row = score_production_day(config, score_date, monitoring_dir=tmp_path / "monitoring")
+    assert row is not None
+    assert row["pred_total"] == pytest.approx(12.0)
+    assert row["observed_total"] == pytest.approx(10.0)
+    assert row["plan_pred_source"] == "milp_pred"
+    assert (tmp_path / "monitoring" / "plan_vs_actual" / "20260608" / "plan_vs_actual.csv").is_file()

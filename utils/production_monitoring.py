@@ -10,14 +10,9 @@ from typing import Any
 import pandas as pd
 
 from utils.campaign_config import CampaignOptConfig
-from utils.campaign_features import build_keyword_set_feature_table
-from utils.evaluation import (
-    compare_plan_and_actual,
-    load_or_fit_evaluation_model,
-    plan_vs_actual_row_metrics,
-)
+from utils.evaluation import compare_saved_plan_to_actual, saved_plan_monitoring_metrics
 from utils.metrics import get_metrics_client
-from utils.modeling_prep import load_planning_inputs, optimizer_manifest_for_backtest, train_before_date
+from utils.modeling_prep import prepare_modeling_data
 from utils.paths import prod_monitoring_dir
 
 
@@ -130,6 +125,7 @@ def format_monitoring_report(row: dict[str, Any]) -> str:
     rmse = row.get("rmse_pred_vs_observed")
     nrmse = row.get("nrmse")
     n_segments = row.get("n_segments", "?")
+    pred_source = row.get("plan_pred_source")
 
     def _fmt(val: Any, digits: int = 1) -> str:
         if val is None or (isinstance(val, float) and not pd.notna(val)):
@@ -137,9 +133,11 @@ def format_monitoring_report(row: dict[str, Any]) -> str:
         return f"{float(val):.{digits}f}"
 
     bias_str = f"{bias:+.1f}%" if bias is not None and pd.notna(bias) else "n/a"
+    source_str = f", pred_source={pred_source}" if pred_source else ""
     return (
         f"[monitoring] {score_date}: observed={_fmt(observed)}, pred={_fmt(pred)}, "
         f"bias={bias_str}, RMSE={_fmt(rmse)}, nRMSE={_fmt(nrmse, 2)}, segments={n_segments}"
+        f"{source_str}"
     )
 
 
@@ -172,9 +170,13 @@ def score_production_day(
         return None
 
     try:
-        df, panel, _candidates = load_planning_inputs(config)
+        df = prepare_modeling_data(config)
     except Exception as exc:
-        print(f"[monitoring] Skip {score_date.date()}: failed to load planning inputs ({exc})")
+        print(f"[monitoring] Skip {score_date.date()}: failed to load modeling panel ({exc})")
+        return None
+
+    if config.target not in df.columns or df[config.target].isna().all():
+        print(f"[monitoring] Skip {score_date.date()}: target={config.target!r} missing in panel")
         return None
 
     holdout = df[pd.to_datetime(df["date"]).dt.normalize() == score_date]
@@ -182,38 +184,15 @@ def score_production_day(
         print(f"[monitoring] Skip {score_date.date()}: no modeling-panel rows")
         return None
 
-    train = train_before_date(df, score_date)
-    min_train = config.model_policy.validation.min_train_rows
-    if len(train) < min_train:
-        print(
-            f"[monitoring] Skip {score_date.date()}: "
-            f"insufficient train rows ({len(train)} < {min_train})"
-        )
-        return None
-
-    try:
-        manifest = optimizer_manifest_for_backtest(config)
-    except FileNotFoundError:
-        print(f"[monitoring] Skip {score_date.date()}: model_manifest.json not found (run fit-models first)")
-        return None
-
-    eval_model = load_or_fit_evaluation_model(config, df, manifest, config.prod_dir())
-    set_features = build_keyword_set_feature_table(config.course)
     plan = pd.read_csv(plan_path)
+    try:
+        comp = compare_saved_plan_to_actual(plan, holdout, config)
+    except ValueError as exc:
+        print(f"[monitoring] Skip {score_date.date()}: {exc}")
+        return None
 
-    comp = compare_plan_and_actual(
-        eval_model,
-        plan,
-        holdout,
-        df,
-        config,
-        score_date,
-        set_features,
-        scoring_panel=train,
-        floor_panel=panel,
-    )
-    if comp.empty:
-        print(f"[monitoring] Skip {score_date.date()}: compare_plan_and_actual returned no rows")
+    if comp.empty or comp["pred_level"].isna().all():
+        print(f"[monitoring] Skip {score_date.date()}: no plan predictions to score")
         return None
 
     out_dir = (monitoring_dir or prod_monitoring_dir(config.course)) / "plan_vs_actual" / score_date.strftime(
@@ -222,12 +201,13 @@ def score_production_day(
     out_dir.mkdir(parents=True, exist_ok=True)
     comp.to_csv(out_dir / "plan_vs_actual.csv", index=False)
 
-    metrics = plan_vs_actual_row_metrics(comp, config.target)
-    plan_rows = comp[comp["row_kind"] == "plan"] if "row_kind" in comp.columns else comp
+    metrics = saved_plan_monitoring_metrics(comp, config.target)
+    pred_source = comp["plan_pred_source"].iloc[0] if "plan_pred_source" in comp.columns else None
     row: dict[str, Any] = {
         "score_date": score_date.date().isoformat(),
         "target": config.target,
-        "n_segments": int(len(plan_rows)),
+        "n_segments": int(len(comp)),
+        "plan_pred_source": pred_source,
         **metrics,
     }
     return row

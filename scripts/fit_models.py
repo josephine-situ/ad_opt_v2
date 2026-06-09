@@ -11,6 +11,7 @@ from utils.feature_artifacts import save_modeling_artifacts
 from utils.modeling_prep import prepare_modeling_data, train_holdout_split
 from utils.modeling import (
     configured_evaluation_model_name,
+    fit_optimizer_winner,
     model_feature_overview_lines,
     print_tournament_metric_summary,
     run_tournament,
@@ -31,6 +32,11 @@ def main() -> None:
         "--skip-evaluation-ensemble",
         action="store_true",
         help="Do not fit/save evaluation ensemble after tournament (default: fit when configured)",
+    )
+    parser.add_argument(
+        "--optimizer-only",
+        action="store_true",
+        help="Fit model_policy.optimizer_winner only (skip tournament)",
     )
     args = parser.parse_args()
 
@@ -63,7 +69,12 @@ def main() -> None:
     artifact_paths = save_modeling_artifacts(exp_dir, config, train, holdout)
     print(f"Saved feature artifacts under {exp_dir / 'features'}")
 
-    winner, metrics_table, manifest = run_tournament(train, holdout, config, export_dir=out_dir)
+    if args.optimizer_only:
+        winner, metrics_table, manifest = fit_optimizer_winner(
+            train, holdout, config, export_dir=out_dir
+        )
+    else:
+        winner, metrics_table, manifest = run_tournament(train, holdout, config, export_dir=out_dir)
     manifest["course"] = config.course
     manifest["feature_artifacts"] = artifact_paths
 
@@ -77,19 +88,26 @@ def main() -> None:
     )
     if winner.cv_r2 is not None:
         print(f"  Winner CV R^2={winner.cv_r2:.4f} (CV RMSE={winner.cv_rmse:.4f})")
-    print_tournament_metric_summary(metrics_table, winner_name=winner.name)
-
-    warn_if_not_tournament_winner(require_optimizer_winner(config), manifest, role="Optimizer")
-    warn_if_not_tournament_winner(
-        configured_evaluation_model_name(config), manifest, role="Evaluation"
+    print_tournament_metric_summary(
+        metrics_table,
+        winner_name=winner.name,
+        optimizer_only=args.optimizer_only,
     )
+
+    if not args.optimizer_only:
+        warn_if_not_tournament_winner(require_optimizer_winner(config), manifest, role="Optimizer")
+        warn_if_not_tournament_winner(
+            configured_evaluation_model_name(config), manifest, role="Evaluation"
+        )
 
     for line in model_feature_overview_lines(
         winner, shap_effects=manifest.get("shap_mean_effects")
     ):
         print(line)
 
-    if not args.skip_evaluation_ensemble:
+    if args.optimizer_only:
+        print("\nSkipped evaluation model (optimizer-only production pipeline).")
+    elif not args.skip_evaluation_ensemble:
         print("\n--- Evaluation model (full panel) ---")
         fit_evaluation_model(config, df, manifest, out_dir)
     else:

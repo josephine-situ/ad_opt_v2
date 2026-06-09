@@ -447,6 +447,78 @@ def observed_by_segment(day_df: pd.DataFrame, target: str) -> pd.DataFrame:
     return day_df.groupby("segment", as_index=False).agg(**cols)
 
 
+def saved_plan_pred_column(plan: pd.DataFrame) -> str:
+    """Column with optimizer predictions saved at plan time (``milp_pred`` preferred)."""
+    for col in ("milp_pred", "external_model_pred"):
+        if col in plan.columns and pd.to_numeric(plan[col], errors="coerce").notna().any():
+            return col
+    raise ValueError("campaign_plan.csv missing milp_pred and external_model_pred")
+
+
+def compare_saved_plan_to_actual(
+    plan: pd.DataFrame,
+    day_df: pd.DataFrame,
+    config: CampaignOptConfig,
+) -> pd.DataFrame:
+    """
+    Score a saved production plan against realized panel outcomes without an evaluation model.
+
+    ``pred_level`` comes from predictions written at plan time; actuals come from the
+    modeling panel for ``day_df``'s calendar date.
+    """
+    target = config.target
+    pred_col = saved_plan_pred_column(plan)
+    out = plan.copy()
+    out["segment"] = out["segment"].astype(str)
+    out["row_kind"] = "plan"
+    out["plan_pred_source"] = pred_col
+    out["pred_level"] = pd.to_numeric(out[pred_col], errors="coerce")
+    if "region" not in out.columns:
+        out["region"] = out["segment"].map(region_of_segment)
+
+    region_actual = region_actual_lookup(day_df)
+    if not region_actual.empty:
+        reg_budget = region_actual.set_index("region")["daily_budget"]
+        reg_kw = region_actual.set_index("region")["keyword_set_id"]
+        out["actual_budget"] = out["segment"].map(
+            lambda s: reg_budget.get(region_of_segment(s), np.nan)
+        )
+        out["actual_keyword_set_id"] = out["segment"].map(
+            lambda s: reg_kw.get(region_of_segment(s), np.nan)
+        )
+
+    obs = observed_by_segment(day_df, target)
+    if not obs.empty:
+        obs_cols = [c for c in obs.columns if c.startswith("observed_")]
+        obs_by_region = obs.assign(
+            region=obs["segment"].astype(str).map(region_of_segment)
+        ).groupby("region", as_index=False)[obs_cols].sum()
+        out = out.merge(obs_by_region, on="region", how="left")
+    return out
+
+
+def saved_plan_monitoring_metrics(comp: pd.DataFrame, target: str) -> dict[str, Any]:
+    """Daily monitoring rollup from :func:`compare_saved_plan_to_actual`."""
+    if comp.empty:
+        return {}
+    mets = metrics_from_comparison(comp, target)
+    obs_col = f"observed_{target}"
+    observed_total = None
+    if obs_col in comp.columns:
+        observed_total = float(pd.to_numeric(comp[obs_col], errors="coerce").sum())
+    act_budget = None
+    if "actual_budget" in comp.columns:
+        act_budget = float(pd.to_numeric(comp["actual_budget"], errors="coerce").sum())
+    out: dict[str, Any] = {
+        "pred_level_total": float(pd.to_numeric(comp["pred_level"], errors="coerce").sum()),
+        "observed_total": observed_total,
+        **mets,
+    }
+    if act_budget is not None:
+        out["act_budget_total"] = act_budget
+    return out
+
+
 def _ensure_region_column(df: pd.DataFrame) -> pd.DataFrame:
     if "region" in df.columns:
         return df

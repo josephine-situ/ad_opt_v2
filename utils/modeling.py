@@ -901,12 +901,34 @@ def resolve_backend(winner: ModelResult) -> str:
     return winner.backend
 
 
+def _format_metric_summary_line(label: str, row: dict[str, float]) -> str:
+    cv_r2 = row.get("cv_r2_levels")
+    ho_r2 = row.get("holdout_r2_levels")
+    cv_rmse = row.get("cv_rmse_levels")
+    ho_rmse = row.get("holdout_rmse_levels")
+    cv_r2_s = f"{cv_r2:.4f}" if cv_r2 is not None else "n/a"
+    ho_r2_s = f"{ho_r2:.4f}" if ho_r2 is not None else "n/a"
+    cv_rmse_s = f"{cv_rmse:.4f}" if cv_rmse is not None else "n/a"
+    ho_rmse_s = f"{ho_rmse:.4f}" if ho_rmse is not None else "n/a"
+    return (
+        f"  {label}: CV RMSE={cv_rmse_s} R^2={cv_r2_s}; "
+        f"holdout RMSE={ho_rmse_s} R^2={ho_r2_s}"
+    )
+
+
 def print_tournament_metric_summary(
     metrics_table: dict[str, dict[str, float]],
     *,
     winner_name: str | None = None,
+    optimizer_only: bool = False,
 ) -> None:
-    """Print holdout / CV $R^2$ for ensemble candidates and the tournament winner."""
+    """Print holdout / CV metrics for fitted models."""
+    if optimizer_only:
+        print("\n--- Optimizer metrics ---")
+        for name, row in metrics_table.items():
+            print(_format_metric_summary_line(name, row))
+        return
+
     print("\n--- Tournament metric summary ---")
     summary_rows = [
         ("ensemble ridge+xgb", "ensemble_ridge_xgb"),
@@ -915,19 +937,9 @@ def print_tournament_metric_summary(
     if "ensemble" in metrics_table:
         summary_rows.insert(0, ("ensemble", "ensemble"))
     for label, key in summary_rows:
-        row = metrics_table.get(key) or {}
-        cv_r2 = row.get("cv_r2_levels")
-        ho_r2 = row.get("holdout_r2_levels")
-        cv_rmse = row.get("cv_rmse_levels")
-        ho_rmse = row.get("holdout_rmse_levels")
-        cv_r2_s = f"{cv_r2:.4f}" if cv_r2 is not None else "n/a"
-        ho_r2_s = f"{ho_r2:.4f}" if ho_r2 is not None else "n/a"
-        cv_rmse_s = f"{cv_rmse:.4f}" if cv_rmse is not None else "n/a"
-        ho_rmse_s = f"{ho_rmse:.4f}" if ho_rmse is not None else "n/a"
-        print(
-            f"  {label}: CV RMSE={cv_rmse_s} R^2={cv_r2_s}; "
-            f"holdout RMSE={ho_rmse_s} R^2={ho_r2_s}"
-        )
+        if key not in metrics_table:
+            continue
+        print(_format_metric_summary_line(label, metrics_table[key]))
     if winner_name:
         row = metrics_table.get(winner_name) or {}
         cv_r2 = row.get("cv_r2_levels")
@@ -950,187 +962,133 @@ def _selection_score(res: ModelResult, config: CampaignOptConfig) -> float:
     return cv_rmse if use_cv and cv_rmse is not None else res.holdout_rmse
 
 
-def run_tournament(
+def _fit_tournament_candidate(
+    name: str,
     train: pd.DataFrame,
     holdout: pd.DataFrame,
     config: CampaignOptConfig,
+    feature_cols: list[str],
     *,
-    run_cv: bool | None = None,
-    export_dir: Path | None = None,
-) -> tuple[ModelResult, dict[str, dict[str, float]], dict[str, Any]]:
-    feature_cols = get_context_feature_columns(config.context_features)
-    results: list[ModelResult] = []
-    metrics_table: dict[str, dict[str, float]] = {}
+    tune: bool,
+    run_cv: bool,
+    n_folds: int,
+    best_hyperparams_all: dict[str, Any],
+    metrics_table: dict[str, dict[str, float]],
+) -> ModelResult:
+    """Fit one tournament candidate and record holdout / CV metrics."""
+    fitter = FITTERS.get(name)
+    if fitter is None and not is_ensemble_candidate(name):
+        raise ValueError(f"Unknown model candidate: {name!r}")
 
-    if run_cv is None:
-        run_cv = config.model_policy.validation.scheme in ("time_series_cv", "cv")
-    val_cfg = config.model_policy.validation
-    n_folds = val_cfg.cv_folds
-    tune = val_cfg.tune_hyperparams
-    best_hyperparams_all: dict[str, dict[str, Any]] = {}
-
-    if run_cv or tune:
-        cv_folds = time_series_cv_folds(train, n_folds, **validation_cv_kwargs(config))
-        n_train_dates = train["date"].nunique()
-        min_train_eff = effective_min_train_days(
-            n_train_dates,
-            min_train_days=val_cfg.min_train_days,
-            min_train_fraction=val_cfg.min_train_fraction,
+    if is_ensemble_candidate(name):
+        member_names = ENSEMBLE_MEMBER_GROUPS[name]
+        member_hp = _ensure_member_hyperparams(
+            member_names,
+            train,
+            config,
+            feature_cols,
+            best_hyperparams_all,
+            tune=tune,
+            n_folds=n_folds,
         )
-        print(
-            f"CV (expanding-window): {len(cv_folds)} folds on {n_train_dates} train days "
-            f"(requested={n_folds}, min_train>={min_train_eff} days "
-            f"[{val_cfg.min_train_fraction:.0%} of panel], min_val_days={val_cfg.min_val_days})"
+        weights = (
+            _cv_rmse_member_weights(metrics_table, member_names)
+            if config.evaluation.weight_by_cv_rmse and name != "ensemble_ridge_xgb"
+            else None
         )
 
-    for name in config.model_policy.candidates:
-        fitter = FITTERS.get(name)
-        if fitter is None:
-            continue
-        try:
-            hyperparams: dict[str, Any] | None = None
-            if is_ensemble_candidate(name):
-                member_names = ENSEMBLE_MEMBER_GROUPS[name]
-                member_hp = _ensure_member_hyperparams(
-                    member_names,
-                    train,
-                    config,
-                    feature_cols,
-                    best_hyperparams_all,
-                    tune=tune,
-                    n_folds=n_folds,
-                )
-                # Optimizer / ridge_xgb_embed use equal ridge+XGB blend; only the
-                # full 5-member eval ensemble uses inverse-CV-RMSE weights.
-                weights = (
-                    _cv_rmse_member_weights(metrics_table, member_names)
-                    if config.evaluation.weight_by_cv_rmse
-                    and name != "ensemble_ridge_xgb"
-                    else None
-                )
-
-                def _fit_ensemble(
-                    tr: pd.DataFrame,
-                    ho: pd.DataFrame,
-                    cfg: CampaignOptConfig,
-                    fc: list[str],
-                    *,
-                    _name: str = name,
-                    _members: list[str] = member_names,
-                    _mhp: dict[str, dict[str, Any]] = member_hp,
-                    _weights: dict[str, float] | None = weights,
-                ) -> ModelResult:
-                    return fit_ensemble_tournament(
-                        _name,
-                        _members,
-                        tr,
-                        ho,
-                        cfg,
-                        fc,
-                        member_hyperparams=_mhp,
-                        member_weights=_weights,
-                    )
-
-                if tune or run_cv:
-                    cv_metrics = cross_validate_model(
-                        _fit_ensemble, train, config, feature_cols, n_folds=n_folds
-                    )
-                    res = _fit_ensemble(train, holdout, config, feature_cols)
-                    res.cv_rmse = cv_metrics["cv_rmse_levels"]
-                    res.cv_r2 = cv_metrics["cv_r2_levels"]
-                    res.cv_mae = cv_metrics["cv_mae_levels"]
-                    res.best_hyperparams = member_hp or None
-                    best_hyperparams_all[name] = member_hp
-                else:
-                    res = _fit_ensemble(train, holdout, config, feature_cols)
-                    res.best_hyperparams = member_hp or None
-                    best_hyperparams_all[name] = member_hp
-            elif tune:
-                hyperparams, cv_metrics = tune_hyperparams(
-                    name, fitter, train, config, feature_cols, n_folds=n_folds
-                )
-                best_hyperparams_all[name] = hyperparams
-                res = fitter(train, holdout, config, feature_cols, hyperparams=hyperparams)
-                res.cv_rmse = cv_metrics["cv_rmse_levels"]
-                res.cv_r2 = cv_metrics["cv_r2_levels"]
-                res.cv_mae = cv_metrics["cv_mae_levels"]
-                res.best_hyperparams = hyperparams or None
-            else:
-                res = fitter(train, holdout, config, feature_cols)
-                if run_cv:
-                    cv_metrics = cross_validate_model(
-                        fitter, train, config, feature_cols, n_folds=n_folds
-                    )
-                    res.cv_rmse = cv_metrics["cv_rmse_levels"]
-                    res.cv_r2 = cv_metrics["cv_r2_levels"]
-                    res.cv_mae = cv_metrics["cv_mae_levels"]
-            results.append(res)
-            metrics_table[name] = {
-                "holdout_rmse_levels": res.holdout_rmse,
-                "holdout_r2_levels": res.holdout_r2,
-                "holdout_mae_levels": res.holdout_mae,
-            }
-            if res.cv_rmse is not None:
-                metrics_table[name]["cv_rmse_levels"] = res.cv_rmse
-                metrics_table[name]["cv_r2_levels"] = res.cv_r2
-            if res.best_hyperparams:
-                metrics_table[name]["best_hyperparams"] = res.best_hyperparams
-            if res.log_r2_diagnostic is not None:
-                metrics_table[name]["log_r2_diagnostic"] = res.log_r2_diagnostic
-            shap_effects = report_model_fit_diagnostics(
-                res, train, config, feature_cols
+        def _fit_ensemble(
+            tr: pd.DataFrame,
+            ho: pd.DataFrame,
+            cfg: CampaignOptConfig,
+            fc: list[str],
+            *,
+            _name: str = name,
+            _members: list[str] = member_names,
+            _mhp: dict[str, dict[str, Any]] = member_hp,
+            _weights: dict[str, float] | None = weights,
+        ) -> ModelResult:
+            return fit_ensemble_tournament(
+                _name,
+                _members,
+                tr,
+                ho,
+                cfg,
+                fc,
+                member_hyperparams=_mhp,
+                member_weights=_weights,
             )
-            if shap_effects:
-                metrics_table[name]["shap_mean_effects"] = shap_effects
-        except Exception as exc:
-            print(f"  {name}: skipped ({exc})")
 
-    try:
-        baseline_res = fit_mean_baseline(train, holdout, config, feature_cols)
+        if tune or run_cv:
+            cv_metrics = cross_validate_model(
+                _fit_ensemble, train, config, feature_cols, n_folds=n_folds
+            )
+            res = _fit_ensemble(train, holdout, config, feature_cols)
+            res.cv_rmse = cv_metrics["cv_rmse_levels"]
+            res.cv_r2 = cv_metrics["cv_r2_levels"]
+            res.cv_mae = cv_metrics["cv_mae_levels"]
+            res.best_hyperparams = member_hp or None
+            best_hyperparams_all[name] = member_hp
+        else:
+            res = _fit_ensemble(train, holdout, config, feature_cols)
+            res.best_hyperparams = member_hp or None
+            best_hyperparams_all[name] = member_hp
+    elif tune:
+        hyperparams, cv_metrics = tune_hyperparams(
+            name, fitter, train, config, feature_cols, n_folds=n_folds
+        )
+        best_hyperparams_all[name] = hyperparams
+        res = fitter(train, holdout, config, feature_cols, hyperparams=hyperparams)
+        res.cv_rmse = cv_metrics["cv_rmse_levels"]
+        res.cv_r2 = cv_metrics["cv_r2_levels"]
+        res.cv_mae = cv_metrics["cv_mae_levels"]
+        res.best_hyperparams = hyperparams or None
+    else:
+        res = fitter(train, holdout, config, feature_cols)
         if run_cv:
             cv_metrics = cross_validate_model(
-                fit_mean_baseline, train, config, feature_cols, n_folds=n_folds
+                fitter, train, config, feature_cols, n_folds=n_folds
             )
-            baseline_res.cv_rmse = cv_metrics["cv_rmse_levels"]
-            baseline_res.cv_r2 = cv_metrics["cv_r2_levels"]
-            baseline_res.cv_mae = cv_metrics["cv_mae_levels"]
-        results.append(baseline_res)
-        metrics_table[MEAN_BASELINE_CANDIDATE] = {
-            "holdout_rmse_levels": baseline_res.holdout_rmse,
-            "holdout_r2_levels": baseline_res.holdout_r2,
-            "holdout_mae_levels": baseline_res.holdout_mae,
-        }
-        if baseline_res.cv_rmse is not None:
-            metrics_table[MEAN_BASELINE_CANDIDATE]["cv_rmse_levels"] = baseline_res.cv_rmse
-            metrics_table[MEAN_BASELINE_CANDIDATE]["cv_r2_levels"] = baseline_res.cv_r2
-        if baseline_res.extra and "train_mean" in baseline_res.extra:
-            metrics_table[MEAN_BASELINE_CANDIDATE]["train_mean"] = baseline_res.extra[
-                "train_mean"
-            ]
-        cv_str = ""
-        if baseline_res.cv_rmse is not None:
-            cv_str = f" CV_RMSE={baseline_res.cv_rmse:.4f}"
-            if baseline_res.cv_r2 is not None:
-                cv_str += f" CV_R^2={baseline_res.cv_r2:.4f}"
-        print(
-            f"  {MEAN_BASELINE_CANDIDATE}: holdout RMSE={baseline_res.holdout_rmse:.4f} "
-            f"R^2={baseline_res.holdout_r2:.4f}{cv_str} "
-            f"train_mean={baseline_res.extra.get('train_mean') if baseline_res.extra else 'n/a'}"
-        )
-        for line in model_feature_overview_lines(baseline_res):
-            print(line)
-    except Exception as exc:
-        print(f"  {MEAN_BASELINE_CANDIDATE}: skipped ({exc})")
+            res.cv_rmse = cv_metrics["cv_rmse_levels"]
+            res.cv_r2 = cv_metrics["cv_r2_levels"]
+            res.cv_mae = cv_metrics["cv_mae_levels"]
 
-    competitive = [r for r in results if not is_mean_baseline_candidate(r.name)]
-    if not competitive:
-        raise RuntimeError("No models succeeded in tournament")
+    metrics_table[name] = {
+        "holdout_rmse_levels": res.holdout_rmse,
+        "holdout_r2_levels": res.holdout_r2,
+        "holdout_mae_levels": res.holdout_mae,
+    }
+    if res.cv_rmse is not None:
+        metrics_table[name]["cv_rmse_levels"] = res.cv_rmse
+        metrics_table[name]["cv_r2_levels"] = res.cv_r2
+    if res.best_hyperparams:
+        metrics_table[name]["best_hyperparams"] = res.best_hyperparams
+    if res.log_r2_diagnostic is not None:
+        metrics_table[name]["log_r2_diagnostic"] = res.log_r2_diagnostic
+    shap_effects = report_model_fit_diagnostics(res, train, config, feature_cols)
+    if shap_effects:
+        metrics_table[name]["shap_mean_effects"] = shap_effects
+    return res
 
-    ridge_res = next((r for r in competitive if r.name == "ridge"), None)
-    winner = min(competitive, key=lambda r: _selection_score(r, config))
+
+def _finalize_fit_manifest(
+    winner: ModelResult,
+    train: pd.DataFrame,
+    holdout: pd.DataFrame,
+    config: CampaignOptConfig,
+    feature_cols: list[str],
+    metrics_table: dict[str, dict[str, float]],
+    best_hyperparams_all: dict[str, Any],
+    *,
+    ridge_res: ModelResult | None,
+    export_dir: Path | None,
+    tune: bool,
+    run_cv: bool,
+    n_folds: int,
+) -> tuple[ModelResult, dict[str, Any]]:
     backend = resolve_backend(winner)
-
-    refit_full = config.model_policy.validation.refit_on_full_data
+    val_cfg = config.model_policy.validation
+    refit_full = val_cfg.refit_on_full_data
     full = (
         pd.concat([train, holdout], ignore_index=True).sort_values("date")
         if len(holdout)
@@ -1181,6 +1139,183 @@ def run_tournament(
         "production_rows": len(full),
         "best_hyperparams": best_hyperparams_all,
     }
+    return winner, manifest
+
+
+def fit_optimizer_winner(
+    train: pd.DataFrame,
+    holdout: pd.DataFrame,
+    config: CampaignOptConfig,
+    *,
+    export_dir: Path | None = None,
+) -> tuple[ModelResult, dict[str, dict[str, float]], dict[str, Any]]:
+    """Tune and fit ``model_policy.optimizer_winner`` only (no tournament)."""
+    from utils.optimize import require_optimizer_winner
+
+    name = require_optimizer_winner(config)
+    feature_cols = get_context_feature_columns(config.context_features)
+    val_cfg = config.model_policy.validation
+    n_folds = val_cfg.cv_folds
+    tune = val_cfg.tune_hyperparams
+    run_cv = val_cfg.scheme in ("time_series_cv", "cv")
+    best_hyperparams_all: dict[str, dict[str, Any]] = {}
+    metrics_table: dict[str, dict[str, float]] = {}
+
+    if run_cv or tune:
+        cv_folds = time_series_cv_folds(train, n_folds, **validation_cv_kwargs(config))
+        n_train_dates = train["date"].nunique()
+        min_train_eff = effective_min_train_days(
+            n_train_dates,
+            min_train_days=val_cfg.min_train_days,
+            min_train_fraction=val_cfg.min_train_fraction,
+        )
+        print(
+            f"CV (expanding-window): {len(cv_folds)} folds on {n_train_dates} train days "
+            f"(requested={n_folds}, min_train>={min_train_eff} days "
+            f"[{val_cfg.min_train_fraction:.0%} of panel], min_val_days={val_cfg.min_val_days})"
+        )
+
+    print(f"Fitting optimizer_winner={name!r} (skipping tournament)")
+    winner = _fit_tournament_candidate(
+        name,
+        train,
+        holdout,
+        config,
+        feature_cols,
+        tune=tune,
+        run_cv=run_cv,
+        n_folds=n_folds,
+        best_hyperparams_all=best_hyperparams_all,
+        metrics_table=metrics_table,
+    )
+
+    winner, manifest = _finalize_fit_manifest(
+        winner,
+        train,
+        holdout,
+        config,
+        feature_cols,
+        metrics_table,
+        best_hyperparams_all,
+        ridge_res=None,
+        export_dir=export_dir,
+        tune=tune,
+        run_cv=run_cv,
+        n_folds=n_folds,
+    )
+    return winner, metrics_table, manifest
+
+
+def run_tournament(
+    train: pd.DataFrame,
+    holdout: pd.DataFrame,
+    config: CampaignOptConfig,
+    *,
+    run_cv: bool | None = None,
+    export_dir: Path | None = None,
+) -> tuple[ModelResult, dict[str, dict[str, float]], dict[str, Any]]:
+    feature_cols = get_context_feature_columns(config.context_features)
+    results: list[ModelResult] = []
+    metrics_table: dict[str, dict[str, float]] = {}
+
+    if run_cv is None:
+        run_cv = config.model_policy.validation.scheme in ("time_series_cv", "cv")
+    val_cfg = config.model_policy.validation
+    n_folds = val_cfg.cv_folds
+    tune = val_cfg.tune_hyperparams
+    best_hyperparams_all: dict[str, dict[str, Any]] = {}
+
+    if run_cv or tune:
+        cv_folds = time_series_cv_folds(train, n_folds, **validation_cv_kwargs(config))
+        n_train_dates = train["date"].nunique()
+        min_train_eff = effective_min_train_days(
+            n_train_dates,
+            min_train_days=val_cfg.min_train_days,
+            min_train_fraction=val_cfg.min_train_fraction,
+        )
+        print(
+            f"CV (expanding-window): {len(cv_folds)} folds on {n_train_dates} train days "
+            f"(requested={n_folds}, min_train>={min_train_eff} days "
+            f"[{val_cfg.min_train_fraction:.0%} of panel], min_val_days={val_cfg.min_val_days})"
+        )
+
+    for name in config.model_policy.candidates:
+        if FITTERS.get(name) is None and not is_ensemble_candidate(name):
+            continue
+        try:
+            res = _fit_tournament_candidate(
+                name,
+                train,
+                holdout,
+                config,
+                feature_cols,
+                tune=tune,
+                run_cv=run_cv,
+                n_folds=n_folds,
+                best_hyperparams_all=best_hyperparams_all,
+                metrics_table=metrics_table,
+            )
+            results.append(res)
+        except Exception as exc:
+            print(f"  {name}: skipped ({exc})")
+
+    try:
+        baseline_res = fit_mean_baseline(train, holdout, config, feature_cols)
+        if run_cv:
+            cv_metrics = cross_validate_model(
+                fit_mean_baseline, train, config, feature_cols, n_folds=n_folds
+            )
+            baseline_res.cv_rmse = cv_metrics["cv_rmse_levels"]
+            baseline_res.cv_r2 = cv_metrics["cv_r2_levels"]
+            baseline_res.cv_mae = cv_metrics["cv_mae_levels"]
+        results.append(baseline_res)
+        metrics_table[MEAN_BASELINE_CANDIDATE] = {
+            "holdout_rmse_levels": baseline_res.holdout_rmse,
+            "holdout_r2_levels": baseline_res.holdout_r2,
+            "holdout_mae_levels": baseline_res.holdout_mae,
+        }
+        if baseline_res.cv_rmse is not None:
+            metrics_table[MEAN_BASELINE_CANDIDATE]["cv_rmse_levels"] = baseline_res.cv_rmse
+            metrics_table[MEAN_BASELINE_CANDIDATE]["cv_r2_levels"] = baseline_res.cv_r2
+        if baseline_res.extra and "train_mean" in baseline_res.extra:
+            metrics_table[MEAN_BASELINE_CANDIDATE]["train_mean"] = baseline_res.extra[
+                "train_mean"
+            ]
+        cv_str = ""
+        if baseline_res.cv_rmse is not None:
+            cv_str = f" CV_RMSE={baseline_res.cv_rmse:.4f}"
+            if baseline_res.cv_r2 is not None:
+                cv_str += f" CV_R^2={baseline_res.cv_r2:.4f}"
+        print(
+            f"  {MEAN_BASELINE_CANDIDATE}: holdout RMSE={baseline_res.holdout_rmse:.4f} "
+            f"R^2={baseline_res.holdout_r2:.4f}{cv_str} "
+            f"train_mean={baseline_res.extra.get('train_mean') if baseline_res.extra else 'n/a'}"
+        )
+        for line in model_feature_overview_lines(baseline_res):
+            print(line)
+    except Exception as exc:
+        print(f"  {MEAN_BASELINE_CANDIDATE}: skipped ({exc})")
+
+    competitive = [r for r in results if not is_mean_baseline_candidate(r.name)]
+    if not competitive:
+        raise RuntimeError("No models succeeded in tournament")
+
+    ridge_res = next((r for r in competitive if r.name == "ridge"), None)
+    winner = min(competitive, key=lambda r: _selection_score(r, config))
+    winner, manifest = _finalize_fit_manifest(
+        winner,
+        train,
+        holdout,
+        config,
+        feature_cols,
+        metrics_table,
+        best_hyperparams_all,
+        ridge_res=ridge_res,
+        export_dir=export_dir,
+        tune=tune,
+        run_cv=run_cv,
+        n_folds=n_folds,
+    )
     return winner, metrics_table, manifest
 
 

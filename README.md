@@ -1,4 +1,4 @@
-# ad_opt_v2 — Multi-course campaign optimization
+# ad_opt_v2 — Search campaign optimization
 
 Two-stage Google Ads optimization: fix keyword sets once per window (stage 1), then walk-forward daily budget allocation (stage 2).
 
@@ -161,17 +161,17 @@ uv run run-pipeline --skip-stage1 --skip-candidates --skip-gkp
 uv run run-pipeline --window-start 2026-06-15 --window-end 2026-07-15
 ```
 
-`run-pipeline` always runs `fit-models` and (by default) rebuilds keyword candidates and GKP set features. Use `--skip-candidates` / `--skip-gkp` on daily runs if those inputs have not changed. Use `--skip-monitoring` to skip plan-vs-actual scoring.
+`run-pipeline` fits `model_policy.optimizer_winner` only (no tournament, no evaluation-model refit) and (by default) rebuilds keyword candidates and GKP set features. Use `fit-models` without `--optimizer-only` when you want the full tournament and evaluation scorer (e.g. before backtest). Use `--skip-candidates` / `--skip-gkp` on daily runs if those inputs have not changed. Use `--skip-monitoring` to skip plan-vs-actual scoring.
 
 ### Production monitoring
 
-Each `run-pipeline` call (after `prepare-data`) scores unscored days in the last 7 days that have a saved stage-2 plan. Outputs under `<course>/prod/monitoring/`:
+Each `run-pipeline` call (after `prepare-data`) scores unscored days in the last 7 days that have a saved stage-2 plan. Monitoring compares **saved plan predictions** (`milp_pred` from `campaign_plan.csv`) to **realized outcomes** from the modeling panel (Google Ads data). It does not load or refit an evaluation model. Outputs under `<course>/prod/monitoring/`:
 
 | File | Purpose |
 |------|---------|
 | `daily_metrics.csv` | One row per scored day: RMSE, nRMSE, bias %, pred/observed totals |
 | `rolling_summary.json` | 7-day and 30-day rolling mean bias and nRMSE |
-| `plan_vs_actual/YYYYMMDD/plan_vs_actual.csv` | Per-segment detail (same schema as backtest) |
+| `plan_vs_actual/YYYYMMDD/plan_vs_actual.csv` | Per-segment detail: plan preds vs panel actuals |
 
 Example log line:
 

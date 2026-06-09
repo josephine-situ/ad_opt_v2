@@ -90,7 +90,7 @@ def main() -> None:
     if not args.skip_gkp:
         _run([py, "-m", "scripts.build_gkp_set_features", *course_flag])
 
-    fit_cmd = [py, "-m", "scripts.fit_models", *course_flag]
+    fit_cmd = [py, "-m", "scripts.fit_models", *course_flag, "--optimizer-only"]
     if args.config:
         fit_cmd.extend(["--config", args.config])
     _run(fit_cmd)
