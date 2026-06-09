@@ -19,7 +19,7 @@ def test_historical_budget_bounds_allows_zero_for_single_level():
     assert hi == 13.5
 
 
-def test_historical_budget_bounds_uses_min_max_for_multiple_levels():
+def test_historical_budget_bounds_caps_at_historical_max_for_multiple_levels():
     panel = pd.DataFrame(
         {
             "segment": ["A / Broad", "A / Broad", "A / Broad"],
@@ -27,7 +27,7 @@ def test_historical_budget_bounds_uses_min_max_for_multiple_levels():
         }
     )
     lo, hi = historical_budget_bounds(panel, ["A / Broad"])["A / Broad"]
-    assert lo == 13.5
+    assert lo == 0.0
     assert hi == 20.0
 
 

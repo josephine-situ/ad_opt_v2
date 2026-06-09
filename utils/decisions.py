@@ -57,9 +57,9 @@ def historical_budget_bounds(
     """
     Per-segment budget bounds from historical ``daily_budget``.
 
-    When more than one distinct spend level was observed, bounds are
-    ``[min, max]``. Zero is allowed as the lower bound only when a single
-    budget level was observed (or there is no panel history).
+    Upper bound is the historical maximum observed cap. Lower bound is always
+    zero; spend below the observed minimum is zeroed by prediction gating, not
+    by tightening ``x`` variable bounds.
     """
     bounds: dict[str, tuple[float, float]] = {}
     for seg in segments:
@@ -67,11 +67,7 @@ def historical_budget_bounds(
         if sub.empty:
             bounds[seg] = (0.0, 500.0)
             continue
-        hi = float(sub.max())
-        if sub.nunique() <= 1:
-            bounds[seg] = (0.0, hi)
-        else:
-            bounds[seg] = (float(sub.min()), hi)
+        bounds[seg] = (0.0, float(sub.max()))
     return bounds
 
 
