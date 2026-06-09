@@ -43,6 +43,11 @@ def main() -> None:
     )
     parser.add_argument("--skip-gkp", action="store_true")
     parser.add_argument("--skip-candidates", action="store_true")
+    parser.add_argument(
+        "--skip-monitoring",
+        action="store_true",
+        help="Skip production plan-vs-actual monitoring for prior days",
+    )
     args = parser.parse_args()
 
     if args.skip_stage1:
@@ -63,6 +68,11 @@ def main() -> None:
     panel_path = processed_dir(args.course) / "campaign-day-panel.csv"
     if not panel_path.exists():
         _run([py, "-m", "scripts.generate_campaign_day_panel", *course_flag])
+
+    if not args.skip_monitoring:
+        from utils.production_monitoring import run_production_monitoring
+
+        run_production_monitoring(config)
 
     if not args.skip_candidates:
         _run(

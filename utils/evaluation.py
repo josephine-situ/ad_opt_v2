@@ -424,21 +424,15 @@ def plan_vs_actual_row_metrics(comp: pd.DataFrame, target: str) -> dict[str, Any
     elif not market_rows.empty and "daily_budget" in market_rows.columns:
         act_budget = float(pd.to_numeric(market_rows["daily_budget"], errors="coerce").sum())
     out: dict[str, Any] = {
-        "pred_lift_total": float(pd.to_numeric(plan_rows["pred_lift"], errors="coerce").sum()),
-        "actual_model_lift_total": float(
-            pd.to_numeric(market_rows["actual_model_lift"], errors="coerce").sum()
+        "pred_level_total": float(pd.to_numeric(plan_rows["pred_level"], errors="coerce").sum()),
+        "actual_model_level_total": float(
+            pd.to_numeric(market_rows["actual_model_level"], errors="coerce").sum()
         )
         if not market_rows.empty
-        else float(pd.to_numeric(plan_rows["actual_model_lift"], errors="coerce").sum()),
+        else float(pd.to_numeric(plan_rows["actual_model_level"], errors="coerce").sum()),
         "observed_total": observed_total,
         **mets,
     }
-    if "pred_lift_raw" in plan_rows.columns:
-        out["pred_lift_raw_total"] = float(pd.to_numeric(plan_rows["pred_lift_raw"], errors="coerce").sum())
-    if not market_rows.empty and "actual_model_lift_raw" in market_rows.columns:
-        out["actual_model_lift_raw_total"] = float(
-            pd.to_numeric(market_rows["actual_model_lift_raw"], errors="coerce").sum()
-        )
     if act_budget is not None:
         out["act_budget_total"] = act_budget
     return out
@@ -787,8 +781,8 @@ def compare_plan_and_actual(
     set) supplies observed-min budget floors — typically the full campaign panel so
     evaluation gating matches all historical spend levels.
 
-      - ``pred_lift``: f(plan budget, plan keyword set)
-      - ``actual_model_lift``: f(actual campaign budget, actual keyword set) on panel rows
+      - ``pred_level``: f(plan budget, plan keyword set)
+      - ``actual_model_level``: f(actual campaign budget, actual keyword set) on panel rows
 
     Actual budgets are ``daily_budget`` from the campaign-day panel (configured cap),
     **not** observed ``cost``. Plan rows include region-level ``actual_budget`` for
@@ -813,11 +807,10 @@ def compare_plan_and_actual(
 
     out = plan_dec.copy()
     out["row_kind"] = "plan"
-    out["pred_lift"] = _predict_levels_for_scoring(
+    out["pred_level"] = _predict_levels_for_scoring(
         ensemble, plan_rows, feature_panel, config, floor_panel=floor_panel
     )
-    out["f_plan_level"] = out["pred_lift"]
-    out["actual_model_lift"] = np.nan
+    out["actual_model_level"] = np.nan
 
     region_actual = region_actual_lookup(day_df)
     if not region_actual.empty:
@@ -849,11 +842,10 @@ def compare_plan_and_actual(
     )
     market_scored = market_dec.copy()
     market_scored["row_kind"] = "market"
-    market_scored["pred_lift"] = np.nan
-    market_scored["actual_model_lift"] = _predict_levels_for_scoring(
+    market_scored["pred_level"] = np.nan
+    market_scored["actual_model_level"] = _predict_levels_for_scoring(
         market_model, market_rows, feature_panel, config, floor_panel=floor_panel
     )
-    market_scored["f_plan_level"] = market_scored["actual_model_lift"]
     market_scored["campaign_budget"] = market_scored["daily_budget"]
     market_scored["actual_budget"] = market_scored["daily_budget"]
     market_scored["actual_keyword_set_id"] = market_scored["keyword_set_id"]
@@ -924,9 +916,8 @@ def compare_plan_and_actual_week(
     target = config.target
     obs_col = f"observed_{target}"
     agg_cols: dict[str, tuple[str, str]] = {
-        "pred_lift": ("pred_lift", "sum"),
-        "actual_model_lift": ("actual_model_lift", "sum"),
-        "f_plan_level": ("f_plan_level", "sum"),
+        "pred_level": ("pred_level", "sum"),
+        "actual_model_level": ("actual_model_level", "sum"),
         "n_days": ("date", "count"),
     }
     if obs_col in daily.columns:
@@ -942,28 +933,34 @@ def compare_plan_and_actual_week(
 
 
 def metrics_from_comparison(comp: pd.DataFrame, target: str) -> dict[str, float | None]:
-    """RMSE/R² for model plan levels vs actual campaign levels, and vs observed."""
+    """RMSE/R² for optimizer plan levels vs observed target on plan rows."""
     metrics: dict[str, float | None] = {}
     obs_col = f"observed_{target}"
-    mask = np.isfinite(comp["pred_lift"]) & np.isfinite(comp["actual_model_lift"])
-    if mask.any():
-        metrics["rmse_pred_vs_actual_model_lift"] = float(
-            np.sqrt(mean_squared_error(comp.loc[mask, "actual_model_lift"], comp.loc[mask, "pred_lift"]))
-        )
-        if mask.sum() > 1:
-            metrics["r2_pred_vs_actual_model_lift"] = float(
-                r2_score(comp.loc[mask, "actual_model_lift"], comp.loc[mask, "pred_lift"])
-            )
-    m2 = np.isfinite(comp["pred_lift"]) & comp[obs_col].notna() if obs_col in comp.columns else pd.Series(False)
+    plan_rows, _ = _split_plan_and_market_rows(comp)
+    m2 = np.isfinite(comp["pred_level"]) & comp[obs_col].notna() if obs_col in comp.columns else pd.Series(False)
     if m2.any():
-        metrics["rmse_pred_lift_vs_observed"] = float(
-            np.sqrt(mean_squared_error(comp.loc[m2, obs_col], comp.loc[m2, "pred_lift"]))
+        metrics["rmse_pred_vs_observed"] = float(
+            np.sqrt(mean_squared_error(comp.loc[m2, obs_col], comp.loc[m2, "pred_level"]))
         )
-    m3 = np.isfinite(comp["actual_model_lift"]) & comp[obs_col].notna() if obs_col in comp.columns else pd.Series(False)
-    if m3.any():
-        metrics["rmse_actual_model_lift_vs_observed"] = float(
-            np.sqrt(mean_squared_error(comp.loc[m3, obs_col], comp.loc[m3, "actual_model_lift"]))
-        )
+    if obs_col in plan_rows.columns:
+        m_obs = np.isfinite(plan_rows["pred_level"]) & plan_rows[obs_col].notna()
+        if m_obs.any():
+            pred = pd.to_numeric(plan_rows.loc[m_obs, "pred_level"], errors="coerce")
+            obs = pd.to_numeric(plan_rows.loc[m_obs, obs_col], errors="coerce")
+            errors = pred - obs
+            metrics["mean_error"] = float(errors.mean())
+            metrics["pred_total"] = float(pred.sum())
+            metrics["observed_total"] = float(obs.sum())
+            if metrics["observed_total"]:
+                metrics["total_bias_pct"] = float(
+                    (metrics["pred_total"] - metrics["observed_total"]) / metrics["observed_total"] * 100.0
+                )
+            metrics["mean_observed_target"] = float(obs.mean())
+            rmse = metrics.get("rmse_pred_vs_observed")
+            if rmse is not None and metrics["mean_observed_target"]:
+                metrics["nrmse"] = float(rmse / metrics["mean_observed_target"])
+            if m_obs.sum() > 1:
+                metrics["r2_pred_vs_observed"] = float(r2_score(obs, pred))
     return metrics
 
 

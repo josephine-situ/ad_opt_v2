@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from utils.evaluation import compare_plan_and_actual, plan_vs_actual_row_metrics
+from utils.evaluation import compare_plan_and_actual, metrics_from_comparison, plan_vs_actual_row_metrics
 from utils.campaign_config import CampaignOptConfig, EvaluationConfig, ModelPolicy, ValidationConfig
 
 
@@ -53,18 +53,35 @@ def test_market_actuals_use_panel_campaigns_not_zero_pad(
     assert set(comp["row_kind"]) == {"plan", "market"}
 
     market = comp[comp["row_kind"] == "market"]
-    assert market["actual_model_lift"].notna().all()
+    assert market["actual_model_level"].notna().all()
     assert (market["daily_budget"] > 0).any()
 
     metrics = plan_vs_actual_row_metrics(comp, tiny_config.target)
-    assert metrics["actual_model_lift_total"] == pytest.approx(float(market["actual_model_lift"].sum()))
+    assert metrics["actual_model_level_total"] == pytest.approx(float(market["actual_model_level"].sum()))
     assert metrics["act_budget_total"] == pytest.approx(float(market["daily_budget"].sum()))
 
     plan_rows = comp[comp["row_kind"] == "plan"]
     assert plan_rows["actual_budget"].notna().all()
     assert "campaign_budget" in market.columns
     assert market["campaign_budget"].equals(market["daily_budget"])
-    assert metrics.get("pred_lift_total") == pytest.approx(float(plan_rows["pred_lift"].sum()))
+    assert metrics.get("pred_level_total") == pytest.approx(float(plan_rows["pred_level"].sum()))
+
+
+def test_metrics_from_comparison_includes_bias_and_nrmse():
+    comp = pd.DataFrame(
+        {
+            "row_kind": ["plan", "plan"],
+            "pred_level": [12.0, 18.0],
+            "actual_model_level": [10.0, 16.0],
+            "observed_clicks": [10.0, 15.0],
+        }
+    )
+    metrics = metrics_from_comparison(comp, "clicks")
+    assert metrics["mean_error"] == pytest.approx(2.5)
+    assert metrics["pred_total"] == pytest.approx(30.0)
+    assert metrics["observed_total"] == pytest.approx(25.0)
+    assert metrics["total_bias_pct"] == pytest.approx(20.0)
+    assert metrics["nrmse"] == pytest.approx(metrics["rmse_pred_vs_observed"] / 12.5)
 
 
 def test_actual_decisions_reject_missing_daily_budget():

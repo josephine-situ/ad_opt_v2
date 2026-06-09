@@ -141,6 +141,7 @@ Courses are discovered automatically (top-level dirs with a `data/` folder).
 |---------|------|--------------|
 | **Daily** | Pull Google Ads data | `prepare-data` — API pull → clean kw-day panel → campaign-day panel |
 | **Daily** | Stage 2 budgets | `run-pipeline --skip-stage1` — refit model walk-forward, optimize tomorrow's segment budgets |
+| **Daily** | Plan-vs-actual monitoring | Automatic in `run-pipeline` (before model refit) — scores yesterday's saved plan vs realized `conv_scaled_clicks` |
 | **Monthly or ad-hoc** | Stage 1 keyword sets | `run-pipeline --window-start … --window-end …` — pick one keyword set per segment for the window, then stage 2 for the planning date |
 | **When Ads config changes** | Re-parse change history | `parse_change_history_html` — after keyword adds/removes, pauses, or renames in the UI |
 | **After daily budget push** | Append budget to summary | Update `campaign-summary.csv` with pushed amounts (see Change history §2) — or re-parse HTML |
@@ -160,7 +161,26 @@ uv run run-pipeline --skip-stage1
 uv run run-pipeline --window-start 2026-05-12 --window-end 2026-06-11
 ```
 
-`run-pipeline` always runs `fit-models` and (by default) rebuilds keyword candidates and GKP set features. Use `--skip-candidates` / `--skip-gkp` on daily runs if those inputs have not changed.
+`run-pipeline` always runs `fit-models` and (by default) rebuilds keyword candidates and GKP set features. Use `--skip-candidates` / `--skip-gkp` on daily runs if those inputs have not changed. Use `--skip-monitoring` to skip plan-vs-actual scoring.
+
+### Production monitoring
+
+Each `run-pipeline` call (after `prepare-data`) scores unscored days in the last 7 days that have a saved stage-2 plan. Outputs under `<course>/prod/monitoring/`:
+
+| File | Purpose |
+|------|---------|
+| `daily_metrics.csv` | One row per scored day: RMSE, nRMSE, bias %, pred/observed totals |
+| `rolling_summary.json` | 7-day and 30-day rolling mean bias and nRMSE |
+| `plan_vs_actual/YYYYMMDD/plan_vs_actual.csv` | Per-segment detail (same schema as backtest) |
+
+Example log line:
+
+```
+[monitoring] 2026-06-08: observed=142.3, pred=158.1, bias=+11.1%, RMSE=18.4, nRMSE=0.13, segments=6
+[monitoring] 7d rolling bias=+6.2%, nRMSE=0.11
+```
+
+When `GRAFANA_URL`, `GRAFANA_USERNAME`, and `GRAFANA_TOKEN` are set, metrics are also pushed under the `campaign_opt_monitoring` prefix.
 
 ## Push outputs to Google Ads
 

@@ -81,5 +81,12 @@ evaluation:
 backtest:
   strategy: two_stage
 
+monitoring:
+  enabled: true
+  lookback_days: 7
+  rolling_windows:
+    - 7
+    - 30
+
 debug_write_lp: false
 modeling_lookback_days: null

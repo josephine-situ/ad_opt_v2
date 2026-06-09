@@ -63,6 +63,11 @@ def prod_dir(course: str = DEFAULT_COURSE) -> Path:
     return course_root(course) / "prod"
 
 
+def prod_monitoring_dir(course: str = DEFAULT_COURSE) -> Path:
+    """Production plan-vs-actual monitoring artifacts (daily metrics, detail CSVs)."""
+    return prod_dir(course) / "monitoring"
+
+
 def experiments_dir(course: str = DEFAULT_COURSE) -> Path:
     """Research and debug outputs (feature ablations, modeling-frame dumps)."""
     return course_root(course) / "experiments"

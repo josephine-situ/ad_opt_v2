@@ -47,8 +47,31 @@ class GoogleAdsMetricsClient(MetricsClient):
         self.emit_metric("api_operation_count", float(value), {"operation": operation_type})
 
 
-def get_metrics_client() -> GoogleAdsMetricsClient:
-    return GoogleAdsMetricsClient(
+class CampaignOptMonitoringClient(GoogleAdsMetricsClient):
+    """Optional Grafana emission for production plan-vs-actual monitoring."""
+
+    def emit_production_monitoring_metrics(
+        self,
+        course: str,
+        score_date: str,
+        metrics: dict[str, float | None],
+    ) -> None:
+        labels = {"course": course, "score_date": score_date}
+        prefix = "campaign_opt_monitoring"
+        field_map = {
+            "rmse": metrics.get("rmse_pred_vs_observed"),
+            "nrmse": metrics.get("nrmse"),
+            "bias_pct": metrics.get("total_bias_pct"),
+            "pred_total": metrics.get("pred_total"),
+            "observed_total": metrics.get("observed_total"),
+        }
+        for field_name, value in field_map.items():
+            if value is not None:
+                self.emit_metric(field_name, float(value), labels, metric_prefix=prefix)
+
+
+def get_metrics_client() -> CampaignOptMonitoringClient:
+    return CampaignOptMonitoringClient(
         os.getenv("GRAFANA_URL"),
         os.getenv("GRAFANA_USERNAME"),
         os.getenv("GRAFANA_TOKEN"),

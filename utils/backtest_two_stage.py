@@ -236,9 +236,6 @@ def run_two_stage_backtest(
         "n_days": len(summary),
         "fixed_keyword_sets": fixed_keyword_sets,
         "budget_mode": "actual" if use_actual_budget else "fixed",
-        "mean_rmse_model_lift": float(summary["rmse_pred_vs_actual_model_lift"].mean())
-        if "rmse_pred_vs_actual_model_lift" in summary.columns and len(summary)
-        else None,
     }
     if "holdout_r2" in summary.columns and len(summary):
         mean_r2 = float(summary["holdout_r2"].mean())

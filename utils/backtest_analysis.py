@@ -139,18 +139,12 @@ def _agg_day(group: pd.DataFrame, target: str) -> dict[str, Any]:
     row: dict[str, Any] = {
         "Day": group["date"].iloc[0] if "date" in group.columns else None,
         "n_segments": len(plan) if len(plan) else len(group),
-        "pred_lift_total": float(plan["pred_lift"].sum()) if "pred_lift" in plan.columns and len(plan) else 0.0,
-        "actual_model_lift_total": float(market["actual_model_lift"].sum())
-        if "actual_model_lift" in market.columns and len(market)
-        else float(group["actual_model_lift"].sum())
-        if "actual_model_lift" in group.columns
+        "pred_level_total": float(plan["pred_level"].sum()) if "pred_level" in plan.columns and len(plan) else 0.0,
+        "actual_model_level_total": float(market["actual_model_level"].sum())
+        if "actual_model_level" in market.columns and len(market)
+        else float(group["actual_model_level"].sum())
+        if "actual_model_level" in group.columns
         else 0.0,
-        "pred_lift_raw_total": float(plan["pred_lift_raw"].sum())
-        if "pred_lift_raw" in plan.columns and len(plan)
-        else None,
-        "actual_model_lift_raw_total": float(market["actual_model_lift_raw"].sum())
-        if "actual_model_lift_raw" in market.columns and len(market)
-        else None,
         "opt_budget_total": float(plan["daily_budget"].sum()) if "daily_budget" in plan.columns and len(plan) else 0.0,
         "act_budget_total": float(market["daily_budget"].sum())
         if "daily_budget" in market.columns and len(market)
@@ -196,8 +190,8 @@ def compile_evaluation_results(
     if not df.empty:
         rename = {
             "opt_date": "Day",
-            "pred_lift_total": "pred_lift_total",
-            "actual_model_lift_total": "actual_model_lift_total",
+            "pred_level_total": "pred_level_total",
+            "actual_model_level_total": "actual_model_level_total",
             "plan_budget_total": "opt_budget_total",
         }
         df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
@@ -262,10 +256,8 @@ def _add_region_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _regional_lift_column(df: pd.DataFrame, clipped_col: str, raw_col: str) -> str:
-    if raw_col in df.columns and pd.to_numeric(df[raw_col], errors="coerce").notna().any():
-        return raw_col
-    return clipped_col
+def _regional_level_column(df: pd.DataFrame, level_col: str) -> str:
+    return level_col
 
 
 def _scenario_slice(plan_df: pd.DataFrame, scenario: str) -> pd.DataFrame:
@@ -282,11 +274,11 @@ def regional_breakdown(
     target: str = "clicks",
 ) -> pd.DataFrame:
     """
-    Regional **shares** of spend, model incremental lift, and observed target.
+    Regional **shares** of spend, model predicted levels, and observed target.
 
-    ``Conversions {region}`` is each region's fraction of total incremental lift
+    ``Conversions {region}`` is each region's fraction of total predicted level
     (not absolute conversions). Model uses optimizer plan rows; Actual uses panel
-    market rows only, with raw lift when available (same as ``backtest_summary``).
+    market rows only (same as ``backtest_summary``).
     """
     if plan_df.empty:
         return pd.DataFrame()
@@ -301,13 +293,13 @@ def regional_breakdown(
             "Model",
             _scenario_slice(plan_df, "Model"),
             "daily_budget",
-            _regional_lift_column(plan_df, "pred_lift", "pred_lift_raw"),
+            _regional_level_column(plan_df, "pred_level"),
         ),
         (
             "Actual",
             _scenario_slice(plan_df, "Actual"),
             "daily_budget",
-            _regional_lift_column(plan_df, "actual_model_lift", "actual_model_lift_raw"),
+            _regional_level_column(plan_df, "actual_model_level"),
         ),
     )
 
@@ -320,7 +312,7 @@ def regional_breakdown(
     for label, slice_df, budget_col, conv_col in scenario_specs:
         if slice_df.empty:
             continue
-        lift = pd.to_numeric(slice_df[conv_col], errors="coerce") if conv_col in slice_df.columns else pd.Series(dtype=float)
+        level = pd.to_numeric(slice_df[conv_col], errors="coerce") if conv_col in slice_df.columns else pd.Series(dtype=float)
         budget = (
             pd.to_numeric(slice_df[budget_col], errors="coerce")
             if budget_col in slice_df.columns
@@ -328,7 +320,7 @@ def regional_breakdown(
         )
         totals = {
             "budget": float(budget.sum()),
-            "conversions": float(lift.sum()),
+            "conversions": float(level.sum()),
         }
         row: dict[str, Any] = {"scenario": label}
         for reg in REGIONS:
@@ -377,8 +369,8 @@ def summarize_performance(
             return 0.0, 0.0
         return float(s.mean()), float(s.sem()) if len(s) > 1 else 0.0
 
-    model_conv_m, model_conv_se = _mean_se("pred_lift_total")
-    actual_conv_m, actual_conv_se = _mean_se("actual_model_lift_total")
+    model_conv_m, model_conv_se = _mean_se("pred_level_total")
+    actual_conv_m, actual_conv_se = _mean_se("actual_model_level_total")
     model_budget_m, model_budget_se = _mean_se("opt_budget_total")
     actual_budget_m, actual_budget_se = _mean_se("act_budget_total")
 
@@ -424,10 +416,6 @@ def summarize_performance(
         },
     ]
     out = pd.DataFrame(rows)
-    if "rmse_pred_vs_actual_model_lift" in df.columns:
-        out["mean_rmse_model_vs_actual"] = float(
-            pd.to_numeric(df["rmse_pred_vs_actual_model_lift"], errors="coerce").mean()
-        )
     return out
 
 

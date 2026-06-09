@@ -129,6 +129,10 @@ def EvaluationConfig(**kwargs) -> SimpleNamespace:
     return _to_ns(_deep_merge(_section_defaults("evaluation"), kwargs))
 
 
+def MonitoringConfig(**kwargs) -> SimpleNamespace:
+    return _to_ns(_deep_merge(_section_defaults("monitoring"), kwargs))
+
+
 def CampaignOptConfig(course: str = DEFAULT_COURSE, **overrides) -> SimpleNamespace:
     """Build config from YAML defaults plus test/programmatic overrides."""
     raw = _merged_dict(course)

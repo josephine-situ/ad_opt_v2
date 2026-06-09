@@ -25,8 +25,8 @@ def test_compile_and_summarize_from_plan_vs_actual(tmp_path: Path):
             "segment": ["USA / Broad", "A / Phrase; Exact"],
             "daily_budget": [100.0, 50.0],
             "actual_budget": [90.0, 55.0],
-            "pred_lift": [1.0, 2.0],
-            "actual_model_lift": [0.8, 1.5],
+            "pred_level": [1.0, 2.0],
+            "actual_model_level": [0.8, 1.5],
             "observed_clicks": [10.0, 5.0],
             "date": ["2025-10-01", "2025-10-01"],
         }
@@ -35,7 +35,7 @@ def test_compile_and_summarize_from_plan_vs_actual(tmp_path: Path):
 
     eval_df = compile_evaluation_results(bt_dir, target="clicks")
     assert len(eval_df) == 1
-    assert eval_df.iloc[0]["pred_lift_total"] == 3.0
+    assert eval_df.iloc[0]["pred_level_total"] == 3.0
     assert eval_df.iloc[0]["observed_total"] == 15.0
 
     summary = summarize_performance(eval_df, target="clicks")
@@ -46,19 +46,18 @@ def test_compile_and_summarize_from_plan_vs_actual(tmp_path: Path):
     assert model_row["improvement_conversions_pct"] == pytest.approx(100 * (3.0 - 2.3) / 2.3)
 
     plan_vs["row_kind"] = "plan"
-    plan_vs["pred_lift_raw"] = plan_vs["pred_lift"]
     market = pd.DataFrame(
         {
             "segment": ["USA / Broad; Phrase; Exact"],
             "daily_budget": [100.0],
-            "actual_model_lift": [0.0],
-            "actual_model_lift_raw": [-2.0],
+            "actual_model_level": [2.0],
             "observed_clicks": [10.0],
             "date": ["2025-10-01"],
             "row_kind": ["market"],
+            "region": ["USA"],
         }
     )
-    combined = pd.concat([plan_vs, market], ignore_index=True)
+    combined = pd.concat([plan_vs.assign(region=["USA", "A"]), market], ignore_index=True)
     regional = regional_breakdown(combined, target="clicks")
     assert len(regional) == 2
     assert set(regional["scenario"]) == {"Model", "Actual"}
@@ -66,12 +65,12 @@ def test_compile_and_summarize_from_plan_vs_actual(tmp_path: Path):
     assert actual_row["Conversions USA"] == pytest.approx(1.0)
 
 
-def test_summarize_uses_pred_lift_totals():
+def test_summarize_uses_pred_level_totals():
     eval_df = pd.DataFrame(
         {
             "Day": ["2025-01-01", "2025-01-02"],
-            "pred_lift_total": [1.0, 1.0],
-            "actual_model_lift_total": [0.5, 0.5],
+            "pred_level_total": [1.0, 1.0],
+            "actual_model_level_total": [0.5, 0.5],
             "opt_budget_total": [100.0, 100.0],
             "act_budget_total": [90.0, 90.0],
         }
@@ -79,7 +78,6 @@ def test_summarize_uses_pred_lift_totals():
     summary = summarize_performance(eval_df, target="clicks")
     assert summary.loc[summary["scenario"] == "Model", "conversions"].iloc[0] == 1.0
     assert summary.loc[summary["scenario"] == "Actual", "conversions"].iloc[0] == 0.5
-    assert "lift_source" not in summary.columns
 
 
 def test_compile_empty_summary_falls_back_to_campaign_plans(tmp_path: Path):
@@ -113,8 +111,8 @@ def test_analyze_backtest_run_writes_outputs(tmp_path: Path):
             "segment": ["USA / Broad"],
             "daily_budget": [120.0],
             "actual_budget": [100.0],
-            "pred_lift": [0.5],
-            "actual_model_lift": [0.4],
+            "pred_level": [0.5],
+            "actual_model_level": [0.4],
             "observed_clicks": [3.0],
             "date": ["2025-10-06"],
         }
