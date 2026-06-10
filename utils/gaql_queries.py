@@ -58,3 +58,24 @@ AUTO_APPLIED_RECOMMENDATIONS_QUERY = """
     LIMIT 10000
 """
 
+SELECT_AD_GROUPS_BY_CAMPAIGN_NAME = """
+        SELECT
+            campaign.name,
+            ad_group.resource_name
+        FROM ad_group
+        WHERE campaign.name IN ('{campaign_names_list}')
+        AND campaign.status != 'REMOVED'
+        AND campaign.advertising_channel_type = 'SEARCH'
+    """
+
+SELECT_EXISTING_KEYWORDS_BY_AD_GROUP_RESOURCE = """
+        SELECT
+            ad_group.resource_name,
+            ad_group_criterion.keyword.text,
+            ad_group_criterion.keyword.match_type
+        FROM ad_group_criterion
+        WHERE ad_group_criterion.ad_group IN ('{ad_group_resource_names_list}')
+        AND ad_group_criterion.type = 'KEYWORD'
+        AND campaign.advertising_channel_type = 'SEARCH'
+    """
+

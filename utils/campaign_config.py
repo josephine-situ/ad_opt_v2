@@ -101,6 +101,13 @@ def load_config(course: str = DEFAULT_COURSE) -> SimpleNamespace:
     return _build_config(_merged_dict(course), course=course)
 
 
+def load_config_dict(course: str = DEFAULT_COURSE) -> dict:
+    """Return the merged config as a plain dict (preserves nested dicts like ``regions``)."""
+    raw = _merged_dict(course)
+    raw["course"] = course
+    return raw
+
+
 def resolve_config(course: str, config_path: str = "") -> SimpleNamespace:
     """Load merged course config, optionally layering a ``--config`` override file."""
     raw = _merged_dict(course, extra_path=config_path or None)
