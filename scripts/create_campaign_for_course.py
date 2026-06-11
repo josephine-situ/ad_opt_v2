@@ -29,7 +29,8 @@ from utils.gaql_queries import SELECT_EXISTING_KEYWORDS_BY_AD_GROUP_RESOURCE, SE
 from utils.bid_adjustments import AGE_RANGE_MAP
 from utils.google_ads_api import get_location_resource_names_for_countries
 from utils.metrics import google_ads_metrics_client
-from utils.name_generation import construct_campaign_name_for_args, construct_ad_group_name_for_args, construct_budget_name_for_args
+from utils.name_generation import construct_campaign_name_for_args, construct_ad_group_name_for_args, construct_budget_name_for_args, get_match_types_for_label
+from utils.paths import prod_dir, processed_dir
 
 BATCH_SIZE = 5000  # Google Ads API limit
 MATCH_TYPE_MAP = {"Exact match": "EXACT", "Phrase match": "PHRASE", "Broad match": "BROAD"}
@@ -51,6 +52,14 @@ class CampaignSpec:
     budget_resource_name: Optional[str] = None
     campaign_resource_name: Optional[str] = None
     ad_group_resource_name: Optional[str] = None
+
+    def __hash__(self) -> int:
+        return hash(self.campaign_name)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, CampaignSpec):
+            return NotImplemented
+        return self.campaign_name == other.campaign_name
 
 
 def find_spec_by_name(specs: list[CampaignSpec], name: str, field: str) -> Optional[CampaignSpec]:
@@ -75,21 +84,27 @@ def _get_keywords_csv_path(course: str) -> Path:
     return Path(__file__).parent.parent / "opt_results" / course / "bids" / "optimized_costs.csv"
 
 
-def get_keywords_to_create(course: str) -> dict[tuple[str, str], list[str]]:
+def get_keywords_to_create(
+    course: str, campaign_specs: list[CampaignSpec]
+) -> dict[CampaignSpec, dict[str, list[str]]]:
     """
-    Get keywords to create for a given course from the corresponding search terms CSV file.
-    Each row in the CSV should have the format: region, match_type, keyword_text
-    Returned dictionary is keyed by (region, match_type), so we can look up everything that needs
-    to be added for a specific ad group easily.
+    Get keywords to create for a list of CampaignSpecs from the corresponding search terms CSV file.
+    Each row in the CSV should have the format: region, match_type, keyword_text.
+
+    A campaign spec's match_type field may contain one or more semicolon-separated match type
+    labels (e.g. "EXACT;PHRASE"), so keywords are collected for each individual match type.
+
+    Returns a dict keyed by CampaignSpec, where each value is a dict mapping individual match
+    type strings (e.g. "EXACT") to the list of keyword texts for that spec and match type.
     """
-    keywords = defaultdict(list)
+    base_keywords: dict[tuple[str, str], list[str]] = defaultdict(list)
     csv_path = _get_keywords_csv_path(course)
 
     if not csv_path.exists():
         print(
             f"Warning: Keywords CSV file not found for course '{course}' at {csv_path}. No keywords will be created."
         )
-        return keywords
+        return {}
 
     with csv_path.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -99,13 +114,24 @@ def get_keywords_to_create(course: str) -> dict[tuple[str, str], list[str]]:
             region = row["Region"].strip()
             match_type = row["Match type"].strip().split()[0].upper()
             keyword_text = row["Keyword"].strip()
-            keywords[(region, match_type)].append(keyword_text)
+            base_keywords[(region, match_type)].append(keyword_text)
 
-    print("Found keywords to create for the following region and match type combinations:")
-    for (region, match_type), kw_list in keywords.items():
-        print(f"  - {region} | {match_type}: {len(kw_list)} keywords")
+    result: dict[CampaignSpec, dict[str, list[str]]] = {}
+    for spec in campaign_specs:
+        match_types = get_match_types_for_label(spec.match_type)
+        spec_keywords: dict[str, list[str]] = {}
+        for match_type in match_types:
+            kw_list = base_keywords.get((spec.region_label, match_type), [])
+            if kw_list:
+                spec_keywords[match_type] = kw_list
+        result[spec] = spec_keywords
 
-    return dict(keywords)
+    print("Found keywords to create for the following campaigns:")
+    for spec, mt_keywords in result.items():
+        for match_type, kw_list in mt_keywords.items():
+            print(f"  - {spec.campaign_name} | {match_type}: {len(kw_list)} keywords")
+
+    return result
 
 
 def create_campaign_budget_operation(
@@ -291,7 +317,7 @@ def create_remaining_keyword_criteria(
     """
     google_ads_service = google_ads_client.get_service("GoogleAdsService")
     ad_group_criterion_service = google_ads_client.get_service("AdGroupCriterionService")
-    region_match_type_to_keywords = get_keywords_to_create(course)
+    spec_to_keywords = get_keywords_to_create(course, campaign_specs)
 
     # Query 1: get ad group resource names via campaign name to avoid ambiguity from non-unique ad group names.
     print(f"\nFetching ad group resource names for {len(campaign_specs)} campaigns...")
@@ -340,54 +366,54 @@ def create_remaining_keyword_criteria(
         if not ad_group_resource_name:
             continue
 
-        match_type = spec.match_type
-        all_keywords = region_match_type_to_keywords.get((spec.region_label, spec.match_type.upper()), [])
-        if not all_keywords:
+        keywords_by_match_type = spec_to_keywords.get(spec, {})
+        if not keywords_by_match_type:
             print(
                 f"Warning: No keywords found for campaign '{spec.campaign_name}' with region '{spec.region_label}' and match type '{spec.match_type}'."
             )
             continue
 
-        new_keywords = [
-            kw for kw in all_keywords
-            if (ad_group_resource_name, kw.lower(), match_type.upper()) not in existing_keywords
-        ]
+        for match_type, all_keywords in keywords_by_match_type.items():
+            new_keywords = [
+                kw for kw in all_keywords
+                if (ad_group_resource_name, kw.lower(), match_type) not in existing_keywords
+            ]
 
-        skipped = len(all_keywords) - len(new_keywords)
-        if skipped:
-            print(f"Skipping {skipped} already-existing keywords for ad group '{spec.ad_group_name}'.")
-        if not new_keywords:
-            print(f"All keywords already exist for ad group '{spec.ad_group_name}'. Nothing to create.")
-            continue
+            skipped = len(all_keywords) - len(new_keywords)
+            if skipped:
+                print(f"Skipping {skipped} already-existing keywords for ad group '{spec.ad_group_name}' ({match_type}).")
+            if not new_keywords:
+                print(f"All keywords already exist for ad group '{spec.ad_group_name}' ({match_type}). Nothing to create.")
+                continue
 
-        operations = create_ad_group_keyword_operations(
-            google_ads_client, ad_group_resource_name, new_keywords, match_type
-        )
+            operations = create_ad_group_keyword_operations(
+                google_ads_client, ad_group_resource_name, new_keywords, match_type
+            )
 
-        # If we have a keyword limit set
-        if remaining_keyword_operations and len(operations) > remaining_keyword_operations:
-            print(f"Keyword operations for ad group '{spec.ad_group_name}' exceed remaining limit of {remaining_keyword_operations}. Only creating a portion of keywords for this ad group.")  # noqa: E501
-            operations = operations[:remaining_keyword_operations]
-            remaining_keyword_operations = 0
-            exhausted_limit = True
-        elif remaining_keyword_operations:
-            remaining_keyword_operations -= len(operations)
+            # If we have a keyword limit set
+            if remaining_keyword_operations and len(operations) > remaining_keyword_operations:
+                print(f"Keyword operations for ad group '{spec.ad_group_name}' exceed remaining limit of {remaining_keyword_operations}. Only creating a portion of keywords for this ad group.")  # noqa: E501
+                operations = operations[:remaining_keyword_operations]
+                remaining_keyword_operations = 0
+                exhausted_limit = True
+            elif remaining_keyword_operations:
+                remaining_keyword_operations -= len(operations)
 
-        try:
-            for i in range(0, len(operations), BATCH_SIZE):
-                batch = operations[i : i + BATCH_SIZE]
-                request = google_ads_client.get_type("MutateAdGroupCriteriaRequest")
-                request.customer_id = customer_id
-                request.operations = batch
-                response = ad_group_criterion_service.mutate_ad_group_criteria(request=request)
-                google_ads_metrics_client.track_google_ads_operation_count('mutate_ad_group_criteria', len(batch))
-                print(f"✓ Created {len(response.results)} keyword criteria for ad group '{spec.ad_group_name}' (batch {i // BATCH_SIZE + 1})")
-        except Exception as e:
-            print(f"✗ Error creating keyword criteria for ad group '{spec.ad_group_name}': {e}")
+            try:
+                for i in range(0, len(operations), BATCH_SIZE):
+                    batch = operations[i : i + BATCH_SIZE]
+                    request = google_ads_client.get_type("MutateAdGroupCriteriaRequest")
+                    request.customer_id = customer_id
+                    request.operations = batch
+                    response = ad_group_criterion_service.mutate_ad_group_criteria(request=request)
+                    google_ads_metrics_client.track_google_ads_operation_count('mutate_ad_group_criteria', len(batch))
+                    print(f"✓ Created {len(response.results)} keyword criteria for ad group '{spec.ad_group_name}' ({match_type}) (batch {i // BATCH_SIZE + 1})")
+            except Exception as e:
+                print(f"✗ Error creating keyword criteria for ad group '{spec.ad_group_name}' ({match_type}): {e}")
 
-        if exhausted_limit:
-            print(f"Keyword limit reached, skipping additional keywords.")
-            return
+            if exhausted_limit:
+                print(f"Keyword limit reached, skipping additional keywords.")
+                return
 
 def create_campaigns_for_course(
     google_ads_client: GoogleAdsClient,
@@ -405,7 +431,7 @@ def create_campaigns_for_course(
         sys.exit(1)
 
     regions = course_config.get("regions", {})
-    match_types = course_config.get("match_types", ["Exact", "Phrase", "Broad"])
+    match_types = course_config.get("match_types", [])
     default_budget = course_config.get("default_daily_budget_micros", 1_000_000)
 
     # Collect all unique countries across all regions, deduplicate in case of manual errors in config
@@ -567,22 +593,22 @@ def create_campaigns_for_course(
         # TODO: We may need to pull this out to allow for partial execution of keywords if we dont get standard api access
         # As this works now, we attempt to create all keywords for all campaigns in one batch.
         # Some courses have a dataset too large for this with API Basic Access quotas
-        region_match_type_to_keywords = get_keywords_to_create(course)
+        spec_to_keywords = get_keywords_to_create(course, campaign_specs)
         keyword_operations = []
         for spec in campaign_specs:
             ad_group_resource_name = spec.ad_group_resource_name
-            match_type = spec.match_type
-            keywords = region_match_type_to_keywords.get((spec.region_label, spec.match_type.upper()), [])
-            if not keywords:
+            keywords_by_match_type = spec_to_keywords.get(spec, {})
+            if not keywords_by_match_type:
                 print(
                     f"Warning: No keywords found for campaign '{spec.campaign_name}' with region '{spec.region_label}' and match type '{spec.match_type}'."
                 )
             else:
-                keyword_operations.extend(
-                    create_ad_group_keyword_operations(
-                        google_ads_client, ad_group_resource_name, keywords, match_type
+                for match_type, keywords in keywords_by_match_type.items():
+                    keyword_operations.extend(
+                        create_ad_group_keyword_operations(
+                            google_ads_client, ad_group_resource_name, keywords, match_type
+                        )
                     )
-                )
 
         total_created = 0
         try:
