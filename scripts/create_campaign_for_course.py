@@ -427,16 +427,7 @@ def create_remaining_keyword_criteria(
                 print(f"Keyword limit reached, skipping additional keywords.")
                 return
 
-def create_campaigns_for_course(
-    google_ads_client: GoogleAdsClient,
-    customer_id: str,
-    course: str,
-    execute: bool,
-    skip_keywords: bool = False,
-    only_keywords: bool = False,
-    keywords_limit: int = 0,
-) -> list[CampaignSpec]:
-    """Create all campaigns and ad groups for a given course."""
+def create_campaign_specs_for_course(course: str, google_ads_client) -> list[CampaignSpec]:
     course_config = load_config_dict(course)
     if not course_config.get("regions"):
         print(f"Error: Course '{course}' has no 'regions' defined in its course.yaml")
@@ -478,7 +469,20 @@ def create_campaigns_for_course(
             campaign_specs.append(spec)
 
             print(f"Planned: {campaign_name}")
+    return campaign_specs
 
+def create_campaigns_for_course(
+    google_ads_client: GoogleAdsClient,
+    customer_id: str,
+    course: str,
+    execute: bool,
+    skip_keywords: bool = False,
+    only_keywords: bool = False,
+    keywords_limit: int = 0,
+) -> list[CampaignSpec]:
+    """Create all campaigns and ad groups for a given course."""
+
+    campaign_specs = create_campaign_specs_for_course(course, google_ads_client)
     if not execute:
         print(f"\n[DRY RUN] Would create {len(campaign_specs)} campaigns with ad groups:")
         for spec in campaign_specs:
@@ -723,6 +727,15 @@ def create_campaigns_for_course(
 
     return campaign_specs
 
+def dry_run_keywords(course: str, google_ads_client) -> None:
+    specs = create_campaign_specs_for_course(course, google_ads_client)
+    keyword_mapping = get_keywords_to_create(course, specs)
+    for campaign, keywords_by_match_type in keyword_mapping.items():
+        print(f"Campaign: {campaign.campaign_name} | Region: {campaign.region_label} | Match Type: {campaign.match_type}")
+        for match_type, keywords in keywords_by_match_type.items():
+            print(f"  - {match_type}: {keywords}")
+        if not keywords_by_match_type:
+            print("  - No keywords found for this campaign.")
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -772,6 +785,11 @@ def main() -> None:
         default=0,
         help="When specified with --only-keywords, limits the number of operations to perform.",
     )
+    parser.add_argument(
+        "--dry-run-keywords",
+        action="store_true",
+        default=False
+    )
 
     args = parser.parse_args()
 
@@ -780,6 +798,10 @@ def main() -> None:
 
     # Initialize Google Ads client
     google_ads_client = GoogleAdsClient.load_from_storage(yaml_path)
+
+    if args.dry_run_keywords:
+        dry_run_keywords(args.course, google_ads_client)
+        return
 
     # Create campaigns
     create_campaigns_for_course(google_ads_client, customer_id, args.course, args.execute, args.skip_keywords, args.only_keywords, args.keywords_limit)

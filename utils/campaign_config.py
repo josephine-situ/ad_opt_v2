@@ -101,11 +101,16 @@ def load_config(course: str = DEFAULT_COURSE) -> SimpleNamespace:
     return _build_config(_merged_dict(course), course=course)
 
 
+_config_dict_cache: dict[str, dict] = {}
+
+
 def load_config_dict(course: str = DEFAULT_COURSE) -> dict:
     """Return the merged config as a plain dict (preserves nested dicts like ``regions``)."""
-    raw = _merged_dict(course)
-    raw["course"] = course
-    return raw
+    if course not in _config_dict_cache:
+        raw = _merged_dict(course)
+        raw["course"] = course
+        _config_dict_cache[course] = raw
+    return _config_dict_cache[course]
 
 
 def resolve_config(course: str, config_path: str = "") -> SimpleNamespace:
