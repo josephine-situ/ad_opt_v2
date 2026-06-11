@@ -7,10 +7,9 @@ Each campaign contains exactly one ad group.
 
 import argparse
 import csv
+import json
 import sys
-from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 from google.ads.googleads.client import GoogleAdsClient
@@ -80,51 +79,64 @@ def find_spec_by_name(specs: list[CampaignSpec], name: str, field: str) -> Optio
     return None
 
 
-def _get_keywords_csv_path(course: str) -> Path:
-    return Path(__file__).parent.parent / "opt_results" / course / "bids" / "optimized_costs.csv"
+def _load_fixed_keyword_sets(course: str) -> dict[str, str]:
+    path = prod_dir(course) / "two_stage_plan" / "fixed_keyword_sets.json"
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _load_keyword_set(course: str, filename: str) -> dict[str, list[str]]:
+    """Load a keyword set CSV and return a dict mapping uppercase match type to keyword list."""
+    path = processed_dir(course) / "keyword-sets-display" / f"{filename}.csv"
+    if not path.exists():
+        print(f"Warning: Keyword set file not found: {path}")
+        return {}
+    keywords_by_match_type: dict[str, list[str]] = {}
+    with path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            for col, value in row.items():
+                if value and value.strip():
+                    match_type = col.strip().upper()
+                    keywords_by_match_type.setdefault(match_type, []).append(value.strip())
+    return keywords_by_match_type
 
 
 def get_keywords_to_create(
     course: str, campaign_specs: list[CampaignSpec]
 ) -> dict[CampaignSpec, dict[str, list[str]]]:
     """
-    Get keywords to create for a list of CampaignSpecs from the corresponding search terms CSV file.
-    Each row in the CSV should have the format: region, match_type, keyword_text.
+    Get keywords to create for a list of CampaignSpecs.
 
-    A campaign spec's match_type field may contain one or more semicolon-separated match type
-    labels (e.g. "EXACT;PHRASE"), so keywords are collected for each individual match type.
+    Looks up each spec in the course's fixed_keyword_sets.json (keyed by
+    "{region} / {match_type_label}") to find the corresponding keyword set file,
+    then reads keywords per match type from that file.
 
-    Returns a dict keyed by CampaignSpec, where each value is a dict mapping individual match
-    type strings (e.g. "EXACT") to the list of keyword texts for that spec and match type.
+    A campaign spec's match_type field may contain one or more semicolon-separated
+    match type labels (e.g. "Phrase; Exact"), and keywords are returned for each.
+
+    Returns a dict keyed by CampaignSpec, where each value is a dict mapping individual
+    match type strings (e.g. "EXACT") to the list of keyword texts for that spec.
     """
-    base_keywords: dict[tuple[str, str], list[str]] = defaultdict(list)
-    csv_path = _get_keywords_csv_path(course)
-
-    if not csv_path.exists():
-        print(
-            f"Warning: Keywords CSV file not found for course '{course}' at {csv_path}. No keywords will be created."
-        )
+    fixed_keyword_sets = _load_fixed_keyword_sets(course)
+    if not fixed_keyword_sets:
+        print(f"Warning: No fixed_keyword_sets.json found for course '{course}'. No keywords will be created.")
         return {}
-
-    with csv_path.open("r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            # Region, match type and keyword are all required fields.
-            # If any are missing this is a malformed input
-            region = row["Region"].strip()
-            match_type = row["Match type"].strip().split()[0].upper()
-            keyword_text = row["Keyword"].strip()
-            base_keywords[(region, match_type)].append(keyword_text)
 
     result: dict[CampaignSpec, dict[str, list[str]]] = {}
     for spec in campaign_specs:
+        lookup_key = f"{spec.region_label} / {spec.match_type}"
+        filename = fixed_keyword_sets.get(lookup_key)
+        if not filename:
+            print(f"Warning: No keyword set found for '{lookup_key}' in fixed_keyword_sets.json. Skipping '{spec.campaign_name}'.")
+            result[spec] = {}
+            continue
+
+        all_keywords = _load_keyword_set(course, filename)
         match_types = get_match_types_for_label(spec.match_type)
-        spec_keywords: dict[str, list[str]] = {}
-        for match_type in match_types:
-            kw_list = base_keywords.get((spec.region_label, match_type), [])
-            if kw_list:
-                spec_keywords[match_type] = kw_list
-        result[spec] = spec_keywords
+        result[spec] = {mt: all_keywords[mt] for mt in match_types if mt in all_keywords}
 
     print("Found keywords to create for the following campaigns:")
     for spec, mt_keywords in result.items():
