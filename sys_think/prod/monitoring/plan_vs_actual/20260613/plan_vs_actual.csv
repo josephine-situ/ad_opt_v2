@@ -1,0 +1,7 @@
+segment,region,daily_budget,keyword_set_id,milp_pred,n_planning_days,external_model_pred,row_kind,plan_pred_source,pred_level,actual_budget,actual_keyword_set_id,observed_conv_scaled_clicks
+A / Broad,A,13.25,synthetic_A_Broad_top_conv_n10_2,0.19240974054984036,1,0.19240972208976742,plan,milp_pred,0.19240974054984036,53.69,ks_0005,1.635649169990916
+A / Phrase; Exact,A,94.54,ks_0005,1.3740911514554401,1,1.3740909948348998,plan,milp_pred,1.3740911514554401,53.69,ks_0005,1.635649169990916
+B / Broad,B,12.09,synthetic_B_Broad_allowlist_n10_7,0.26450637716184044,1,0.2645063881874084,plan,milp_pred,0.26450637716184044,24.770000000000003,synthetic_B_Broad_allowlist_n10_7,1.3023379872919898
+B / Phrase; Exact,B,38.05,synthetic_B_Phrase; Exact_dispersion_n20_33,1.1086911426553614,1,1.1086911640167236,plan,milp_pred,1.1086911426553614,24.770000000000003,synthetic_B_Broad_allowlist_n10_7,1.3023379872919898
+USA / Broad,USA,34.08,synthetic_USA_Broad_allowlist_n10_37,0.57010384280344,1,0.5701039252281189,plan,milp_pred,0.57010384280344,92.445,ks_0023,1.4314204814947344
+USA / Phrase; Exact,USA,149.65,ks_0023,0.9450668604361603,1,0.9450669403076173,plan,milp_pred,0.9450668604361603,92.445,ks_0023,1.4314204814947344

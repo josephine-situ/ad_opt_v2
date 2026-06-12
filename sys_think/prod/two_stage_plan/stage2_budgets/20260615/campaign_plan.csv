@@ -1,0 +1,7 @@
+segment,region,daily_budget,keyword_set_id,milp_pred,n_planning_days,external_model_pred
+A / Broad,A,13.52,synthetic_A_Broad_top_conv_n10_2,0.19877039313000044,1,0.19877037405967712
+A / Phrase; Exact,A,96.47,ks_0005,1.4195156523299999,1,1.4195154905319214
+B / Broad,B,12.34,synthetic_B_Broad_allowlist_n10_7,0.2732503896300005,1,0.27325040102005005
+B / Phrase; Exact,B,38.83,synthetic_B_Phrase; Exact_dispersion_n20_33,1.1453420895200015,1,1.1453421115875244
+USA / Broad,USA,34.78,synthetic_USA_Broad_allowlist_n10_37,0.58895025083,1,0.5889503359794617
+USA / Phrase; Exact,USA,152.7,ks_0023,0.9763087401200004,1,0.9763088226318359

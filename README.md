@@ -109,13 +109,10 @@ Avoid putting `Experiment` in production campaign names. Region `C` is also excl
 `campaign-summary.csv` (budget intervals, campaign versions) and `campaign-keyword-sets.csv` (historical keyword sets) drive the campaign-day panel. Bootstrap and updates can come from any of:
 
 1. **Saved change-history HTML** (current default for bootstrap and keyword changes) — save the Google Ads change history page to `<course>/data/`, then:
-
-   ```powershell
+  ```powershell
    uv run python -m scripts.parse_change_history_html --course sys_think
-   ```
-
+  ```
 2. **Persisted daily budget changes** (lighter option for stage-2 pushes) — when you apply budgets from `campaign_plan.csv`, append new `daily_budget` rows to `campaign-summary.csv` (new `campaign_version` intervals with the pushed amounts). No HTML re-parse needed for budget-only updates. Keyword adds/removes still need option 1 or 3.
-
 3. **Change History API** (not yet wired) — replace manual HTML saves going forward.
 
 `prepare-data` requires `campaign-summary.csv` before it can build `campaign-day-panel.csv`. It also writes `segment-conv-per-click-rates.csv` (course-wide `sum(all_conv)/sum(clicks)` per region × match type) used as fixed scaling for the `conv_scaled_clicks` target. Commit updated summary/keyword-set CSVs to git after keyword changes or budget appends.
@@ -138,15 +135,17 @@ Courses are discovered automatically (top-level dirs with a `data/` folder).
 
 ## Production schedule
 
-| Cadence | Step | What it does |
-|---------|------|--------------|
-| **Daily** | Pull Google Ads data | `prepare-data` — API pull → clean kw-day panel → campaign-day panel |
-| **Daily** | Stage 2 budgets | `run-pipeline --skip-stage1` — refit model walk-forward, optimize tomorrow's segment budgets |
-| **Daily** | Plan-vs-actual monitoring | Automatic in `run-pipeline` (before model refit) — scores yesterday's saved plan vs realized `conv_scaled_clicks` |
-| **Monthly or ad-hoc** | Stage 1 keyword sets | `run-pipeline --window-start … --window-end …` — pick one keyword set per segment for the window, then stage 2 for the planning date |
-| **When Ads config changes** | Re-parse change history | `parse_change_history_html` — after keyword adds/removes, pauses, or renames in the UI |
-| **After daily budget push** | Append budget to summary | Update `campaign-summary.csv` with pushed amounts (see Change history §2) — or re-parse HTML |
-| **When keyword pool changes** | Rebuild candidates | `build_keyword_candidates` + `build_gkp_set_features` (included in full `run-pipeline`) |
+
+| Cadence                       | Step                      | What it does                                                                                                                                               |
+| ----------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Daily**                     | Pull Google Ads data      | `prepare-data` — API pull → clean kw-day panel → campaign-day panel                                                                                        |
+| **Daily**                     | Stage 2 budgets           | `run-pipeline --skip-stage1` — refit model walk-forward, optimize tomorrow's segment budgets                                                               |
+| **Daily**                     | Plan-vs-actual monitoring | Automatic in `run-pipeline` (before model refit) — scores unscored days in the last 7 days that have a saved stage-2 plan vs realized `conv_scaled_clicks` |
+| **Monthly or ad-hoc**         | Stage 1 keyword sets      | `run-pipeline --window-start … --window-end …` — pick one keyword set per segment for the window, then stage 2 for the planning date                       |
+| **When Ads config changes**   | Re-parse change history   | `parse_change_history_html` — after keyword adds/removes, pauses, or renames in the UI                                                                     |
+| **After daily budget push**   | Append budget to summary  | Update `campaign-summary.csv` with pushed amounts (see Change history §2) — or re-parse HTML                                                               |
+| **When keyword pool changes** | Rebuild candidates        | `build_keyword_candidates` + `build_gkp_set_features` (included in full `run-pipeline`)                                                                    |
+
 
 ### Daily run
 
@@ -167,11 +166,13 @@ uv run run-pipeline --window-start 2026-06-15 --window-end 2026-07-15
 
 Each `run-pipeline` call (after `prepare-data`) scores unscored days in the last 7 days that have a saved stage-2 plan. Monitoring compares **saved plan predictions** (`milp_pred` from `campaign_plan.csv`) to **realized outcomes** from the modeling panel (Google Ads data). It does not load or refit an evaluation model. Outputs under `<course>/prod/monitoring/`:
 
-| File | Purpose |
-|------|---------|
-| `daily_metrics.csv` | One row per scored day: RMSE, nRMSE, bias %, pred/observed totals |
-| `rolling_summary.json` | 7-day and 30-day rolling mean bias and nRMSE |
-| `plan_vs_actual/YYYYMMDD/plan_vs_actual.csv` | Per-segment detail: plan preds vs panel actuals |
+
+| File                                         | Purpose                                                           |
+| -------------------------------------------- | ----------------------------------------------------------------- |
+| `daily_metrics.csv`                          | One row per scored day: RMSE, nRMSE, bias %, pred/observed totals |
+| `rolling_summary.json`                       | 7-day and 30-day rolling mean bias and nRMSE                      |
+| `plan_vs_actual/YYYYMMDD/plan_vs_actual.csv` | Per-segment detail: plan preds vs panel actuals                   |
+
 
 Example log line:
 
@@ -186,10 +187,12 @@ When `GRAFANA_URL`, `GRAFANA_USERNAME`, and `GRAFANA_TOKEN` are set, metrics are
 
 Pipeline push is **manual today** (no upload script yet). After each run, apply:
 
-| What to set in Google Ads | Source | When |
-|---------------------------|--------|------|
+
+| What to set in Google Ads              | Source                                                                                                   | When                                                                                                                          |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | **Keywords in each campaign ad group** | `<course>/data/processed/keyword-sets-display/<keyword_set_id>.csv` — columns `Broad`, `Phrase`, `Exact` | After **stage 1** when `fixed_keyword_sets.json` assigns new sets (compare to live ad groups; add, pause, or remove to match) |
-| **Campaign daily budgets** | `<course>/prod/two_stage_plan/stage2_budgets/YYYYMMDD/campaign_plan.csv` — `daily_budget` per `segment` | **Every daily stage-2 run** — one budget per segment (Region × Match Type) → corresponding campaign |
+| **Campaign daily budgets**             | `<course>/prod/two_stage_plan/stage2_budgets/YYYYMMDD/campaign_plan.csv` — `daily_budget` per `segment`  | **Every daily stage-2 run** — one budget per segment (Region × Match Type) → corresponding campaign                           |
+
 
 **Campaign name → keywords:** Each production campaign is one `(region, match type)` pair — e.g. `… - USA - Exact & Phrase` maps to segment `USA / Phrase; Exact`, and `… - A - Broad` maps to `A / Broad`. Look up that segment in `prod/two_stage_plan/fixed_keyword_sets.json` to get the active `keyword_set_id`, then open `<course>/data/processed/keyword-sets-display/<keyword_set_id>.csv` for the Broad / Phrase / Exact lists to sync in the ad group. The same `keyword_set_id` appears in `stage1_keyword_sets/campaign_plan.csv` when stage 1 was run for a multi-day window. Daily stage-2 runs only change budgets unless you rerun stage 1.
 
@@ -199,43 +202,51 @@ Almost everything is **regenerated** each run. `pull_input_data` rewrites `data/
 
 ### Track in git (the durable record)
 
-| Artifact | Why |
-|----------|-----|
-| `data/processed/campaign-summary.csv` | Campaign versions and budget intervals; update via change-history parse or budget append |
-| `data/processed/campaign-keyword-sets.csv` | Historical keyword sets for candidate pool |
-| `prod/two_stage_plan/fixed_keyword_sets.json` | Active keyword-set assignment between stage-1 runs |
-| `data/gkp/*Keywords*Enrollments*.xlsx` | Allowlist input |
-| `data/Change history*.html` | Bootstrap archive for keyword changes (optional once summary CSVs are current) |
-| `config/`, `<course>/course.yaml` | Pipeline configuration |
-| `prod/monitoring/daily_metrics.csv` | Append-only plan-vs-actual scores (optional; not gitignored) |
+
+| Artifact                                      | Why                                                                                      |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `data/processed/campaign-summary.csv`         | Campaign versions and budget intervals; update via change-history parse or budget append |
+| `data/processed/campaign-keyword-sets.csv`    | Historical keyword sets for candidate pool                                               |
+| `prod/two_stage_plan/fixed_keyword_sets.json` | Active keyword-set assignment between stage-1 runs                                       |
+| `data/gkp/*Keywords*Enrollments*.xlsx`        | Allowlist input                                                                          |
+| `data/Change history*.html`                   | Bootstrap archive for keyword changes (optional once summary CSVs are current)           |
+| `config/`, `<course>/course.yaml`             | Pipeline configuration                                                                   |
+| `prod/monitoring/daily_metrics.csv`           | Append-only plan-vs-actual scores (optional; not gitignored)                             |
+
 
 With those in git plus API credentials, a fresh clone can run `prepare-data` → `run-pipeline`. Monitoring history is optional for reruns but needed for rolling bias/nRMSE trends.
 
-### Production monitoring (keep on disk)
+### Production monitoring (S3 persistence)
 
-Plan-vs-actual scoring (see **Production monitoring** above) appends to a cumulative history and reads saved stage-2 plans. Do not delete these between daily runs:
+Monitoring runs at the start of `run-pipeline` (before stage 2). It skips until saved plans and panel data exist. S3 is external (bespoke pull/push for this test only; not in the pipeline).
 
-| Artifact | Keep? | Why |
-|----------|-------|-----|
-| `prod/monitoring/daily_metrics.csv` | **Yes** | Append-only score history; 7d/30d rolling stats read from here |
-| `prod/monitoring/plan_vs_actual/YYYYMMDD/` | **Yes** | Per-segment detail for each scored day |
-| `prod/monitoring/rolling_summary.json` | Optional | Regenerated from `daily_metrics.csv` on every `run-pipeline` |
-| `prod/two_stage_plan/stage2_budgets/YYYYMMDD/` | **Yes, ~lookback window** | Monitoring scores a day only if that date's `campaign_plan.csv` still exists; default lookback is 7 days (`monitoring.lookback_days` in `config/default.yaml`). Also the budget push source for that planning date. |
+Paths under `<course>/prod/…`. **Round-trip** = pull before next run + push after. **Review** = push for inspection only.
 
-`prod/monitoring/` is not gitignored — commit `daily_metrics.csv` (and detail dirs if you want audits in git). Other `prod/two_stage_plan/` outputs are gitignored except `fixed_keyword_sets.json`; retain recent `stage2_budgets/` dirs locally for monitoring and budget pushes.
+
+| Artifact                                                   | Pull before run | Push (round-trip) | Push (review) | Retention / lookback                             | Per run                  | Rough size  |
+| ---------------------------------------------------------- | --------------- | ----------------- | ------------- | ------------------------------------------------ | ------------------------ | ----------- |
+| `monitoring/daily_metrics.csv`                             | **Yes**         | **Yes**           | —             | Need last **30** rows, but not pruned currently. | +1 row per scored day    | ~300 B/row  |
+| `two_stage_plan/stage2_budgets/YYYYMMDD/campaign_plan.csv` | **Yes**         | **Yes**           | —             | Last **7** dirs, but not pruned currently.       | +1 dir (tomorrow's plan) | ~0.6 KB/dir |
+| `monitoring/plan_vs_actual/YYYYMMDD/plan_vs_actual.csv`    | No              | —                 | **Yes**       | Not read back                                    | +1 dir per scored day    | ~1.2 KB/dir |
+| `monitoring/rolling_summary.json`                          | No              | —                 | **Yes**       | Recomputable from `daily_metrics.csv`            | Rewritten each run       | ~0.4 KB     |
+
+
+`prod/monitoring/` is not gitignored. Other `prod/two_stage_plan/` outputs are gitignored except `fixed_keyword_sets.json`.
 
 ### Regenerated each run (no backup needed)
 
-| Artifact | How |
-|----------|-----|
-| `data/reports/kw-day-panel.csv` | Full API re-pull (`prepare-data`) from `min_date` to today |
-| `data/processed/kw-day-panel.csv`, `campaign-day-panel.csv`, `segment-conv-per-click-rates.csv` | `process_input_data` + `generate_campaign_day_panel` |
-| Candidate / feature CSVs, keyword-set display | `run-pipeline` (or individual build scripts) |
-| `prod/*.joblib`, model manifests, today's stage-2 plan | `run-pipeline` |
+
+| Artifact                                                                                        | How                                                        |
+| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `data/reports/kw-day-panel.csv`                                                                 | Full API re-pull (`prepare-data`) from `min_date` to today |
+| `data/processed/kw-day-panel.csv`, `campaign-day-panel.csv`, `segment-conv-per-click-rates.csv` | `process_input_data` + `generate_campaign_day_panel`       |
+| Candidate / feature CSVs, keyword-set display                                                   | `run-pipeline` (or individual build scripts)               |
+| `prod/*.joblib`, model manifests, today's stage-2 plan                                          | `run-pipeline`                                             |
+
 
 ### Ephemeral (gitignored working files)
 
-- `prod/two_stage_plan/` except `fixed_keyword_sets.json` — stage-1 outputs, `stage2_budgets/` (keep on disk per monitoring section above; prune dirs once scored and past lookback)
+- `prod/two_stage_plan/` except `fixed_keyword_sets.json` — stage-1 outputs, `stage2_budgets/` (keep last 7 dated dirs per monitoring section above)
 - `experiments/`, backtest MILP/plan dirs, `logs/`
 
 Processed panels are git-tracked today but are optional in git if you always run `prepare-data` first; the summary CSVs are what you cannot reconstruct from the API alone.
@@ -264,14 +275,16 @@ Use `--course <name>` on any command. Use `--config path.yaml` for a one-off ove
 
 ## Output paths
 
-| Kind | Location |
-|------|----------|
-| Processed panels | `<course>/data/processed/` |
-| Keyword set display (for push) | `<course>/data/processed/keyword-sets-display/` |
-| Model fit | `<course>/prod/model_manifest.json`, `holdout_metrics.json` |
-| Production plan | `<course>/prod/two_stage_plan/` |
-| Experiments / debug | `<course>/experiments/features/`, `experiments/diagnostics/` |
-| Backtest window | `<course>/backtests/<start>_<end>/` |
+
+| Kind                           | Location                                                     |
+| ------------------------------ | ------------------------------------------------------------ |
+| Processed panels               | `<course>/data/processed/`                                   |
+| Keyword set display (for push) | `<course>/data/processed/keyword-sets-display/`              |
+| Model fit                      | `<course>/prod/model_manifest.json`, `holdout_metrics.json`  |
+| Production plan                | `<course>/prod/two_stage_plan/`                              |
+| Experiments / debug            | `<course>/experiments/features/`, `experiments/diagnostics/` |
+| Backtest window                | `<course>/backtests/<start>_<end>/`                          |
+
 
 ## Tests
 
