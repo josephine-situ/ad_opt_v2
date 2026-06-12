@@ -34,3 +34,84 @@ conversion_actions:
   - "idimension - account create"
   - "Add to cart - iDimension"
   - "HubSpot - Customers"
+
+# Campaign creation settings
+course_title_base: "Course - System Thinking"
+match_types:
+  - Broad
+  - Phrase; Exact
+default_daily_budget_micros: 1000000
+regions:
+  USA:
+    - United States
+  A:
+    - France
+    - Switzerland
+    - Sweden
+    - Canada
+    - New Zealand
+    - Netherlands
+    - United Kingdom
+    - Japan
+    - Spain
+    - Denmark
+    - Australia
+    - Ireland
+    - Germany
+    - Norway
+    - Belgium
+    - Mexico
+    - Italy
+  B:
+    - Indonesia
+    - Philippines
+    - Uganda
+    - Morocco
+    - Tanzania
+    - Zimbabwe
+    - Tunisia
+    - Sri Lanka
+    - Liberia
+    - Thailand
+    - Turkiye
+    - "Cote d'Ivoire"
+    - Peru
+    - Jordan
+    - Argentina
+    - Senegal
+    - Saudi Arabia
+    - Malaysia
+    - Singapore
+    - Colombia
+    - Chile
+    - Armenia
+    - China
+    - Georgia
+    - Hong Kong
+    - Israel
+    - Romania
+    - Bulgaria
+    - Trinidad and Tobago
+    - Serbia
+    - Poland
+    - Lithuania
+    - Greece
+    - Qatar
+    - Bolivia
+    - Portugal
+    - Bahrain
+    - Paraguay
+    - Austria
+    - Hungary
+    - Moldova
+    - United Arab Emirates
+    - Czechia
+    - South Korea
+    - Taiwan
+    - Croatia
+    - Estonia
+    - Iceland
+    - Slovakia
+    - Finland
+    - Luxembourg
+    - Monaco

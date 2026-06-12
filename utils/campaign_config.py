@@ -101,6 +101,23 @@ def load_config(course: str = DEFAULT_COURSE) -> SimpleNamespace:
     return _build_config(_merged_dict(course), course=course)
 
 
+# At least for the dictionary representation, we'll try and cache the config
+# since we now have a yaml load + merge step vs a static dictionary defined in code.
+_config_dict_cache: dict[str, dict] = {}
+
+# Ideally we should choose one type of config representation.
+# This exists solely because we're porting a lot of existing functionality over in a very tight timeframe, and it expects a dictionary
+# I'm not sure if a Namespace is the best solve given we already have a bunch of stuff to special case certain fields,
+# but I need to understand the motivation for the change to have an informed opinion.
+def load_config_dict(course: str = DEFAULT_COURSE) -> dict:
+    """Return the merged config as a plain dict (preserves nested dicts like ``regions``)."""
+    if course not in _config_dict_cache:
+        raw = _merged_dict(course)
+        raw["course"] = course
+        _config_dict_cache[course] = raw
+    return _config_dict_cache[course]
+
+
 def resolve_config(course: str, config_path: str = "") -> SimpleNamespace:
     """Load merged course config, optionally layering a ``--config`` override file."""
     raw = _merged_dict(course, extra_path=config_path or None)
